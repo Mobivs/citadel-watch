@@ -45,6 +45,14 @@ from .threat_scorer import (
     IntelMatch,
     RiskLevel,
 )
+from .guardian_updater import (
+    GuardianUpdater,
+    GuardianRule,
+    GuardianRuleType,
+    RuleAction,
+    RuleSeverity,
+    UpdateReport,
+)
 
 __all__ = [
     # Data models
@@ -94,4 +102,11 @@ __all__ = [
     "ScoredThreat",
     "IntelMatch",
     "RiskLevel",
+    # Guardian Updater
+    "GuardianUpdater",
+    "GuardianRule",
+    "GuardianRuleType",
+    "RuleAction",
+    "RuleSeverity",
+    "UpdateReport",
 ]
