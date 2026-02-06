@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Read(//c/Users/John Vickrey/.claude/knowledge/**)",
+      "Bash(python test_vault.py:*)",
+      "Bash(pip install:*)",
+      "Bash(timeout 5 tail:*)",
+      "Bash(gh:*)",
+      "Bash(winget:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

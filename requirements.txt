@@ -1,0 +1,62 @@
+# PRD: Phase 1 - Technical Infrastructure
+# Reference: docs/PRD.md v0.2.2, Section: Technical Architecture
+
+# Core Backend
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# WebSocket Support
+websockets==12.0
+
+# Guardian Agent - File & Process Monitoring
+watchdog==3.0.0          # Real-time filesystem monitoring
+psutil==5.9.7            # Process monitoring, system info
+
+# Vault - Password Manager
+sqlcipher3==0.5.2        # Encrypted SQLite database
+cryptography==42.0.0     # AES-256 encryption, PBKDF2
+
+# Security & Authentication
+bcrypt==4.1.2            # Password hashing
+python-jose[cryptography]==3.3.0  # JWT tokens
+passlib[bcrypt]==1.7.4   # Password utilities
+
+# Logging & Audit
+structlog==24.1.0        # Structured logging
+python-json-logger==2.0.7  # JSON log formatting
+
+# Desktop App
+# NOTE: Uses subprocess + Edge app mode (no external GUI framework needed)
+# Edge is guaranteed to be present on Windows 10/11
+PyInstaller==6.3.0       # Executable builder (for future packaging)
+
+# HTTP Client (for future threat intel)
+httpx==0.26.0            # Async HTTP client
+aiohttp==3.9.1           # Alternative async HTTP
+
+# Configuration
+python-dotenv==1.0.0     # Environment variable management
+pyyaml==6.0.1            # YAML config files
+
+# Utilities
+python-dateutil==2.8.2   # Date/time utilities
+pytz==2024.1             # Timezone support
+
+# Testing (Phase 1)
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+
+# Development Tools
+black==23.12.1           # Code formatting
+flake8==7.0.0            # Linting
+mypy==1.8.0              # Type checking
+isort==5.13.2            # Import sorting
+
+# Windows-specific
+pywin32==306; sys_platform == 'win32'  # Windows API access
+wmi==1.5.1; sys_platform == 'win32'    # Windows Management Instrumentation
