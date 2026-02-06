@@ -39,6 +39,12 @@ from .anomaly_detector import (
     ThreatLevel,
     Sensitivity,
 )
+from .threat_scorer import (
+    ThreatScorer,
+    ScoredThreat,
+    IntelMatch,
+    RiskLevel,
+)
 
 __all__ = [
     # Data models
@@ -83,4 +89,9 @@ __all__ = [
     "DetectionRule",
     "ThreatLevel",
     "Sensitivity",
+    # Threat Scorer
+    "ThreatScorer",
+    "ScoredThreat",
+    "IntelMatch",
+    "RiskLevel",
 ]
