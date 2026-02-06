@@ -64,6 +64,18 @@ from .chart_data import (
     timeline_scatter_chart,
     category_breakdown_chart,
 )
+from .alert_timeline import (
+    AlertTimeline,
+    TimelineEntry,
+    TimelineView,
+    DrillDownView,
+    SortField,
+    SortOrder,
+    filter_entries,
+    sort_entries,
+    paginate,
+    drill_down,
+)
 
 __all__ = [
     # Data models
@@ -130,4 +142,15 @@ __all__ = [
     "severity_distribution_chart",
     "timeline_scatter_chart",
     "category_breakdown_chart",
+    # Alert Timeline
+    "AlertTimeline",
+    "TimelineEntry",
+    "TimelineView",
+    "DrillDownView",
+    "SortField",
+    "SortOrder",
+    "filter_entries",
+    "sort_entries",
+    "paginate",
+    "drill_down",
 ]
