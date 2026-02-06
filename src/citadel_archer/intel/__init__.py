@@ -25,6 +25,13 @@ from .event_aggregator import (
     AggregatedEvent,
     categorize_event,
 )
+from .context_engine import (
+    ContextEngine,
+    AssetBaseline,
+    BaselineResult,
+    BehaviorType,
+    PatternEntry,
+)
 
 __all__ = [
     # Data models
@@ -57,4 +64,10 @@ __all__ = [
     "EventCategory",
     "AggregatedEvent",
     "categorize_event",
+    # Context Engine
+    "ContextEngine",
+    "AssetBaseline",
+    "BaselineResult",
+    "BehaviorType",
+    "PatternEntry",
 ]
