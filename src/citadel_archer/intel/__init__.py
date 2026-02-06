@@ -76,6 +76,18 @@ from .alert_timeline import (
     paginate,
     drill_down,
 )
+from .risk_metrics import (
+    RiskMetrics,
+    RiskMetricsSnapshot,
+    ThreatCounts,
+    TrendPoint,
+    AssetRisk,
+    GaugeData,
+    GaugeZone,
+    gauge_chart,
+    asset_risk_bar_chart,
+    trend_line_chart,
+)
 
 __all__ = [
     # Data models
@@ -153,4 +165,15 @@ __all__ = [
     "sort_entries",
     "paginate",
     "drill_down",
+    # Risk Metrics
+    "RiskMetrics",
+    "RiskMetricsSnapshot",
+    "ThreatCounts",
+    "TrendPoint",
+    "AssetRisk",
+    "GaugeData",
+    "GaugeZone",
+    "gauge_chart",
+    "asset_risk_bar_chart",
+    "trend_line_chart",
 ]
