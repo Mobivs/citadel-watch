@@ -15,6 +15,7 @@ from .models import (
 )
 from .store import IntelStore
 from .fetcher import IntelFetcher
+from .otx_fetcher import OTXFetcher, OTXFetchError
 from .queue import IntelQueue
 
 __all__ = [
@@ -30,6 +31,8 @@ __all__ = [
     "IntelStore",
     # Fetcher
     "IntelFetcher",
+    "OTXFetcher",
+    "OTXFetchError",
     # Queue
     "IntelQueue",
 ]
