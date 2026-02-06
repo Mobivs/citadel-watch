@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vault - Citadel Archer</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'neon-blue': '#00D9FF',
+                        'dark-bg': '#0A0E27',
+                        'card-bg': 'rgba(15, 23, 42, 0.6)',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="dark bg-dark-bg text-gray-100 font-sans antialiased">
+
+    <div id="app" class="min-h-screen">
+        <!-- Header -->
+        <header class="glass-card border-b border-neon-blue/20 px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <a href="/" class="text-gray-400 hover:text-neon-blue transition-colors">← Back</a>
+                    <div class="w-10 h-10 rounded-lg bg-neon-blue/20 flex items-center justify-center">
+                        <span class="text-2xl">🔐</span>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold text-neon-blue">Vault</h1>
+                        <p class="text-xs text-gray-400">Encrypted Password Manager</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                    <button id="lock-vault-btn" class="btn-secondary px-4 py-2 rounded-lg hidden">
+                        🔒 Lock Vault
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="container mx-auto px-6 py-8" id="vault-section">
+
+            <!-- Locked State -->
+            <div id="vault-locked-state" class="max-w-2xl mx-auto">
+                <div class="glass-card p-12 text-center">
+                    <div class="text-6xl mb-6">🔒</div>
+                    <h2 class="text-3xl font-bold text-neon-blue mb-4">Vault is Locked</h2>
+                    <p class="text-gray-400 mb-8">
+                        Your passwords are encrypted and secure.<br>
+                        Unlock with your master password to access them.
+                    </p>
+                    <button id="unlock-vault-btn" class="btn-primary px-8 py-3 rounded-lg">
+                        Unlock Vault
+                    </button>
+
+                    <div class="mt-8 pt-8 border-t border-gray-700">
+                        <p class="text-sm text-gray-500">
+                            🔐 AES-256 Encryption • 🔑 PBKDF2 Key Derivation • 🛡️ Zero-Knowledge Architecture
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Unlocked State -->
+            <div id="vault-unlocked-state" class="hidden">
+                <!-- Actions Bar -->
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold">Stored Passwords</h2>
+                    <button id="add-password-btn" class="btn-primary px-6 py-2 rounded-lg">
+                        + Add Password
+                    </button>
+                </div>
+
+                <!-- Password List -->
+                <div class="glass-card p-6">
+                    <vault-password-list></vault-password-list>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Footer -->
+        <footer class="text-center py-6 text-gray-500 text-sm">
+            <p>Protected by Citadel Archer AI • Encrypted with AES-256 🔐</p>
+        </footer>
+    </div>
+
+    <!-- Web Components -->
+    <vault-unlock></vault-unlock>
+    <vault-password-viewer></vault-password-viewer>
+
+    <!-- Load Scripts -->
+    <script type="module" src="js/components/vault-unlock.js"></script>
+    <script type="module" src="js/components/vault-password-list.js"></script>
+    <script type="module" src="js/components/vault-password-viewer.js"></script>
+    <script type="module" src="js/vault.js"></script>
+
+</body>
+</html>

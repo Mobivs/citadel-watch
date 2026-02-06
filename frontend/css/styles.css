@@ -1,0 +1,257 @@
+/* PRD: Dashboard - Dark glassmorphic UI with neon blue accent (#00D9FF) */
+/* Reference: docs/PRD.md v0.2.3, Section: Dashboard - User Experience */
+
+/* Global Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: linear-gradient(135deg, #0A0E27 0%, #1a1f3a 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+}
+
+/* Glassmorphic Card Style */
+.glass-card {
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(0, 217, 255, 0.1);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    transition: all 0.3s ease;
+}
+
+.glass-card:hover {
+    border-color: rgba(0, 217, 255, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(0, 217, 255, 0.1);
+    transform: translateY(-2px);
+}
+
+/* Neon Glow Effect */
+.neon-glow {
+    text-shadow: 0 0 10px rgba(0, 217, 255, 0.5),
+                 0 0 20px rgba(0, 217, 255, 0.3),
+                 0 0 30px rgba(0, 217, 255, 0.2);
+}
+
+.neon-border {
+    border: 2px solid #00D9FF;
+    box-shadow: 0 0 10px rgba(0, 217, 255, 0.3),
+                inset 0 0 10px rgba(0, 217, 255, 0.1);
+}
+
+/* Status Indicators */
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    animation: pulse 2s infinite;
+}
+
+.status-green {
+    background-color: #10B981;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+}
+
+.status-yellow {
+    background-color: #F59E0B;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+}
+
+.status-orange {
+    background-color: #F97316;
+    box-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
+}
+
+.status-red {
+    background-color: #EF4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Scrollbar Styling */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 217, 255, 0.2) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+    margin-block: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(0, 217, 255, 0.2);
+    border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 217, 255, 0.4);
+}
+
+::-webkit-scrollbar-button {
+    display: none;
+}
+
+/* Button Styles */
+.btn-primary {
+    background: linear-gradient(135deg, #00D9FF 0%, #0099CC 100%);
+    color: white;
+    padding: 0.5rem 1.5rem;
+    border-radius: 8px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0, 217, 255, 0.3);
+}
+
+.btn-primary:hover {
+    box-shadow: 0 6px 20px rgba(0, 217, 255, 0.5);
+    transform: translateY(-2px);
+}
+
+.btn-secondary {
+    background: rgba(0, 217, 255, 0.1);
+    color: #00D9FF;
+    padding: 0.5rem 1.5rem;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 217, 255, 0.3);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-secondary:hover {
+    background: rgba(0, 217, 255, 0.2);
+    border-color: rgba(0, 217, 255, 0.5);
+}
+
+/* Alert Styles (PRD: Color coding 🟢🟡🟠🔴) */
+.alert-info {
+    background: rgba(16, 185, 129, 0.1);
+    border-left: 4px solid #10B981;
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+.alert-investigate {
+    background: rgba(245, 158, 11, 0.1);
+    border-left: 4px solid #F59E0B;
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+.alert-warning {
+    background: rgba(249, 115, 22, 0.1);
+    border-left: 4px solid #F97316;
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+.alert-critical {
+    background: rgba(239, 68, 68, 0.1);
+    border-left: 4px solid #EF4444;
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+/* Loading Animation */
+.loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 217, 255, 0.2);
+    border-top-color: #00D9FF;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Fade In Animation */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-out;
+}
+
+/* Card Grid Responsive */
+@media (max-width: 768px) {
+    .glass-card {
+        margin-bottom: 1rem;
+    }
+}
+
+/* Typography */
+.text-gradient {
+    background: linear-gradient(135deg, #00D9FF 0%, #0099CC 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Shadow DOM Support (Web Components will use these via ::part) */
+:host {
+    display: block;
+}
+
+/* Web Component Spacing Fix */
+guardian-status,
+threat-level,
+protected-systems {
+    display: block;
+    height: 100%; /* Fill grid cell height */
+}
+
+ai-insights {
+    display: block;
+}
+
+/* Event log and process list need special handling for scrolling */
+event-log,
+process-list {
+    display: block;
+    height: 100%; /* Fill parent container */
+    min-height: 0; /* Allow shrinking to fit */
+}
+
+/* Ensure proper spacing in grid */
+.grid > * {
+    min-width: 0; /* Prevent grid blowout */
+}
+
+/* Make event/process cards equal height with fixed size */
+.panel-card {
+    height: 600px !important; /* Fixed height for side-by-side cards */
+    max-height: 600px !important; /* Prevent overflow */
+    overflow: hidden !important; /* Prevent content from overflowing card */
+}
