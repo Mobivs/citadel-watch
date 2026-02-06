@@ -88,6 +88,17 @@ from .risk_metrics import (
     asset_risk_bar_chart,
     trend_line_chart,
 )
+from .asset_view import (
+    AssetView,
+    AssetRow,
+    AssetTableView,
+    AssetDetail,
+    AssetSortField,
+    AssetSortOrder,
+    build_asset_row,
+    filter_asset_rows,
+    sort_asset_rows,
+)
 
 __all__ = [
     # Data models
@@ -176,4 +187,14 @@ __all__ = [
     "gauge_chart",
     "asset_risk_bar_chart",
     "trend_line_chart",
+    # Asset View
+    "AssetView",
+    "AssetRow",
+    "AssetTableView",
+    "AssetDetail",
+    "AssetSortField",
+    "AssetSortOrder",
+    "build_asset_row",
+    "filter_asset_rows",
+    "sort_asset_rows",
 ]
