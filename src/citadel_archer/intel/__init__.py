@@ -53,6 +53,17 @@ from .guardian_updater import (
     RuleSeverity,
     UpdateReport,
 )
+from .chart_data import (
+    AggregationInterval,
+    ChartConfig,
+    ChartDataset,
+    ChartTheme,
+    build_all_charts,
+    threat_trend_chart,
+    severity_distribution_chart,
+    timeline_scatter_chart,
+    category_breakdown_chart,
+)
 
 __all__ = [
     # Data models
@@ -109,4 +120,14 @@ __all__ = [
     "RuleAction",
     "RuleSeverity",
     "UpdateReport",
+    # Chart Data
+    "AggregationInterval",
+    "ChartConfig",
+    "ChartDataset",
+    "ChartTheme",
+    "build_all_charts",
+    "threat_trend_chart",
+    "severity_distribution_chart",
+    "timeline_scatter_chart",
+    "category_breakdown_chart",
 ]
