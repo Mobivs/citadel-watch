@@ -1,0 +1,8 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.0
+psutil==5.9.6
+watchdog==3.0.0
+click==8.1.7
+cryptography==41.0.7
+python-age==0.2.2
