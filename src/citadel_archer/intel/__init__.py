@@ -18,6 +18,13 @@ from .fetcher import IntelFetcher
 from .otx_fetcher import OTXFetcher, OTXFetchError
 from .queue import IntelQueue
 from .aggregator import IntelAggregator, AggregationReport, FetchResult
+from .assets import Asset, AssetPlatform, AssetStatus, AssetInventory
+from .event_aggregator import (
+    EventAggregator,
+    EventCategory,
+    AggregatedEvent,
+    categorize_event,
+)
 
 __all__ = [
     # Data models
@@ -40,4 +47,14 @@ __all__ = [
     "IntelAggregator",
     "AggregationReport",
     "FetchResult",
+    # Assets
+    "Asset",
+    "AssetPlatform",
+    "AssetStatus",
+    "AssetInventory",
+    # Event Aggregator
+    "EventAggregator",
+    "EventCategory",
+    "AggregatedEvent",
+    "categorize_event",
 ]
