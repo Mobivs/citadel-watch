@@ -17,6 +17,7 @@ from .store import IntelStore
 from .fetcher import IntelFetcher
 from .otx_fetcher import OTXFetcher, OTXFetchError
 from .queue import IntelQueue
+from .aggregator import IntelAggregator, AggregationReport, FetchResult
 
 __all__ = [
     # Data models
@@ -35,4 +36,8 @@ __all__ = [
     "OTXFetchError",
     # Queue
     "IntelQueue",
+    # Aggregator
+    "IntelAggregator",
+    "AggregationReport",
+    "FetchResult",
 ]
