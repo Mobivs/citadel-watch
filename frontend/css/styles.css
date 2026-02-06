@@ -82,23 +82,32 @@ body {
 }
 
 /* Scrollbar Styling */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 217, 255, 0.2) transparent;
+}
+
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 5px;
+    height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-    background: rgba(15, 23, 42, 0.4);
-    border-radius: 4px;
+    background: transparent;
+    margin-block: 12px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(0, 217, 255, 0.3);
-    border-radius: 4px;
+    background: rgba(0, 217, 255, 0.2);
+    border-radius: 99px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 217, 255, 0.5);
+    background: rgba(0, 217, 255, 0.4);
+}
+
+::-webkit-scrollbar-button {
+    display: none;
 }
 
 /* Button Styles */
@@ -218,15 +227,31 @@ body {
 /* Web Component Spacing Fix */
 guardian-status,
 threat-level,
-protected-systems,
-event-log,
-process-list,
+protected-systems {
+    display: block;
+    height: 100%; /* Fill grid cell height */
+}
+
 ai-insights {
     display: block;
-    min-height: 200px; /* Ensure minimum height to prevent collapse */
+}
+
+/* Event log and process list need special handling for scrolling */
+event-log,
+process-list {
+    display: block;
+    height: 100%; /* Fill parent container */
+    min-height: 0; /* Allow shrinking to fit */
 }
 
 /* Ensure proper spacing in grid */
 .grid > * {
     min-width: 0; /* Prevent grid blowout */
+}
+
+/* Make event/process cards equal height with fixed size */
+.panel-card {
+    height: 600px !important; /* Fixed height for side-by-side cards */
+    max-height: 600px !important; /* Prevent overflow */
+    overflow: hidden !important; /* Prevent content from overflowing card */
 }

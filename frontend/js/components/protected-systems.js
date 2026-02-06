@@ -12,6 +12,11 @@ class ProtectedSystems extends HTMLElement {
     render() {
         this.shadowRoot.innerHTML = `
             <style>
+                :host {
+                    display: block;
+                    height: 100%;
+                }
+
                 .card {
                     background: rgba(15, 23, 42, 0.6);
                     backdrop-filter: blur(20px);
@@ -20,6 +25,8 @@ class ProtectedSystems extends HTMLElement {
                     padding: 1.5rem;
                     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
                     height: 100%;
+                    box-sizing: border-box;
+                    overflow: hidden;
                 }
                 .title { font-size: 0.875rem; color: #9CA3AF; margin-bottom: 0.5rem; }
                 .value { font-size: 1.5rem; font-weight: 700; color: #F3F4F6; }

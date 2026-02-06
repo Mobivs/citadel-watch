@@ -81,6 +81,9 @@ frontend/.next/
 frontend/build/
 frontend/.env.local
 
+# Quarantine - files flagged by security monitoring
+quarantine/
+
 # Security - NEVER commit these
 *.key
 *.pem

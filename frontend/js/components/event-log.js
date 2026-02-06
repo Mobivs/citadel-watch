@@ -46,7 +46,16 @@ class EventLog extends HTMLElement {
 
         this.shadowRoot.innerHTML = `
             <style>
-                :host { display: block; max-height: 400px; overflow-y: auto; }
+                :host {
+                    display: block;
+                    height: 100%;
+                    overflow: hidden;
+                }
+                .events-container {
+                    height: 100%;
+                    overflow-y: auto;
+                    padding-right: 4px;
+                }
                 .event-item {
                     display: flex;
                     gap: 0.75rem;
@@ -85,9 +94,12 @@ class EventLog extends HTMLElement {
                 .fade-in { animation: fadeIn 0.5s ease-out; }
 
                 /* Scrollbar */
-                ::-webkit-scrollbar { width: 6px; }
-                ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
-                ::-webkit-scrollbar-thumb { background: rgba(0, 217, 255, 0.3); border-radius: 3px; }
+                * { scrollbar-width: thin; scrollbar-color: rgba(0, 217, 255, 0.2) transparent; }
+                ::-webkit-scrollbar { width: 5px; }
+                ::-webkit-scrollbar-track { background: transparent; margin-block: 12px; }
+                ::-webkit-scrollbar-thumb { background: rgba(0, 217, 255, 0.2); border-radius: 99px; }
+                ::-webkit-scrollbar-thumb:hover { background: rgba(0, 217, 255, 0.4); }
+                ::-webkit-scrollbar-button { display: none; }
             </style>
             <div class="events-container">${eventsHTML}</div>
         `;

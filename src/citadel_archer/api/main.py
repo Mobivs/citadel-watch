@@ -211,6 +211,16 @@ async def serve_frontend():
         }
 
 
+@app.get("/index.html")
+async def serve_frontend_html():
+    """Serve frontend HTML via /index.html path."""
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    else:
+        return {"name": "Citadel Archer API", "version": "0.2.3", "status": "operational"}
+
+
 @app.get("/vault.html")
 async def serve_vault():
     """Serve Vault page for desktop app."""

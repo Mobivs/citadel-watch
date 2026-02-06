@@ -54,6 +54,7 @@ class ThreatLevel extends HTMLElement {
             <style>
                 :host {
                     display: block;
+                    height: 100%;
                 }
 
                 .card {
@@ -65,6 +66,8 @@ class ThreatLevel extends HTMLElement {
                     transition: all 0.3s ease;
                     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
                     height: 100%;
+                    box-sizing: border-box;
+                    overflow: hidden;
                 }
 
                 .card:hover {

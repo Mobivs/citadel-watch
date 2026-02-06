@@ -35,7 +35,16 @@ class ProcessList extends HTMLElement {
 
         this.shadowRoot.innerHTML = `
             <style>
-                :host { display: block; max-height: 400px; overflow-y: auto; }
+                :host {
+                    display: block;
+                    height: 100%;
+                    overflow: hidden;
+                }
+                .processes-container {
+                    height: 100%;
+                    overflow-y: auto;
+                    padding-right: 4px;
+                }
                 .process-item {
                     padding: 0.75rem;
                     margin-bottom: 0.5rem;
@@ -65,9 +74,12 @@ class ProcessList extends HTMLElement {
                     color: #9CA3AF;
                     font-size: 0.875rem;
                 }
-                ::-webkit-scrollbar { width: 6px; }
-                ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
-                ::-webkit-scrollbar-thumb { background: rgba(0, 217, 255, 0.3); border-radius: 3px; }
+                * { scrollbar-width: thin; scrollbar-color: rgba(0, 217, 255, 0.2) transparent; }
+                ::-webkit-scrollbar { width: 5px; }
+                ::-webkit-scrollbar-track { background: transparent; margin-block: 12px; }
+                ::-webkit-scrollbar-thumb { background: rgba(0, 217, 255, 0.2); border-radius: 99px; }
+                ::-webkit-scrollbar-thumb:hover { background: rgba(0, 217, 255, 0.4); }
+                ::-webkit-scrollbar-button { display: none; }
             </style>
             <div class="processes-container">${processesHTML}</div>
         `;

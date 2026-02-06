@@ -36,6 +36,7 @@ class GuardianStatus extends HTMLElement {
 
                 :host {
                     display: block;
+                    height: 100%;
                 }
 
                 .card {
@@ -46,6 +47,9 @@ class GuardianStatus extends HTMLElement {
                     padding: 1.5rem;
                     transition: all 0.3s ease;
                     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+                    height: 100%;
+                    box-sizing: border-box;
+                    overflow: hidden;
                 }
 
                 .card:hover {

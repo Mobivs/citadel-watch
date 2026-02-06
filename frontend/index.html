@@ -88,24 +88,28 @@
             </div>
 
             <!-- Main Grid -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
                 <!-- Recent Events -->
-                <div class="glass-card p-6">
-                    <div class="flex items-center justify-between mb-4">
+                <div class="glass-card panel-card p-6 flex flex-col" style="height: 600px; max-height: 600px; overflow: hidden;">
+                    <div class="flex items-center justify-between mb-4 flex-shrink-0">
                         <h2 class="text-xl font-bold">Recent Events</h2>
                         <button class="text-sm text-neon-blue hover:underline">View All</button>
                     </div>
-                    <event-log></event-log>
+                    <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
+                        <event-log></event-log>
+                    </div>
                 </div>
 
                 <!-- Running Processes -->
-                <div class="glass-card p-6">
-                    <div class="flex items-center justify-between mb-4">
+                <div class="glass-card panel-card p-6 flex flex-col" style="height: 600px; max-height: 600px; overflow: hidden;">
+                    <div class="flex items-center justify-between mb-4 flex-shrink-0">
                         <h2 class="text-xl font-bold">Running Processes</h2>
                         <button class="text-sm text-neon-blue hover:underline">View All</button>
                     </div>
-                    <process-list></process-list>
+                    <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
+                        <process-list></process-list>
+                    </div>
                 </div>
 
             </div>
@@ -133,6 +137,7 @@
 
     <!-- Main App Logic -->
     <script type="module" src="js/main.js"></script>
+
 
 </body>
 </html>

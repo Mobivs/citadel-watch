@@ -45,13 +45,21 @@ class VaultPasswordViewer extends HTMLElement {
                     background: rgba(15, 23, 42, 0.95);
                     border: 2px solid rgba(0, 217, 255, 0.3);
                     border-radius: 20px;
-                    padding: 2rem;
+                    padding: 2rem 2.5rem 2rem 2rem;
                     max-width: 500px;
                     width: 90%;
                     max-height: 90vh;
                     overflow-y: auto;
                     box-shadow: 0 20px 60px rgba(0, 217, 255, 0.2);
+                    scrollbar-width: thin;
+                    scrollbar-color: rgba(0, 217, 255, 0.2) transparent;
                 }
+
+                .modal-card::-webkit-scrollbar { width: 5px; }
+                .modal-card::-webkit-scrollbar-track { background: transparent; margin-block: 16px; }
+                .modal-card::-webkit-scrollbar-thumb { background: rgba(0, 217, 255, 0.2); border-radius: 99px; }
+                .modal-card::-webkit-scrollbar-thumb:hover { background: rgba(0, 217, 255, 0.4); }
+                .modal-card::-webkit-scrollbar-button { display: none; }
 
                 h2 {
                     color: #00D9FF;
@@ -96,6 +104,10 @@ class VaultPasswordViewer extends HTMLElement {
                 /* Password Field with Toggle/Copy */
                 .password-field {
                     position: relative;
+                }
+
+                .password-field input {
+                    padding-right: 7rem;
                 }
 
                 .password-actions {
@@ -202,12 +214,14 @@ class VaultPasswordViewer extends HTMLElement {
                             <input type="text" id="username" placeholder="e.g., user@example.com" />
                         </div>
 
-                        <div class="form-group password-field">
+                        <div class="form-group">
                             <label for="password">Password *</label>
-                            <input type="password" id="password" placeholder="Enter password" required />
-                            <div class="password-actions">
-                                <button type="button" class="icon-btn" id="toggle-visibility" title="Show/Hide">👁️</button>
-                                <button type="button" class="icon-btn" id="copy-password" title="Copy">📋</button>
+                            <div class="password-field">
+                                <input type="password" id="password" placeholder="Enter password" required />
+                                <div class="password-actions">
+                                    <button type="button" class="icon-btn" id="toggle-visibility" title="Show/Hide">👁️</button>
+                                    <button type="button" class="icon-btn" id="copy-password" title="Copy">📋</button>
+                                </div>
                             </div>
                         </div>
 
