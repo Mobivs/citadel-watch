@@ -5,5 +5,22 @@
 # for real-time communication with the Dashboard UI.
 
 from .main import app, start_api_server
+from .dashboard_ext import (
+    DashboardServices,
+    EventBroadcaster,
+    TTLCache,
+    cache,
+    services,
+    broadcaster,
+)
 
-__all__ = ["app", "start_api_server"]
+__all__ = [
+    "app",
+    "start_api_server",
+    "DashboardServices",
+    "EventBroadcaster",
+    "TTLCache",
+    "cache",
+    "services",
+    "broadcaster",
+]
