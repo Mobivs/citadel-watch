@@ -32,6 +32,13 @@ from .context_engine import (
     BehaviorType,
     PatternEntry,
 )
+from .anomaly_detector import (
+    AnomalyDetector,
+    AnomalyScore,
+    DetectionRule,
+    ThreatLevel,
+    Sensitivity,
+)
 
 __all__ = [
     # Data models
@@ -70,4 +77,10 @@ __all__ = [
     "BaselineResult",
     "BehaviorType",
     "PatternEntry",
+    # Anomaly Detector
+    "AnomalyDetector",
+    "AnomalyScore",
+    "DetectionRule",
+    "ThreatLevel",
+    "Sensitivity",
 ]
