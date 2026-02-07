@@ -223,6 +223,86 @@ async def serve_frontend_html():
         return {"name": "Citadel Archer API", "version": "0.2.3", "status": "operational"}
 
 
+@app.get("/assets.html")
+async def serve_assets_page():
+    """Serve Assets page."""
+    path = FRONTEND_DIR / "assets.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Assets page not found")
+
+
+@app.get("/assets-page")
+async def serve_assets_page_redirect():
+    """Redirect /assets-page to /assets.html"""
+    path = FRONTEND_DIR / "assets.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Assets page not found")
+
+
+@app.get("/risk-metrics.html")
+async def serve_risk_metrics():
+    """Serve Risk Metrics page."""
+    path = FRONTEND_DIR / "risk-metrics.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Risk Metrics page not found")
+
+
+@app.get("/risk-metrics")
+async def serve_risk_metrics_redirect():
+    """Redirect /risk-metrics to /risk-metrics.html"""
+    path = FRONTEND_DIR / "risk-metrics.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Risk Metrics page not found")
+
+
+@app.get("/timeline.html")
+async def serve_timeline():
+    """Serve Alert Timeline page."""
+    timeline_path = FRONTEND_DIR / "timeline.html"
+    if timeline_path.exists():
+        return FileResponse(timeline_path)
+    else:
+        raise HTTPException(status_code=404, detail="Timeline page not found")
+
+
+@app.get("/timeline")
+async def serve_timeline_redirect():
+    """Redirect /timeline to /timeline.html"""
+    timeline_path = FRONTEND_DIR / "timeline.html"
+    if timeline_path.exists():
+        return FileResponse(timeline_path)
+    else:
+        raise HTTPException(status_code=404, detail="Timeline page not found")
+
+
+@app.get("/charts.html")
+async def serve_charts():
+    """Serve Charts & Visualization page."""
+    charts_path = FRONTEND_DIR / "charts.html"
+    if charts_path.exists():
+        return FileResponse(charts_path)
+    else:
+        raise HTTPException(status_code=404, detail="Charts page not found")
+
+
+@app.get("/charts")
+async def serve_charts_redirect():
+    """Redirect /charts to /charts.html"""
+    charts_path = FRONTEND_DIR / "charts.html"
+    if charts_path.exists():
+        return FileResponse(charts_path)
+    else:
+        raise HTTPException(status_code=404, detail="Charts page not found")
+
+
 @app.get("/vault.html")
 async def serve_vault():
     """Serve Vault page for desktop app."""
