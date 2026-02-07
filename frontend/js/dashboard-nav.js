@@ -137,16 +137,16 @@ function updateConnectionBadge(connected) {
     if (!badge || !dot || !text) return;
 
     if (connected) {
-        badge.style.background = 'rgba(16,185,129,0.15)';
-        badge.style.color      = '#10B981';
-        badge.style.border     = '1px solid rgba(16,185,129,0.3)';
-        dot.style.background   = '#10B981';
+        badge.style.background = 'rgba(0,204,102,0.15)';
+        badge.style.color      = '#00cc66';
+        badge.style.border     = '1px solid rgba(0,204,102,0.3)';
+        dot.style.background   = '#00cc66';
         text.textContent       = 'Live';
     } else {
-        badge.style.background = 'rgba(239,68,68,0.15)';
-        badge.style.color      = '#EF4444';
-        badge.style.border     = '1px solid rgba(239,68,68,0.3)';
-        dot.style.background   = '#EF4444';
+        badge.style.background = 'rgba(255,51,51,0.15)';
+        badge.style.color      = '#ff3333';
+        badge.style.border     = '1px solid rgba(255,51,51,0.3)';
+        dot.style.background   = '#ff3333';
         text.textContent       = 'Offline';
     }
 }

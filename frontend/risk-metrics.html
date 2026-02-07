@@ -53,10 +53,10 @@
             border-radius: 4px 0 0 4px;
         }
 
-        .counter-critical::before { background: #EF4444; }
-        .counter-high::before    { background: #F97316; }
-        .counter-medium::before  { background: #F59E0B; }
-        .counter-low::before     { background: #10B981; }
+        .counter-critical::before { background: #ff3333; }
+        .counter-high::before    { background: #ff9900; }
+        .counter-medium::before  { background: #ffcc00; }
+        .counter-low::before     { background: #00cc66; }
 
         .counter-value {
             font-size: 2.5rem;
@@ -257,7 +257,7 @@
                 <!-- Critical -->
                 <div class="glass-card counter-card counter-critical p-5">
                     <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">Critical</p>
-                    <p class="counter-value" style="color: #EF4444;" id="count-critical">0</p>
+                    <p class="counter-value" style="color: #ff3333;" id="count-critical">0</p>
                     <div class="mt-2">
                         <div class="sparkline-container" id="sparkline-critical"></div>
                     </div>
@@ -266,7 +266,7 @@
                 <!-- High -->
                 <div class="glass-card counter-card counter-high p-5">
                     <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">High</p>
-                    <p class="counter-value" style="color: #F97316;" id="count-high">0</p>
+                    <p class="counter-value" style="color: #ff9900;" id="count-high">0</p>
                     <div class="mt-2">
                         <div class="sparkline-container" id="sparkline-high"></div>
                     </div>
@@ -275,7 +275,7 @@
                 <!-- Medium -->
                 <div class="glass-card counter-card counter-medium p-5">
                     <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">Medium</p>
-                    <p class="counter-value" style="color: #F59E0B;" id="count-medium">0</p>
+                    <p class="counter-value" style="color: #ffcc00;" id="count-medium">0</p>
                     <div class="mt-2">
                         <div class="sparkline-container" id="sparkline-medium"></div>
                     </div>
@@ -284,7 +284,7 @@
                 <!-- Low -->
                 <div class="glass-card counter-card counter-low p-5">
                     <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">Low</p>
-                    <p class="counter-value" style="color: #10B981;" id="count-low">0</p>
+                    <p class="counter-value" style="color: #00cc66;" id="count-low">0</p>
                     <div class="mt-2">
                         <div class="sparkline-container" id="sparkline-low"></div>
                     </div>

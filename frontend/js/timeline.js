@@ -10,10 +10,10 @@ import { apiClient } from './utils/api-client.js';
 // ── Severity colour mapping ────────────────────────────────────────
 
 const SEV_COLOURS = {
-    info:        { fg: '#10B981', bg: 'rgba(16,185,129,0.15)',  border: 'rgba(16,185,129,0.3)' },
-    investigate: { fg: '#F59E0B', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.3)' },
-    alert:       { fg: '#F97316', bg: 'rgba(249,115,22,0.15)', border: 'rgba(249,115,22,0.3)' },
-    critical:    { fg: '#EF4444', bg: 'rgba(239,68,68,0.15)',  border: 'rgba(239,68,68,0.3)' },
+    info:        { fg: '#00cc66', bg: 'rgba(0,204,102,0.15)',  border: 'rgba(0,204,102,0.3)' },
+    investigate: { fg: '#ffcc00', bg: 'rgba(255,204,0,0.15)',  border: 'rgba(255,204,0,0.3)' },
+    alert:       { fg: '#ff9900', bg: 'rgba(255,153,0,0.15)',  border: 'rgba(255,153,0,0.3)' },
+    critical:    { fg: '#ff3333', bg: 'rgba(255,51,51,0.15)',  border: 'rgba(255,51,51,0.3)' },
 };
 
 const SEV_RANK = { info: 1, investigate: 2, alert: 3, critical: 4 };
@@ -22,11 +22,11 @@ const CATEGORY_COLOURS = {
     file:    '#3B82F6',
     process: '#A855F7',
     network: '#00D9FF',
-    vault:   '#F59E0B',
+    vault:   '#ffcc00',
     system:  '#6B7280',
     ai:      '#EC4899',
-    user:    '#10B981',
-    intel:   '#F97316',
+    user:    '#00cc66',
+    intel:   '#ff9900',
 };
 
 // ── State ───────────────────────────────────────────────────────────
@@ -478,16 +478,16 @@ function setLiveStatus(connected) {
     if (!badge) return;
 
     if (connected) {
-        badge.style.background = 'rgba(16,185,129,0.15)';
-        badge.style.color = '#10B981';
-        badge.style.borderColor = 'rgba(16,185,129,0.3)';
-        if (dot) dot.style.background = '#10B981';
+        badge.style.background = 'rgba(0,204,102,0.15)';
+        badge.style.color = '#00cc66';
+        badge.style.borderColor = 'rgba(0,204,102,0.3)';
+        if (dot) dot.style.background = '#00cc66';
         if (text) text.textContent = 'Live';
     } else {
-        badge.style.background = 'rgba(239,68,68,0.15)';
-        badge.style.color = '#EF4444';
-        badge.style.borderColor = 'rgba(239,68,68,0.3)';
-        if (dot) dot.style.background = '#EF4444';
+        badge.style.background = 'rgba(255,51,51,0.15)';
+        badge.style.color = '#ff3333';
+        badge.style.borderColor = 'rgba(255,51,51,0.3)';
+        if (dot) dot.style.background = '#ff3333';
         if (text) text.textContent = 'Offline';
     }
 }

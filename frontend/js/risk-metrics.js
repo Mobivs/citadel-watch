@@ -11,17 +11,17 @@ import { apiClient } from './utils/api-client.js';
 // ── Colour constants ────────────────────────────────────────────────
 
 const COLOURS = {
-    critical: { fg: '#EF4444', bg: 'rgba(239,68,68,0.15)' },
-    high:     { fg: '#F97316', bg: 'rgba(249,115,22,0.15)' },
-    medium:   { fg: '#F59E0B', bg: 'rgba(245,158,11,0.15)' },
-    low:      { fg: '#10B981', bg: 'rgba(16,185,129,0.15)' },
+    critical: { fg: '#ff3333', bg: 'rgba(255,51,51,0.15)' },
+    high:     { fg: '#ff9900', bg: 'rgba(255,153,0,0.15)' },
+    medium:   { fg: '#ffcc00', bg: 'rgba(255,204,0,0.15)' },
+    low:      { fg: '#00cc66', bg: 'rgba(0,204,102,0.15)' },
 };
 
 const GAUGE_ZONES = [
-    { min: 0.00, max: 0.25, colour: '#10B981', label: 'Safe' },
-    { min: 0.25, max: 0.50, colour: '#F59E0B', label: 'Elevated' },
-    { min: 0.50, max: 0.75, colour: '#F97316', label: 'High' },
-    { min: 0.75, max: 1.00, colour: '#EF4444', label: 'Critical' },
+    { min: 0.00, max: 0.25, colour: '#00cc66', label: 'Safe' },
+    { min: 0.25, max: 0.50, colour: '#ffcc00', label: 'Elevated' },
+    { min: 0.50, max: 0.75, colour: '#ff9900', label: 'High' },
+    { min: 0.75, max: 1.00, colour: '#ff3333', label: 'Critical' },
 ];
 
 // Chart.js global defaults
@@ -458,16 +458,16 @@ function setLiveStatus(connected) {
     if (!badge) return;
 
     if (connected) {
-        badge.style.background = 'rgba(16,185,129,0.15)';
-        badge.style.color = '#10B981';
-        badge.style.borderColor = 'rgba(16,185,129,0.3)';
-        if (dot) dot.style.background = '#10B981';
+        badge.style.background = 'rgba(0,204,102,0.15)';
+        badge.style.color = '#00cc66';
+        badge.style.borderColor = 'rgba(0,204,102,0.3)';
+        if (dot) dot.style.background = '#00cc66';
         if (text) text.textContent = 'Live';
     } else {
-        badge.style.background = 'rgba(239,68,68,0.15)';
-        badge.style.color = '#EF4444';
-        badge.style.borderColor = 'rgba(239,68,68,0.3)';
-        if (dot) dot.style.background = '#EF4444';
+        badge.style.background = 'rgba(255,51,51,0.15)';
+        badge.style.color = '#ff3333';
+        badge.style.borderColor = 'rgba(255,51,51,0.3)';
+        if (dot) dot.style.background = '#ff3333';
         if (text) text.textContent = 'Offline';
     }
 }

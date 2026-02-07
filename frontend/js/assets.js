@@ -13,9 +13,9 @@ const THREAT_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
 const STATUS_RANK = { online: 0, protected: 1, offline: 2, compromised: 3 };
 
 const ROW_COLOURS = {
-    critical: 'rgba(239, 68, 68, 0.08)',
-    high:     'rgba(249, 115, 22, 0.06)',
-    medium:   'rgba(245, 158, 11, 0.04)',
+    critical: 'rgba(255, 51, 51, 0.08)',
+    high:     'rgba(255, 153, 0, 0.06)',
+    medium:   'rgba(255, 204, 0, 0.04)',
     low:      'transparent',
 };
 
@@ -365,16 +365,16 @@ function setLiveStatus(connected) {
     if (!badge) return;
 
     if (connected) {
-        badge.style.background = 'rgba(16,185,129,0.15)';
-        badge.style.color = '#10B981';
-        badge.style.borderColor = 'rgba(16,185,129,0.3)';
-        if (dot) dot.style.background = '#10B981';
+        badge.style.background = 'rgba(0,204,102,0.15)';
+        badge.style.color = '#00cc66';
+        badge.style.borderColor = 'rgba(0,204,102,0.3)';
+        if (dot) dot.style.background = '#00cc66';
         if (text) text.textContent = 'Live';
     } else {
-        badge.style.background = 'rgba(239,68,68,0.15)';
-        badge.style.color = '#EF4444';
-        badge.style.borderColor = 'rgba(239,68,68,0.3)';
-        if (dot) dot.style.background = '#EF4444';
+        badge.style.background = 'rgba(255,51,51,0.15)';
+        badge.style.color = '#ff3333';
+        badge.style.borderColor = 'rgba(255,51,51,0.3)';
+        if (dot) dot.style.background = '#ff3333';
         if (text) text.textContent = 'Offline';
     }
 }

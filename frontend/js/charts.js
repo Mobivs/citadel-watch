@@ -9,21 +9,21 @@ import { apiClient } from './utils/api-client.js';
 // ── Chart colour constants (matches ChartTheme in chart_data.py) ────
 
 const COLOURS = {
-    low:      { bg: 'rgba(16, 185, 129, 0.3)',  border: 'rgba(16, 185, 129, 1)' },
-    medium:   { bg: 'rgba(245, 158, 11, 0.3)',  border: 'rgba(245, 158, 11, 1)' },
-    high:     { bg: 'rgba(249, 115, 22, 0.3)',  border: 'rgba(249, 115, 22, 1)' },
-    critical: { bg: 'rgba(239, 68, 68, 0.3)',   border: 'rgba(239, 68, 68, 1)' },
+    low:      { bg: 'rgba(0, 204, 102, 0.3)',   border: 'rgba(0, 204, 102, 1)' },
+    medium:   { bg: 'rgba(255, 204, 0, 0.3)',   border: 'rgba(255, 204, 0, 1)' },
+    high:     { bg: 'rgba(255, 153, 0, 0.3)',   border: 'rgba(255, 153, 0, 1)' },
+    critical: { bg: 'rgba(255, 51, 51, 0.3)',   border: 'rgba(255, 51, 51, 1)' },
 };
 
 const CATEGORY_COLOURS = {
     file:    { bg: 'rgba(59, 130, 246, 0.7)',  border: 'rgba(59, 130, 246, 1)' },
     process: { bg: 'rgba(168, 85, 247, 0.7)',  border: 'rgba(168, 85, 247, 1)' },
     network: { bg: 'rgba(0, 217, 255, 0.7)',   border: 'rgba(0, 217, 255, 1)' },
-    vault:   { bg: 'rgba(245, 158, 11, 0.7)',  border: 'rgba(245, 158, 11, 1)' },
+    vault:   { bg: 'rgba(255, 204, 0, 0.7)',   border: 'rgba(255, 204, 0, 1)' },
     system:  { bg: 'rgba(107, 114, 128, 0.7)', border: 'rgba(107, 114, 128, 1)' },
     ai:      { bg: 'rgba(236, 72, 153, 0.7)',  border: 'rgba(236, 72, 153, 1)' },
-    user:    { bg: 'rgba(16, 185, 129, 0.7)',  border: 'rgba(16, 185, 129, 1)' },
-    intel:   { bg: 'rgba(249, 115, 22, 0.7)',  border: 'rgba(249, 115, 22, 1)' },
+    user:    { bg: 'rgba(0, 204, 102, 0.7)',   border: 'rgba(0, 204, 102, 1)' },
+    intel:   { bg: 'rgba(255, 153, 0, 0.7)',   border: 'rgba(255, 153, 0, 1)' },
 };
 
 // ── Chart.js global defaults (dark theme) ───────────────────────────
