@@ -5,6 +5,7 @@
 // auto-refreshes every 30 seconds, and receives real-time WebSocket updates.
 
 import { apiClient } from './utils/api-client.js';
+import { wsHandler } from './websocket-handler.js';
 
 // ── Chart colour constants (matches ChartTheme in chart_data.py) ────
 
@@ -39,7 +40,6 @@ let severityChart = null;
 let timelineChart = null;
 let categoryChart = null;
 let refreshInterval = null;
-let ws = null;
 let selectedHours = 24;
 
 // ── API fetch ───────────────────────────────────────────────────────
@@ -444,40 +444,18 @@ function updateLastRefresh() {
 // ── WebSocket ───────────────────────────────────────────────────────
 
 function connectWebSocket() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/ws`;
+    // Subscribe to relevant message types via shared handler
+    wsHandler.subscribe('event', handleWebSocketMessage);
+    wsHandler.subscribe('threat_detected', handleWebSocketMessage);
+    wsHandler.subscribe('security_level_changed', handleWebSocketMessage);
+    wsHandler.subscribe('alert_created', handleWebSocketMessage);
 
-    try {
-        ws = new WebSocket(wsUrl);
-    } catch (err) {
-        console.error('WebSocket connection failed:', err);
-        setLiveStatus(false);
-        return;
-    }
+    // Track connection status
+    window.addEventListener('ws-connected', () => setLiveStatus(true));
+    window.addEventListener('ws-disconnected', () => setLiveStatus(false));
 
-    ws.onopen = () => {
-        console.log('Charts WebSocket connected');
-        setLiveStatus(true);
-    };
-
-    ws.onclose = () => {
-        console.log('Charts WebSocket disconnected, reconnecting in 5s...');
-        setLiveStatus(false);
-        setTimeout(connectWebSocket, 5000);
-    };
-
-    ws.onerror = () => {
-        setLiveStatus(false);
-    };
-
-    ws.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            handleWebSocketMessage(msg);
-        } catch {
-            // Non-JSON messages (e.g. ping echo) — ignore
-        }
-    };
+    // Connect if not already
+    wsHandler.connect();
 }
 
 function handleWebSocketMessage(msg) {

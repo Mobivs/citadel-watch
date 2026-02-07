@@ -6,6 +6,7 @@
 // panel, and real-time WebSocket updates.
 
 import { apiClient } from './utils/api-client.js';
+import { wsHandler } from './websocket-handler.js';
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -28,7 +29,6 @@ let pageSize = 25;
 let sortField = 'threat_level';
 let sortOrder = 'desc';
 let selectedAssetId = null;
-let ws = null;
 let refreshInterval = null;
 
 // ── API ─────────────────────────────────────────────────────────────
@@ -319,36 +319,15 @@ function closeDetail() {
 // ── WebSocket ───────────────────────────────────────────────────────
 
 function connectWebSocket() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/ws`;
+    wsHandler.subscribe('event', handleWebSocketMessage);
+    wsHandler.subscribe('threat_detected', handleWebSocketMessage);
+    wsHandler.subscribe('security_level_changed', handleWebSocketMessage);
+    wsHandler.subscribe('asset_status_changed', handleWebSocketMessage);
 
-    try {
-        ws = new WebSocket(wsUrl);
-    } catch (err) {
-        setLiveStatus(false);
-        return;
-    }
+    window.addEventListener('ws-connected', () => setLiveStatus(true));
+    window.addEventListener('ws-disconnected', () => setLiveStatus(false));
 
-    ws.onopen = () => {
-        console.log('Assets WebSocket connected');
-        setLiveStatus(true);
-    };
-
-    ws.onclose = () => {
-        setLiveStatus(false);
-        setTimeout(connectWebSocket, 5000);
-    };
-
-    ws.onerror = () => setLiveStatus(false);
-
-    ws.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            handleWebSocketMessage(msg);
-        } catch {
-            // Non-JSON
-        }
-    };
+    wsHandler.connect();
 }
 
 function handleWebSocketMessage(msg) {

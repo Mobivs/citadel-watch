@@ -7,6 +7,7 @@
 // Auto-refreshes every 30 seconds with WebSocket live updates.
 
 import { apiClient } from './utils/api-client.js';
+import { wsHandler } from './websocket-handler.js';
 
 // ── Colour constants ────────────────────────────────────────────────
 
@@ -33,7 +34,6 @@ Chart.defaults.font.family = 'system-ui, -apple-system, sans-serif';
 
 let trendChart = null;
 let assetRiskChart = null;
-let ws = null;
 let refreshInterval = null;
 let currentSensitivity = 'moderate';
 
@@ -410,38 +410,15 @@ function setupSensitivity() {
 // ── WebSocket ───────────────────────────────────────────────────────
 
 function connectWebSocket() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/ws`;
+    wsHandler.subscribe('event', handleWebSocketMessage);
+    wsHandler.subscribe('threat_detected', handleWebSocketMessage);
+    wsHandler.subscribe('security_level_changed', handleWebSocketMessage);
+    wsHandler.subscribe('alert_created', handleWebSocketMessage);
 
-    try {
-        ws = new WebSocket(wsUrl);
-    } catch (err) {
-        console.error('WebSocket failed:', err);
-        setLiveStatus(false);
-        return;
-    }
+    window.addEventListener('ws-connected', () => setLiveStatus(true));
+    window.addEventListener('ws-disconnected', () => setLiveStatus(false));
 
-    ws.onopen = () => {
-        console.log('Risk Metrics WebSocket connected');
-        setLiveStatus(true);
-    };
-
-    ws.onclose = () => {
-        console.log('WebSocket disconnected, reconnecting in 5s...');
-        setLiveStatus(false);
-        setTimeout(connectWebSocket, 5000);
-    };
-
-    ws.onerror = () => setLiveStatus(false);
-
-    ws.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            handleWebSocketMessage(msg);
-        } catch {
-            // Non-JSON (ping echo)
-        }
-    };
+    wsHandler.connect();
 }
 
 function handleWebSocketMessage(msg) {
