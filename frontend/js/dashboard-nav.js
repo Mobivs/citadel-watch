@@ -142,31 +142,50 @@ function updateConnectionBadge(connected) {
         badge.style.border     = '1px solid rgba(0,204,102,0.3)';
         dot.style.background   = '#00cc66';
         text.textContent       = 'Live';
+        badge.setAttribute('aria-label', 'WebSocket connection status: Live');
     } else {
         badge.style.background = 'rgba(255,51,51,0.15)';
         badge.style.color      = '#ff3333';
         badge.style.border     = '1px solid rgba(255,51,51,0.3)';
         dot.style.background   = '#ff3333';
         text.textContent       = 'Offline';
+        badge.setAttribute('aria-label', 'WebSocket connection status: Offline');
     }
 }
 
 
 // ── Error toast ────────────────────────────────────────────────────
 
-function showError(message) {
+function showError(message, showRetry = false) {
     const container = document.getElementById('nav-error-container');
     if (!container) return;
 
     const toast = document.createElement('div');
     toast.className = 'nav-error-toast';
-    toast.textContent = message;
+    toast.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+            <span>${escapeHtml(message)}</span>
+            <div style="display: flex; gap: 0.5rem;">
+                ${showRetry ? `<button class="retry-btn" style="padding: 0.25rem 0.75rem; border-radius: 4px; background: rgba(255,255,255,0.2); border: none; color: white; font-size: 0.75rem; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">Retry</button>` : ''}
+                <button class="close-btn" style="padding: 0.25rem 0.75rem; border-radius: 4px; background: rgba(255,255,255,0.2); border: none; color: white; font-size: 0.75rem; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'" onclick="this.closest('.nav-error-toast').classList.add('nav-error-fade'); setTimeout(() => this.closest('.nav-error-toast').remove(), 400);">Close</button>
+            </div>
+        </div>
+    `;
     container.appendChild(toast);
 
+    // Auto-dismiss
     setTimeout(() => {
         toast.classList.add('nav-error-fade');
         setTimeout(() => toast.remove(), 400);
-    }, 4000);
+    }, 5000);
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
 }
 
 

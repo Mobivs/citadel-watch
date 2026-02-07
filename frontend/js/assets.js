@@ -178,24 +178,24 @@ function renderTable() {
             const lastEvent = formatTimestamp(asset.last_seen);
 
             return `<tr data-asset-id="${escapeHtml(asset.asset_id)}" class="${selected}" style="background:${bgColour};">
-                <td>
+                <td data-label="Asset Name">
                     <div class="flex items-center gap-2">
                         <span class="text-sm font-medium text-gray-200">${name}</span>
                         ${asset.guardian_active ? '<span class="text-xs text-neon-blue" title="Guardian active">🛡️</span>' : ''}
                     </div>
                     <span class="text-xs text-gray-500">${escapeHtml(asset.hostname || asset.ip_address || '')}</span>
                 </td>
-                <td>
+                <td data-label="Status">
                     <span class="status-badge status-${asset.status.toLowerCase()}">
                         <span class="status-dot"></span>
                         ${asset.status}
                     </span>
                 </td>
-                <td>
+                <td data-label="Threat Level">
                     <span class="threat-badge threat-${threat}">${threat}</span>
                 </td>
-                <td class="text-xs text-gray-400" title="${escapeHtml(asset.last_seen || '')}">${lastEvent}</td>
-                <td>
+                <td data-label="Last Event" class="text-xs text-gray-400" title="${escapeHtml(asset.last_seen || '')}">${lastEvent}</td>
+                <td data-label="Events (24h)">
                     <span class="text-sm font-medium ${asset.event_count > 20 ? 'text-orange-400' : 'text-gray-300'}">${asset.event_count}</span>
                 </td>
             </tr>`;
@@ -402,10 +402,12 @@ function setupSortHeaders() {
 
             document.querySelectorAll('.asset-table thead th').forEach(h => {
                 h.classList.remove('sorted');
+                h.setAttribute('aria-sort', 'none');
                 const arrow = h.querySelector('.sort-arrow');
                 if (arrow) arrow.textContent = '▼';
             });
             th.classList.add('sorted');
+            th.setAttribute('aria-sort', sortOrder === 'desc' ? 'descending' : 'ascending');
             const arrow = th.querySelector('.sort-arrow');
             if (arrow) arrow.textContent = sortOrder === 'desc' ? '▼' : '▲';
 

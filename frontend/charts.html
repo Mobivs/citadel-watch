@@ -201,8 +201,9 @@
                         <span class="text-xs text-gray-500" id="trend-subtitle">Hourly</span>
                     </div>
                     <div class="chart-container">
-                        <canvas id="threat-trend-chart"></canvas>
+                        <canvas id="threat-trend-chart" role="img" aria-label="Threat trends chart" aria-describedby="threat-trend-description"></canvas>
                     </div>
+                    <div id="threat-trend-description" style="display:none;">Line chart showing threat trends over the selected time period. Y-axis shows threat count. X-axis shows time intervals.</div>
                 </div>
 
                 <!-- Severity Distribution Chart -->
@@ -212,8 +213,9 @@
                         <span class="text-xs text-gray-500" id="severity-subtitle">All Events</span>
                     </div>
                     <div class="chart-container">
-                        <canvas id="severity-distribution-chart"></canvas>
+                        <canvas id="severity-distribution-chart" role="img" aria-label="Severity distribution chart" aria-describedby="severity-distribution-description"></canvas>
                     </div>
+                    <div id="severity-distribution-description" style="display:none;">Doughnut chart showing distribution of events by severity level (critical, high, medium, low).</div>
                 </div>
 
                 <!-- Timeline Scatter Chart -->
@@ -223,8 +225,9 @@
                         <span class="text-xs text-gray-500" id="timeline-subtitle">Scatter</span>
                     </div>
                     <div class="chart-container">
-                        <canvas id="timeline-scatter-chart"></canvas>
+                        <canvas id="timeline-scatter-chart" role="img" aria-label="Event timeline scatter chart" aria-describedby="timeline-scatter-description"></canvas>
                     </div>
+                    <div id="timeline-scatter-description" style="display:none;">Scatter plot showing events plotted by timestamp (X-axis) and severity level (Y-axis). Each point represents one event.</div>
                 </div>
 
                 <!-- Category Breakdown Chart -->
@@ -234,8 +237,9 @@
                         <span class="text-xs text-gray-500" id="category-subtitle">Bar</span>
                     </div>
                     <div class="chart-container">
-                        <canvas id="category-breakdown-chart"></canvas>
+                        <canvas id="category-breakdown-chart" role="img" aria-label="Events by category chart" aria-describedby="category-breakdown-description"></canvas>
                     </div>
+                    <div id="category-breakdown-description" style="display:none;">Horizontal bar chart showing event count by category. Categories include file, process, network, vault, system, AI, user, and intel.</div>
                 </div>
 
             </div>

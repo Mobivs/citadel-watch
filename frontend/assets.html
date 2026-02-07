@@ -248,13 +248,65 @@
             font-weight: 600;
         }
 
+        /* Mobile responsive - table reflow to cards */
+        @media (max-width: 768px) {
+            .asset-table {
+                display: block;
+                width: 100%;
+            }
+
+            .asset-table thead {
+                display: none;
+            }
+
+            .asset-table tbody {
+                display: block;
+            }
+
+            .asset-table tr {
+                display: block;
+                margin-bottom: 1rem;
+                border: 1px solid rgba(0, 217, 255, 0.1);
+                border-radius: 8px;
+                padding: 1rem;
+                background: rgba(15, 23, 42, 0.6);
+            }
+
+            .asset-table td {
+                display: block;
+                text-align: right;
+                padding: 0.5rem 0;
+                padding-left: 50%;
+                position: relative;
+                border: none;
+                white-space: normal;
+                overflow: visible;
+                text-overflow: clip;
+                max-width: 100%;
+            }
+
+            .asset-table td::before {
+                content: attr(data-label);
+                position: absolute;
+                left: 0;
+                font-weight: bold;
+                color: #00D9FF;
+                text-align: left;
+                padding-right: 1rem;
+            }
+
+            .asset-table tbody tr.selected {
+                border-left: none;
+                border-top: 3px solid #00D9FF;
+            }
+        }
+
         /* Responsive */
         @media (max-width: 640px) {
             .filter-bar { flex-direction: column !important; align-items: stretch !important; }
             .search-input { width: 100% !important; }
             .search-input:focus { width: 100% !important; }
             .detail-panel { width: 100%; right: -100%; }
-            .asset-table tbody td { font-size: 0.7rem; padding: 0.5rem; }
         }
 
         @media (min-width: 641px) and (max-width: 1023px) {
@@ -389,20 +441,20 @@
                     <table class="asset-table" id="asset-table">
                         <thead>
                             <tr>
-                                <th data-sort="name">
-                                    Asset Name <span class="sort-arrow">▼</span>
+                                <th data-sort="name" aria-sort="none">
+                                    Asset Name <span class="sort-arrow" aria-hidden="true">▼</span>
                                 </th>
-                                <th data-sort="status">
-                                    Status <span class="sort-arrow">▼</span>
+                                <th data-sort="status" aria-sort="none">
+                                    Status <span class="sort-arrow" aria-hidden="true">▼</span>
                                 </th>
-                                <th data-sort="threat_level" class="sorted">
-                                    Threat Level <span class="sort-arrow">▼</span>
+                                <th data-sort="threat_level" class="sorted" aria-sort="descending">
+                                    Threat Level <span class="sort-arrow" aria-hidden="true">▼</span>
                                 </th>
-                                <th data-sort="last_event">
-                                    Last Event <span class="sort-arrow">▼</span>
+                                <th data-sort="last_event" aria-sort="none">
+                                    Last Event <span class="sort-arrow" aria-hidden="true">▼</span>
                                 </th>
-                                <th data-sort="event_count">
-                                    Events (24h) <span class="sort-arrow">▼</span>
+                                <th data-sort="event_count" aria-sort="none">
+                                    Events (24h) <span class="sort-arrow" aria-hidden="true">▼</span>
                                 </th>
                             </tr>
                         </thead>

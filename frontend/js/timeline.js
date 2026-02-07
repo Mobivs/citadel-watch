@@ -179,12 +179,12 @@ function renderTable() {
             const selected = entry.event_id === selectedEventId ? ' selected' : '';
 
             return `<tr data-event-id="${escapeHtml(entry.event_id)}" class="${selected}">
-                <td title="${escapeHtml(entry.timestamp)}">${ts}</td>
-                <td><span class="sev-badge sev-${sev}">${sev}</span></td>
-                <td title="${escapeHtml(entry.asset_id)}">${escapeHtml(entry.asset_id || '—')}</td>
-                <td>${escapeHtml(entry.event_type)}</td>
-                <td><span class="cat-tag">${escapeHtml(entry.category)}</span></td>
-                <td title="${escapeHtml(entry.message)}">${escapeHtml(truncate(entry.message, 80))}</td>
+                <td data-label="Timestamp" title="${escapeHtml(entry.timestamp)}">${ts}</td>
+                <td data-label="Severity"><span class="sev-badge sev-${sev}">${sev}</span></td>
+                <td data-label="Asset" title="${escapeHtml(entry.asset_id)}">${escapeHtml(entry.asset_id || '—')}</td>
+                <td data-label="Event Type">${escapeHtml(entry.event_type)}</td>
+                <td data-label="Category"><span class="cat-tag">${escapeHtml(entry.category)}</span></td>
+                <td data-label="Description" title="${escapeHtml(entry.message)}">${escapeHtml(truncate(entry.message, 80))}</td>
             </tr>`;
         }).join('');
     }
@@ -515,10 +515,12 @@ function setupSortHeaders() {
             // Update header styles
             document.querySelectorAll('.timeline-table thead th').forEach(h => {
                 h.classList.remove('sorted');
+                h.setAttribute('aria-sort', 'none');
                 const arrow = h.querySelector('.sort-arrow');
                 if (arrow) arrow.textContent = '▼';
             });
             th.classList.add('sorted');
+            th.setAttribute('aria-sort', sortOrder === 'desc' ? 'descending' : 'ascending');
             const arrow = th.querySelector('.sort-arrow');
             if (arrow) arrow.textContent = sortOrder === 'desc' ? '▼' : '▲';
 
