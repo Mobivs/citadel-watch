@@ -468,12 +468,15 @@ class TestAssetsNavigation:
             pytest.skip("index.html not found")
         return path.read_text()
 
-    def test_has_assets_link(self, index_content):
-        assert 'href="assets.html"' in index_content
+    def test_has_assets_tab(self, index_content):
+        assert 'id="tab-btn-assets"' in index_content
 
-    def test_assets_link_after_risk(self, index_content):
-        risk_pos = index_content.index('href="risk-metrics.html"')
-        assets_pos = index_content.index('href="assets.html"')
+    def test_has_assets_panel(self, index_content):
+        assert 'id="tab-panel-assets"' in index_content
+
+    def test_assets_tab_after_risk(self, index_content):
+        risk_pos = index_content.index('id="tab-btn-risk-metrics"')
+        assets_pos = index_content.index('id="tab-btn-assets"')
         assert assets_pos > risk_pos
 
 

@@ -435,12 +435,15 @@ class TestRiskMetricsNavigation:
             pytest.skip("index.html not found")
         return path.read_text()
 
-    def test_has_risk_metrics_link(self, index_content):
-        assert 'href="risk-metrics.html"' in index_content
+    def test_has_risk_metrics_tab(self, index_content):
+        assert 'id="tab-btn-risk-metrics"' in index_content
 
-    def test_risk_link_after_timeline(self, index_content):
-        timeline_pos = index_content.index('href="timeline.html"')
-        risk_pos = index_content.index('href="risk-metrics.html"')
+    def test_has_risk_metrics_panel(self, index_content):
+        assert 'id="tab-panel-risk-metrics"' in index_content
+
+    def test_risk_tab_after_timeline(self, index_content):
+        timeline_pos = index_content.index('id="tab-btn-timeline"')
+        risk_pos = index_content.index('id="tab-btn-risk-metrics"')
         assert risk_pos > timeline_pos
 
 

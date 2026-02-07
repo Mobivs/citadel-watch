@@ -566,12 +566,15 @@ class TestTimelineNavigation:
             pytest.skip("index.html not found")
         return path.read_text()
 
-    def test_has_timeline_link(self, index_content):
-        assert 'href="timeline.html"' in index_content
+    def test_has_timeline_tab(self, index_content):
+        assert 'id="tab-btn-timeline"' in index_content
 
-    def test_timeline_link_after_charts(self, index_content):
-        charts_pos = index_content.index('href="charts.html"')
-        timeline_pos = index_content.index('href="timeline.html"')
+    def test_has_timeline_panel(self, index_content):
+        assert 'id="tab-panel-timeline"' in index_content
+
+    def test_timeline_tab_after_charts(self, index_content):
+        charts_pos = index_content.index('id="tab-btn-charts"')
+        timeline_pos = index_content.index('id="tab-btn-timeline"')
         assert timeline_pos > charts_pos
 
 

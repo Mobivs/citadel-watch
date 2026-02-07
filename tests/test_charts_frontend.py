@@ -445,11 +445,14 @@ class TestIndexHTMLNavigation:
             pytest.skip("index.html not found")
         return path.read_text()
 
-    def test_has_charts_link(self, index_content):
-        assert 'href="charts.html"' in index_content
+    def test_has_charts_tab(self, index_content):
+        assert 'id="tab-btn-charts"' in index_content
 
-    def test_charts_link_before_vault(self, index_content):
-        charts_pos = index_content.index('href="charts.html"')
+    def test_has_charts_panel(self, index_content):
+        assert 'id="tab-panel-charts"' in index_content
+
+    def test_charts_tab_before_vault(self, index_content):
+        charts_pos = index_content.index('id="tab-btn-charts"')
         vault_pos = index_content.index('href="vault.html"')
         assert charts_pos < vault_pos
 

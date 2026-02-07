@@ -30,8 +30,113 @@
 
     <!-- Custom Styles -->
     <link rel="stylesheet" href="css/styles.css">
+
+    <style>
+        /* Tab bar styles */
+        .tab-bar {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 4px;
+            background: rgba(15, 23, 42, 0.4);
+            border-radius: 12px;
+            border: 1px solid rgba(0, 217, 255, 0.08);
+        }
+
+        .tab-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #9CA3AF;
+            background: transparent;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .tab-btn:hover {
+            color: #E5E7EB;
+            background: rgba(0, 217, 255, 0.06);
+        }
+
+        .tab-btn.tab-active {
+            color: #00D9FF;
+            background: rgba(0, 217, 255, 0.12);
+            border-color: rgba(0, 217, 255, 0.3);
+        }
+
+        /* Connection badge */
+        .conn-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.625rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .conn-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        /* Tab panel iframe */
+        .tab-iframe {
+            width: 100%;
+            border: none;
+            min-height: 80vh;
+            background: transparent;
+        }
+
+        /* Error toast */
+        .nav-error-toast {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(239, 68, 68, 0.9);
+            color: white;
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            z-index: 9999;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .nav-error-fade {
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        /* Responsive tab bar */
+        @media (max-width: 640px) {
+            .tab-bar {
+                flex-wrap: wrap;
+            }
+            .tab-btn {
+                font-size: 0.7rem;
+                padding: 0.375rem 0.625rem;
+            }
+            .tab-btn .tab-icon {
+                display: none;
+            }
+        }
+    </style>
 </head>
 <body class="dark bg-dark-bg text-gray-100 font-sans antialiased">
+
+    <!-- Error toast container -->
+    <div id="nav-error-container"></div>
 
     <!-- Main App Container -->
     <div id="app" class="min-h-screen">
@@ -55,31 +160,13 @@
                         <span class="text-sm font-medium">Guardian Mode</span>
                     </div>
 
-                    <!-- Charts Button -->
-                    <a href="charts.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
-                        <span>📊</span>
-                        <span class="text-sm font-medium">Charts</span>
-                    </a>
+                    <!-- Connection Status -->
+                    <div id="nav-conn-badge" class="conn-badge" style="background:rgba(239,68,68,0.15);color:#EF4444;border:1px solid rgba(239,68,68,0.3);">
+                        <span id="nav-conn-dot" class="conn-dot" style="background:#EF4444;"></span>
+                        <span id="nav-conn-text">Offline</span>
+                    </div>
 
-                    <!-- Timeline Button -->
-                    <a href="timeline.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
-                        <span>📋</span>
-                        <span class="text-sm font-medium">Timeline</span>
-                    </a>
-
-                    <!-- Risk Metrics Button -->
-                    <a href="risk-metrics.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
-                        <span>🎯</span>
-                        <span class="text-sm font-medium">Risk</span>
-                    </a>
-
-                    <!-- Assets Button -->
-                    <a href="assets.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
-                        <span>💻</span>
-                        <span class="text-sm font-medium">Assets</span>
-                    </a>
-
-                    <!-- Vault Button -->
+                    <!-- Vault Button (external page) -->
                     <a href="vault.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
                         <span>🔐</span>
                         <span class="text-sm font-medium">Vault</span>
@@ -96,54 +183,112 @@
             </div>
         </header>
 
-        <!-- Main Content -->
-        <main class="container mx-auto px-6 py-8">
-
-            <!-- Top Stats Row -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <!-- Guardian Status Card -->
-                <guardian-status></guardian-status>
-
-                <!-- Threat Level Card -->
-                <threat-level></threat-level>
-
-                <!-- Protected Systems Card -->
-                <protected-systems></protected-systems>
+        <!-- Tab Bar -->
+        <nav class="container mx-auto px-6 pt-6 pb-2">
+            <div id="dashboard-tab-bar" class="tab-bar" role="tablist" aria-label="Dashboard tabs">
+                <button id="tab-btn-intelligence" class="tab-btn tab-active" role="tab" aria-selected="true" aria-controls="tab-panel-intelligence">
+                    <span class="tab-icon">🖥️</span>
+                    <span>Intelligence</span>
+                </button>
+                <button id="tab-btn-charts" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-charts">
+                    <span class="tab-icon">📊</span>
+                    <span>Charts</span>
+                </button>
+                <button id="tab-btn-timeline" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-timeline">
+                    <span class="tab-icon">📋</span>
+                    <span>Timeline</span>
+                </button>
+                <button id="tab-btn-risk-metrics" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-risk-metrics">
+                    <span class="tab-icon">🎯</span>
+                    <span>Risk</span>
+                </button>
+                <button id="tab-btn-assets" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-assets">
+                    <span class="tab-icon">💻</span>
+                    <span>Assets</span>
+                </button>
             </div>
+        </nav>
 
-            <!-- Main Grid -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <!-- Tab Panels -->
 
-                <!-- Recent Events -->
-                <div class="glass-card panel-card p-6 flex flex-col" style="height: 600px; max-height: 600px; overflow: hidden;">
-                    <div class="flex items-center justify-between mb-4 flex-shrink-0">
-                        <h2 class="text-xl font-bold">Recent Events</h2>
-                        <button class="text-sm text-neon-blue hover:underline">View All</button>
-                    </div>
-                    <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
-                        <event-log></event-log>
-                    </div>
+        <!-- Intelligence Panel (inline Phase 1 Web Components) -->
+        <div id="tab-panel-intelligence" role="tabpanel" aria-labelledby="tab-btn-intelligence">
+            <main class="container mx-auto px-6 py-6">
+
+                <!-- Top Stats Row -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <!-- Guardian Status Card -->
+                    <guardian-status></guardian-status>
+
+                    <!-- Threat Level Card -->
+                    <threat-level></threat-level>
+
+                    <!-- Protected Systems Card -->
+                    <protected-systems></protected-systems>
                 </div>
 
-                <!-- Running Processes -->
-                <div class="glass-card panel-card p-6 flex flex-col" style="height: 600px; max-height: 600px; overflow: hidden;">
-                    <div class="flex items-center justify-between mb-4 flex-shrink-0">
-                        <h2 class="text-xl font-bold">Running Processes</h2>
-                        <button class="text-sm text-neon-blue hover:underline">View All</button>
+                <!-- Main Grid -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+
+                    <!-- Recent Events -->
+                    <div class="glass-card panel-card p-6 flex flex-col" style="height: 600px; max-height: 600px; overflow: hidden;">
+                        <div class="flex items-center justify-between mb-4 flex-shrink-0">
+                            <h2 class="text-xl font-bold">Recent Events</h2>
+                            <button class="text-sm text-neon-blue hover:underline" onclick="document.getElementById('tab-btn-timeline').click()">View All</button>
+                        </div>
+                        <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
+                            <event-log></event-log>
+                        </div>
                     </div>
-                    <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
-                        <process-list></process-list>
+
+                    <!-- Running Processes -->
+                    <div class="glass-card panel-card p-6 flex flex-col" style="height: 600px; max-height: 600px; overflow: hidden;">
+                        <div class="flex items-center justify-between mb-4 flex-shrink-0">
+                            <h2 class="text-xl font-bold">Running Processes</h2>
+                            <button class="text-sm text-neon-blue hover:underline">View All</button>
+                        </div>
+                        <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
+                            <process-list></process-list>
+                        </div>
                     </div>
+
                 </div>
 
-            </div>
+                <!-- AI Insights Section -->
+                <div class="mt-8">
+                    <ai-insights></ai-insights>
+                </div>
 
-            <!-- AI Insights Section -->
-            <div class="mt-8">
-                <ai-insights></ai-insights>
-            </div>
+            </main>
+        </div>
 
-        </main>
+        <!-- Charts Panel (iframe) -->
+        <div id="tab-panel-charts" role="tabpanel" aria-labelledby="tab-btn-charts" aria-hidden="true" style="display:none;">
+            <div class="container mx-auto px-6 py-6">
+                <iframe id="tab-iframe-charts" class="tab-iframe" title="Charts"></iframe>
+            </div>
+        </div>
+
+        <!-- Timeline Panel (iframe) -->
+        <div id="tab-panel-timeline" role="tabpanel" aria-labelledby="tab-btn-timeline" aria-hidden="true" style="display:none;">
+            <div class="container mx-auto px-6 py-6">
+                <iframe id="tab-iframe-timeline" class="tab-iframe" title="Timeline"></iframe>
+            </div>
+        </div>
+
+        <!-- Risk Metrics Panel (iframe) -->
+        <div id="tab-panel-risk-metrics" role="tabpanel" aria-labelledby="tab-btn-risk-metrics" aria-hidden="true" style="display:none;">
+            <div class="container mx-auto px-6 py-6">
+                <iframe id="tab-iframe-risk-metrics" class="tab-iframe" title="Risk Metrics"></iframe>
+            </div>
+        </div>
+
+        <!-- Assets Panel (iframe) -->
+        <div id="tab-panel-assets" role="tabpanel" aria-labelledby="tab-btn-assets" aria-hidden="true" style="display:none;">
+            <div class="container mx-auto px-6 py-6">
+                <iframe id="tab-iframe-assets" class="tab-iframe" title="Assets"></iframe>
+            </div>
+        </div>
 
         <!-- Footer -->
         <footer class="text-center py-6 text-gray-500 text-sm">
@@ -158,6 +303,9 @@
     <script type="module" src="js/components/event-log.js"></script>
     <script type="module" src="js/components/process-list.js"></script>
     <script type="module" src="js/components/ai-insights.js"></script>
+
+    <!-- Dashboard Navigation (tab switching) -->
+    <script type="module" src="js/dashboard-nav.js"></script>
 
     <!-- Main App Logic -->
     <script type="module" src="js/main.js"></script>
