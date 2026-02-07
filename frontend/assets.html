@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citadel Archer - Asset Management</title>
+
+    <!-- PRD: Assets page - Multi-asset overview table -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'neon-blue': '#00D9FF',
+                        'dark-bg': '#0A0E27',
+                        'card-bg': 'rgba(15, 23, 42, 0.6)',
+                    },
+                    backdropBlur: {
+                        'glass': '20px',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <link rel="stylesheet" href="css/styles.css">
+
+    <style>
+        /* Asset table styles */
+        .asset-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        .asset-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: rgba(10, 14, 39, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #9CA3AF;
+            border-bottom: 1px solid rgba(0, 217, 255, 0.15);
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.2s;
+        }
+
+        .asset-table thead th:hover { color: #00D9FF; }
+        .asset-table thead th.sorted { color: #00D9FF; }
+
+        .sort-arrow {
+            display: inline-block;
+            margin-left: 4px;
+            font-size: 0.6rem;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .asset-table thead th.sorted .sort-arrow { opacity: 1; }
+
+        .asset-table tbody tr {
+            cursor: pointer;
+            transition: background-color 0.15s;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .asset-table tbody tr:hover {
+            background-color: rgba(0, 217, 255, 0.05);
+        }
+
+        .asset-table tbody tr.selected {
+            background-color: rgba(0, 217, 255, 0.1);
+            border-left: 3px solid #00D9FF;
+        }
+
+        .asset-table tbody td {
+            padding: 0.75rem 1rem;
+            font-size: 0.8rem;
+            color: #D1D5DB;
+            white-space: nowrap;
+        }
+
+        /* Status badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.125rem 0.625rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .status-online    .status-dot { background: #10B981; }
+        .status-online                { background: rgba(16,185,129,0.12);  color: #10B981; border: 1px solid rgba(16,185,129,0.25); }
+        .status-protected .status-dot { background: #3B82F6; }
+        .status-protected             { background: rgba(59,130,246,0.12);  color: #3B82F6; border: 1px solid rgba(59,130,246,0.25); }
+        .status-offline   .status-dot { background: #6B7280; }
+        .status-offline               { background: rgba(107,114,128,0.12); color: #6B7280; border: 1px solid rgba(107,114,128,0.25); }
+        .status-compromised .status-dot { background: #EF4444; }
+        .status-compromised             { background: rgba(239,68,68,0.12);  color: #EF4444; border: 1px solid rgba(239,68,68,0.25); }
+
+        /* Threat level badge */
+        .threat-badge {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .threat-critical { background: rgba(239,68,68,0.15);  color: #EF4444; border: 1px solid rgba(239,68,68,0.3); }
+        .threat-high     { background: rgba(249,115,22,0.15); color: #F97316; border: 1px solid rgba(249,115,22,0.3); }
+        .threat-medium   { background: rgba(245,158,11,0.15); color: #F59E0B; border: 1px solid rgba(245,158,11,0.3); }
+        .threat-low      { background: rgba(16,185,129,0.15); color: #10B981; border: 1px solid rgba(16,185,129,0.3); }
+
+        /* Filter controls */
+        .filter-select {
+            appearance: none;
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            border-radius: 8px;
+            padding: 0.5rem 2rem 0.5rem 0.75rem;
+            font-size: 0.8rem;
+            color: #E5E7EB;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300D9FF' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: #00D9FF;
+            box-shadow: 0 0 0 2px rgba(0, 217, 255, 0.15);
+        }
+
+        .filter-select option {
+            background-color: #0F172A;
+            color: #E5E7EB;
+        }
+
+        /* Search */
+        .search-input {
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem 0.5rem 2.25rem;
+            font-size: 0.8rem;
+            color: #E5E7EB;
+            transition: all 0.2s ease;
+            width: 180px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #00D9FF;
+            box-shadow: 0 0 0 2px rgba(0, 217, 255, 0.15);
+            width: 240px;
+        }
+
+        .search-input::placeholder { color: #6B7280; }
+
+        /* Drill-down panel */
+        .detail-panel {
+            position: fixed;
+            top: 0;
+            right: -500px;
+            width: 500px;
+            height: 100vh;
+            background: rgba(10, 14, 39, 0.97);
+            backdrop-filter: blur(20px);
+            border-left: 1px solid rgba(0, 217, 255, 0.15);
+            z-index: 50;
+            overflow-y: auto;
+            transition: right 0.3s ease;
+            box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .detail-panel.open { right: 0; }
+
+        .detail-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 40;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        .detail-overlay.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Pagination */
+        .page-btn {
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            background: transparent;
+            color: #9CA3AF;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .page-btn:hover:not(:disabled) {
+            border-color: rgba(0, 217, 255, 0.4);
+            color: #E5E7EB;
+        }
+
+        .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        /* Page size selector */
+        .pagesize-select {
+            appearance: none;
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(0, 217, 255, 0.15);
+            border-radius: 6px;
+            padding: 0.25rem 1.5rem 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            color: #9CA3AF;
+            cursor: pointer;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%2300D9FF' d='M5 7L1 3h8z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.4rem center;
+        }
+
+        .pagesize-select option {
+            background-color: #0F172A;
+            color: #E5E7EB;
+        }
+
+        /* Stats pills */
+        .stat-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.625rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .filter-bar { flex-direction: column !important; align-items: stretch !important; }
+            .search-input { width: 100% !important; }
+            .search-input:focus { width: 100% !important; }
+            .detail-panel { width: 100%; right: -100%; }
+            .asset-table tbody td { font-size: 0.7rem; padding: 0.5rem; }
+        }
+
+        @media (min-width: 641px) and (max-width: 1023px) {
+            .detail-panel { width: 400px; right: -400px; }
+        }
+    </style>
+</head>
+<body class="dark bg-dark-bg text-gray-100 font-sans antialiased">
+
+    <div id="app" class="min-h-screen flex flex-col">
+
+        <!-- Header -->
+        <header class="glass-card border-b border-neon-blue/20 px-6 py-4 flex-shrink-0">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="w-10 h-10 rounded-lg bg-neon-blue/20 flex items-center justify-center">
+                        <span class="text-2xl">🛡️</span>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold text-neon-blue">Citadel Archer</h1>
+                        <p class="text-xs text-gray-400">v0.2.3 - Proactive Protection</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                    <div id="security-level-badge" class="px-4 py-2 rounded-lg glass-card border border-neon-blue/30">
+                        <span class="text-sm font-medium">Guardian Mode</span>
+                    </div>
+
+                    <a href="index.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
+                        <span>🖥️</span>
+                        <span class="text-sm font-medium">Dashboard</span>
+                    </a>
+
+                    <a href="charts.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
+                        <span>📊</span>
+                        <span class="text-sm font-medium">Charts</span>
+                    </a>
+
+                    <a href="timeline.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
+                        <span>📋</span>
+                        <span class="text-sm font-medium">Timeline</span>
+                    </a>
+
+                    <a href="risk-metrics.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
+                        <span>🎯</span>
+                        <span class="text-sm font-medium">Risk</span>
+                    </a>
+
+                    <a href="vault.html" class="px-4 py-2 rounded-lg bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-2">
+                        <span>🔐</span>
+                        <span class="text-sm font-medium">Vault</span>
+                    </a>
+
+                    <button id="settings-btn" class="p-2 rounded-lg hover:bg-neon-blue/10 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="container mx-auto px-6 py-6 flex-1 flex flex-col min-h-0">
+
+            <!-- Title Row -->
+            <div class="flex items-center justify-between mb-4 flex-shrink-0">
+                <div>
+                    <h2 class="text-2xl font-bold">Assets</h2>
+                    <p class="text-sm text-gray-400 mt-1">Protected endpoints overview</p>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <span class="stat-pill" style="background:rgba(16,185,129,0.12); color:#10B981;">
+                        <span id="stat-online">0</span> Online
+                    </span>
+                    <span class="stat-pill" style="background:rgba(59,130,246,0.12); color:#3B82F6;">
+                        <span id="stat-protected">0</span> Protected
+                    </span>
+                    <span class="stat-pill" style="background:rgba(107,114,128,0.12); color:#6B7280;">
+                        <span id="stat-total">0</span> Total
+                    </span>
+                </div>
+            </div>
+
+            <!-- Filter Bar -->
+            <div class="filter-bar flex flex-wrap items-center gap-3 mb-4 flex-shrink-0">
+                <!-- Search -->
+                <div class="relative">
+                    <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input id="search-input" type="text" class="search-input" placeholder="Search assets..." autocomplete="off" />
+                </div>
+
+                <!-- Status filter -->
+                <select id="filter-status" class="filter-select">
+                    <option value="">All Statuses</option>
+                    <option value="online">Online</option>
+                    <option value="protected">Protected</option>
+                    <option value="offline">Offline</option>
+                    <option value="compromised">Compromised</option>
+                </select>
+
+                <!-- Threat level filter -->
+                <select id="filter-threat" class="filter-select">
+                    <option value="">All Threat Levels</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+
+                <!-- Clear filters -->
+                <button id="clear-filters-btn" class="text-xs text-gray-500 hover:text-neon-blue transition-colors px-2 py-1" style="display:none;">
+                    Clear filters
+                </button>
+
+                <div class="flex-1"></div>
+
+                <!-- Live badge -->
+                <div id="live-badge" style="display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.625rem;border-radius:9999px;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;background:rgba(239,68,68,0.15);color:#EF4444;border:1px solid rgba(239,68,68,0.3);">
+                    <span id="live-dot" style="width:6px;height:6px;border-radius:50%;background:#EF4444;animation:pulse 2s infinite;"></span>
+                    <span id="live-text">Offline</span>
+                </div>
+            </div>
+
+            <!-- Table Container -->
+            <div class="glass-card flex-1 min-h-0 flex flex-col overflow-hidden">
+                <div class="flex-1 overflow-auto" id="table-scroll-container">
+                    <table class="asset-table" id="asset-table">
+                        <thead>
+                            <tr>
+                                <th data-sort="name">
+                                    Asset Name <span class="sort-arrow">▼</span>
+                                </th>
+                                <th data-sort="status">
+                                    Status <span class="sort-arrow">▼</span>
+                                </th>
+                                <th data-sort="threat_level" class="sorted">
+                                    Threat Level <span class="sort-arrow">▼</span>
+                                </th>
+                                <th data-sort="last_event">
+                                    Last Event <span class="sort-arrow">▼</span>
+                                </th>
+                                <th data-sort="event_count">
+                                    Events (24h) <span class="sort-arrow">▼</span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="asset-tbody">
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="flex items-center justify-between px-4 py-3 border-t border-white/5 flex-shrink-0">
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-500" id="pagination-info">Showing 0 of 0</span>
+                        <select id="page-size-select" class="pagesize-select">
+                            <option value="10">10 / page</option>
+                            <option value="25" selected>25 / page</option>
+                            <option value="50">50 / page</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center space-x-1" id="pagination-controls">
+                        <button class="page-btn" id="page-prev" disabled>&laquo; Prev</button>
+                        <span class="text-xs text-gray-400 px-2" id="page-indicator">Page 1 / 1</span>
+                        <button class="page-btn" id="page-next" disabled>Next &raquo;</button>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <footer class="text-center py-4 text-gray-500 text-sm flex-shrink-0">
+            <p>Protected by Citadel Archer AI &bull; Proactive Defense &bull; Built to protect the innocents 🛡️</p>
+        </footer>
+    </div>
+
+    <!-- Detail overlay -->
+    <div id="detail-overlay" class="detail-overlay"></div>
+
+    <!-- Detail panel -->
+    <div id="detail-panel" class="detail-panel">
+        <div class="p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg font-bold text-neon-blue">Asset Detail</h3>
+                <button id="detail-close" class="p-2 rounded-lg hover:bg-neon-blue/10 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="detail-content"></div>
+        </div>
+    </div>
+
+    <script type="module" src="js/assets.js"></script>
+
+</body>
+</html>
