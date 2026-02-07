@@ -10,6 +10,7 @@ class ProcessList extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        this.updateAriaLabel();
         window.addEventListener('processes-updated', (e) => {
             this.updateProcesses(e.detail);
         });
@@ -17,7 +18,13 @@ class ProcessList extends HTMLElement {
 
     updateProcesses(processes) {
         this.processes = processes.slice(0, 8); // Top 8 processes
+        this.updateAriaLabel();
         this.render();
+    }
+
+    updateAriaLabel() {
+        const processCount = this.processes.length;
+        this.setAttribute('aria-label', `Running processes: Showing top ${processCount} process${processCount !== 1 ? 'es' : ''} by resource usage with CPU and RAM percentages.`);
     }
 
     render() {

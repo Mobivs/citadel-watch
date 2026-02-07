@@ -7,7 +7,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
-    /* Core palette */
+    /* Core palette - Dark mode (default) */
     --bg-primary:    #0f0f0f;
     --bg-secondary:  #1a1a1a;
     --bg-gradient-start: #0A0E27;
@@ -58,6 +58,40 @@
     --radius-lg: 12px;
     --radius-xl: 16px;
     --radius-full: 9999px;
+}
+
+/* Light mode support - respects OS/browser preference */
+@media (prefers-color-scheme: light) {
+    :root {
+        /* Core palette - Light mode */
+        --bg-primary:    #ffffff;
+        --bg-secondary:  #f5f5f5;
+        --bg-gradient-start: #f9fafb;
+        --bg-gradient-end:   #ffffff;
+        --card-bg:       rgba(0, 0, 0, 0.05);
+        --card-border:   rgba(0, 152, 204, 0.2);
+        --card-hover:    rgba(0, 152, 204, 0.15);
+        --card-shadow:   rgba(0, 0, 0, 0.08);
+
+        /* Text colours */
+        --text-primary:   #1f2937;
+        --text-secondary: #6b7280;
+        --text-muted:     #9ca3af;
+
+        /* Accent - use darker blue for light mode */
+        --accent:         #0099cc;
+        --accent-rgb:     0, 153, 204;
+
+        /* Severity colours - adjust for light backgrounds */
+        --sev-critical:     #dc2626;
+        --sev-critical-rgb: 220, 38, 38;
+        --sev-high:         #ea580c;
+        --sev-high-rgb:     234, 88, 12;
+        --sev-medium:       #ca8a04;
+        --sev-medium-rgb:   202, 138, 4;
+        --sev-low:          #16a34a;
+        --sev-low-rgb:      22, 163, 74;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════

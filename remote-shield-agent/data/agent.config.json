@@ -1,0 +1,14 @@
+{
+  "backend_url": "http://127.0.0.1:8000",
+  "hostname": "test-agent-qa-2",
+  "scan_interval_seconds": 300,
+  "heartbeat_interval_seconds": 60,
+  "modules": {
+    "port_scanner": true,
+    "process_monitor": true,
+    "file_integrity": true,
+    "log_analyzer": true,
+    "cve_scanner": true
+  },
+  "min_severity": 5
+}

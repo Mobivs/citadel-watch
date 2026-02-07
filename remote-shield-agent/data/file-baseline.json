@@ -1,0 +1,10 @@
+{
+  "/etc/passwd": "9060fed6ba65bff94dae3f9fe13a2e6c777c3ee0c142dcfc9869b20bc3144464",
+  "/etc/shadow": "141d16cb4755e1544ab011ea7ed24377a2ea9b788757cd648e6cbcba364cc038",
+  "/etc/sudoers": "5bac27ce5ff1a78ace8f3ef81bfd60cbd44810ac3f3d280da9d7649fe90c18f8",
+  "/etc/ssh/sshd_config": "28924306868a8124a05d109e78eee830f8f481c0e3dd4bc3487901fda59a1bf8",
+  "/root/.ssh/authorized_keys": "da36a09601a2c3c3ffb3d25cf50f38c22da47451047c9866c055889e92a18dbc",
+  "/root/.bashrc": "34fbc467b8c624d92abcdf3edcf35ee46032618a6f23b210efab0e6824978126",
+  "/etc/hosts": "8a1b9eb1f6bd6c6eebd266b64057667c56fdfe4393b0aac0e45430f88f76a77c",
+  "/etc/hostname": "1f6b16438b742ab62d34d3fc01e7ae924b1a153934314585d5f41a382ff3519c"
+}

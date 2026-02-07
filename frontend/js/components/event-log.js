@@ -10,6 +10,7 @@ class EventLog extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        this.updateAriaLabel();
         window.addEventListener('new-event', (e) => {
             this.addEvent(e.detail);
         });
@@ -18,7 +19,13 @@ class EventLog extends HTMLElement {
     addEvent(event) {
         this.events.unshift(event); // Add to beginning
         if (this.events.length > 10) this.events.pop(); // Keep last 10
+        this.updateAriaLabel();
         this.render();
+    }
+
+    updateAriaLabel() {
+        const eventCount = this.events.length;
+        this.setAttribute('aria-label', `Recent events: ${eventCount} event${eventCount !== 1 ? 's' : ''} displayed. New events appear at the top.`);
     }
 
     getSeverityIcon(severity) {

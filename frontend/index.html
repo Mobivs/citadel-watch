@@ -201,13 +201,16 @@
                 <!-- Top Stats Row -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                     <!-- Guardian Status Card -->
-                    <guardian-status></guardian-status>
+                    <guardian-status role="region" aria-label="Guardian Status" aria-describedby="guardian-status-desc"></guardian-status>
+                    <div id="guardian-status-desc" style="display:none;">Shows system protection status: Active or Inactive. Displays current security level.</div>
 
                     <!-- Threat Level Card -->
-                    <threat-level></threat-level>
+                    <threat-level role="region" aria-label="Threat Level" aria-describedby="threat-level-desc"></threat-level>
+                    <div id="threat-level-desc" style="display:none;">Real-time threat level indicator showing All Clear, Investigating, or Active Threats. Displays number of threats blocked today.</div>
 
                     <!-- Protected Systems Card -->
-                    <protected-systems></protected-systems>
+                    <protected-systems role="region" aria-label="Protected Systems" aria-describedby="protected-systems-desc"></protected-systems>
+                    <div id="protected-systems-desc" style="display:none;">Shows the number of systems protected by Citadel Archer and their operating system information.</div>
                 </div>
 
                 <!-- Main Grid -->
@@ -220,7 +223,8 @@
                             <button class="text-sm text-neon-blue hover:underline" onclick="document.getElementById('tab-btn-timeline').click()">View All</button>
                         </div>
                         <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
-                            <event-log></event-log>
+                            <event-log role="region" aria-label="Recent Events" aria-describedby="event-log-desc" aria-live="polite"></event-log>
+                            <div id="event-log-desc" style="display:none;">List of recent security events with timestamps and severity indicators. New events appear at the top as they occur.</div>
                         </div>
                     </div>
 
@@ -231,7 +235,8 @@
                             <button class="text-sm text-neon-blue hover:underline">View All</button>
                         </div>
                         <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
-                            <process-list></process-list>
+                            <process-list role="region" aria-label="Running Processes" aria-describedby="process-list-desc"></process-list>
+                            <div id="process-list-desc" style="display:none;">List of running system processes showing CPU and RAM usage percentages for the top 8 most resource-intensive processes.</div>
                         </div>
                     </div>
 
@@ -239,7 +244,8 @@
 
                 <!-- AI Insights Section -->
                 <div class="mt-8">
-                    <ai-insights></ai-insights>
+                    <ai-insights role="region" aria-label="AI Insights" aria-describedby="ai-insights-desc"></ai-insights>
+                    <div id="ai-insights-desc" style="display:none;">AI-generated security analysis and recommendations based on current system status and threat patterns.</div>
                 </div>
 
             </main>

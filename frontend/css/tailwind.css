@@ -190,6 +190,7 @@
   --text-secondary: #9CA3AF;
   --text-muted: #6B7280;
   --accent: #00d4ff;
+  --accent-dark: #0099cc;
   --accent-rgb: 0, 212, 255;
   --sev-critical: #ff3333;
   --sev-critical-rgb: 255, 51, 51;
@@ -216,6 +217,32 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-full: 9999px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f5;
+    --bg-gradient-start: #f9fafb;
+    --bg-gradient-end: #ffffff;
+    --card-bg: rgba(0, 0, 0, 0.05);
+    --card-border: rgba(0, 152, 204, 0.2);
+    --card-hover: rgba(0, 152, 204, 0.15);
+    --card-shadow: rgba(0, 0, 0, 0.08);
+    --text-primary: #1f2937;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+    --accent: #0099cc;
+    --accent-dark: #006699;
+    --accent-rgb: 0, 153, 204;
+    --sev-critical: #dc2626;
+    --sev-critical-rgb: 220, 38, 38;
+    --sev-high: #ea580c;
+    --sev-high-rgb: 234, 88, 12;
+    --sev-medium: #ca8a04;
+    --sev-medium-rgb: 202, 138, 4;
+    --sev-low: #16a34a;
+    --sev-low-rgb: 22, 163, 74;
+  }
 }
 * {
   margin: 0;
@@ -327,7 +354,7 @@ body {
   display: none;
 }
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent) 0%, #0099CC 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
   color: white;
   padding: 0.5rem 1.5rem;
   border-radius: var(--radius-md);

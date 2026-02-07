@@ -7,6 +7,8 @@ class ProtectedSystems extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        // Set accessible label
+        this.setAttribute('aria-label', 'Protected systems: 1 system, Local Machine Windows 11');
     }
 
     render() {

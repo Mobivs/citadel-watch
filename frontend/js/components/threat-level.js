@@ -12,6 +12,9 @@ class ThreatLevel extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        // Set accessible label with current threat level
+        const config = this.getLevelConfig();
+        this.setAttribute('aria-label', `Threat level: ${config.text}. ${this.threatsBlocked} threats blocked today.`);
         window.addEventListener('threat-level-changed', (e) => {
             this.updateLevel(e.detail);
         });
@@ -20,6 +23,8 @@ class ThreatLevel extends HTMLElement {
     updateLevel({ level, threatsBlocked }) {
         this.level = level;
         this.threatsBlocked = threatsBlocked;
+        const config = this.getLevelConfig();
+        this.setAttribute('aria-label', `Threat level: ${config.text}. ${this.threatsBlocked} threats blocked today.`);
         this.render();
     }
 

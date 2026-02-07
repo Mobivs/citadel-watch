@@ -12,6 +12,8 @@ class GuardianStatus extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        // Set accessible label with current state
+        this.setAttribute('aria-label', `Guardian status: ${this.isActive ? 'Active' : 'Inactive'}, Security level: ${this.securityLevel}`);
         // Listen for state updates
         window.addEventListener('guardian-status-changed', (e) => {
             this.updateStatus(e.detail);
@@ -21,6 +23,7 @@ class GuardianStatus extends HTMLElement {
     updateStatus({ isActive, securityLevel }) {
         this.isActive = isActive;
         this.securityLevel = securityLevel;
+        this.setAttribute('aria-label', `Guardian status: ${this.isActive ? 'Active' : 'Inactive'}, Security level: ${this.securityLevel}`);
         this.render();
     }
 

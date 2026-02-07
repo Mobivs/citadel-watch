@@ -279,7 +279,8 @@
                         <span class="text-xs text-gray-500" id="gauge-zone-label">Safe</span>
                     </div>
                     <div class="gauge-wrapper">
-                        <canvas id="threat-gauge" width="300" height="180"></canvas>
+                        <canvas id="threat-gauge" role="img" aria-label="Threat Level Gauge" aria-describedby="threat-gauge-desc" width="300" height="180"></canvas>
+                        <div id="threat-gauge-desc" style="display:none;">Circular gauge showing overall system threat level from 0% (Safe) to 100% (Critical). Current level displayed as percentage with zone indicator.</div>
                         <div class="gauge-label">
                             <p class="text-3xl font-bold text-neon-blue" id="gauge-value-text">0%</p>
                             <p class="text-xs text-gray-500 mt-1" id="gauge-zone-text">Safe</p>
@@ -294,7 +295,8 @@
                         <span class="text-xs text-gray-500">Last 24h</span>
                     </div>
                     <div class="trend-chart-container">
-                        <canvas id="trend-chart"></canvas>
+                        <canvas id="trend-chart" role="img" aria-label="Threat Trend Over Time" aria-describedby="trend-chart-desc"></canvas>
+                        <div id="trend-chart-desc" style="display:none;">Line chart showing threat count per hour over the last 24 hours. Three datasets: Total (purple), Critical (red), and High (orange). Y-axis shows threat count, X-axis shows time intervals.</div>
                     </div>
                 </div>
 
@@ -305,7 +307,8 @@
                         <span class="text-xs text-gray-500" id="asset-count-label">0 assets</span>
                     </div>
                     <div class="asset-chart-container">
-                        <canvas id="asset-risk-chart"></canvas>
+                        <canvas id="asset-risk-chart" role="img" aria-label="Assets by Risk Level" aria-describedby="asset-risk-chart-desc"></canvas>
+                        <div id="asset-risk-chart-desc" style="display:none;">Horizontal stacked bar chart showing threat distribution per asset. Colors indicate severity: red for Critical, orange for High, yellow for Medium, and green for Low. Each bar represents one asset, with segments showing the proportion of threats at each severity level.</div>
                     </div>
                 </div>
 

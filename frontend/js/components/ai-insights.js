@@ -13,6 +13,7 @@ class AIInsights extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        this.updateAriaLabel();
         window.addEventListener('ai-insight', (e) => {
             this.updateInsight(e.detail);
         });
@@ -20,7 +21,18 @@ class AIInsights extends HTMLElement {
 
     updateInsight(insight) {
         this.insight = insight;
+        this.updateAriaLabel();
         this.render();
+    }
+
+    updateAriaLabel() {
+        const typeLabel = {
+            info: 'Information',
+            investigate: 'Investigation',
+            alert: 'Alert',
+            critical: 'Critical'
+        }[this.insight.type] || 'Information';
+        this.setAttribute('aria-label', `AI Insight: ${typeLabel}. ${this.insight.message}`);
     }
 
     render() {
