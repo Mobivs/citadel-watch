@@ -33,10 +33,12 @@
 **Results:**
 - ✅ HTTP POST to `/api/agents/register` returned 200
 - ✅ Response included `agent_id`: `1c43cd42-ab8e-4394-b532-0811df48ea04`
-- ✅ Response included `api_token`: `sk-agent-test-REDACTED`
+- ✅ Response included `api_token`: `sk-agent-test-[REDACTED]` (real token removed for security)
 - ✅ Credentials saved to `.credentials.json` with correct permissions
 - ✅ Agent printed "Agent registered successfully!"
 - ✅ File baseline initialized successfully
+
+**⚠️ NOTE:** Real API token was stored here during testing. Token has been revoked. Use `sk-agent-...` format for documentation.
 
 **Validation:** 🟢 PASS
 
