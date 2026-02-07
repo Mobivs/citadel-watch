@@ -1,0 +1,40 @@
+{
+  "name": "remote-shield-agent",
+  "version": "1.0.0",
+  "description": "Remote Shield Agent - VPS threat detection and reporting system",
+  "main": "index.js",
+  "bin": {
+    "remote-shield": "index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "mocha tests/**/*.test.js --timeout 10000",
+    "lint": "eslint ."
+  },
+  "keywords": [
+    "security",
+    "threat-detection",
+    "monitoring",
+    "vps",
+    "citadel-archer"
+  ],
+  "author": "Citadel Archer",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "fs-extra": "^11.1.0",
+    "yaml": "^2.3.0",
+    "dotenv": "^16.3.0",
+    "uuid": "^9.0.0",
+    "chalk": "^4.1.2"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0",
+    "chai": "^4.3.7",
+    "sinon": "^15.2.0",
+    "eslint": "^8.45.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

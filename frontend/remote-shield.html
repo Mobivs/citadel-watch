@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Shield - Citadel Archer</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        .remote-shield-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin: 2rem;
+        }
+
+        .agent-panel {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.05));
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .agent-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        .agent-status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .agent-status-indicator.active {
+            background-color: #10b981;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+
+        .agent-status-indicator.inactive {
+            background-color: #ef4444;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+            animation: none;
+        }
+
+        .agent-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #e0e7ff;
+        }
+
+        .agent-info {
+            display: grid;
+            gap: 0.8rem;
+            font-size: 0.9rem;
+            color: #a5b4fc;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .info-label {
+            color: #7c3aed;
+            font-weight: 500;
+        }
+
+        .info-value {
+            color: #e0e7ff;
+            font-family: 'Courier New', monospace;
+        }
+
+        .threat-timeline {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.05));
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            grid-column: 1 / -1;
+            max-height: 600px;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+        }
+
+        .timeline-header {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #fecaca;
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .threat-count {
+            background: rgba(239, 68, 68, 0.3);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+
+        .threat-item {
+            background: rgba(30, 30, 30, 0.5);
+            border-left: 4px solid;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .threat-item:hover {
+            background: rgba(40, 40, 40, 0.8);
+            transform: translateX(4px);
+        }
+
+        .threat-item.severity-critical {
+            border-left-color: #dc2626;
+        }
+
+        .threat-item.severity-high {
+            border-left-color: #ea580c;
+        }
+
+        .threat-item.severity-medium {
+            border-left-color: #f59e0b;
+        }
+
+        .threat-item.severity-low {
+            border-left-color: #3b82f6;
+        }
+
+        .threat-title {
+            font-weight: 600;
+            color: #e0e7ff;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .threat-badge {
+            display: inline-block;
+            padding: 0.25rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .threat-badge.critical {
+            background: rgba(220, 38, 38, 0.3);
+            color: #fca5a5;
+        }
+
+        .threat-badge.high {
+            background: rgba(234, 88, 12, 0.3);
+            color: #fed7aa;
+        }
+
+        .threat-badge.medium {
+            background: rgba(245, 158, 11, 0.3);
+            color: #fde68a;
+        }
+
+        .threat-badge.low {
+            background: rgba(59, 130, 246, 0.3);
+            color: #bfdbfe;
+        }
+
+        .threat-meta {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.85rem;
+            color: #a5b4fc;
+            margin-top: 0.5rem;
+        }
+
+        .threat-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .vps-heatmap {
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.1), rgba(168, 85, 247, 0.05));
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .heatmap-header {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #d8b4fe;
+            margin-bottom: 1rem;
+        }
+
+        .heatmap-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 1rem;
+        }
+
+        .heatmap-cell {
+            background: rgba(30, 30, 30, 0.6);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .heatmap-cell:hover {
+            background: rgba(40, 40, 40, 0.9);
+            border-color: rgba(168, 85, 247, 0.6);
+        }
+
+        .heatmap-hostname {
+            font-weight: 600;
+            color: #e0e7ff;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .heatmap-count {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #d8b4fe;
+            margin: 0.5rem 0;
+        }
+
+        .heatmap-level {
+            display: inline-block;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .heatmap-level.critical {
+            background: rgba(220, 38, 38, 0.3);
+            color: #fca5a5;
+        }
+
+        .heatmap-level.high {
+            background: rgba(234, 88, 12, 0.3);
+            color: #fed7aa;
+        }
+
+        .heatmap-level.medium {
+            background: rgba(245, 158, 11, 0.3);
+            color: #fde68a;
+        }
+
+        .heatmap-level.none {
+            background: rgba(16, 185, 129, 0.3);
+            color: #a7f3d0;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: #a5b4fc;
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.05));
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #60a5fa;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: #a5b4fc;
+            margin-top: 0.5rem;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            .remote-shield-container {
+                grid-template-columns: 1fr;
+            }
+
+            .stats-bar {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body style="background: #0f0f0f; color: #e0e7ff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+    <div class="remote-shield-container">
+        <!-- Statistics Bar -->
+        <div class="stats-bar" style="grid-column: 1 / -1;">
+            <div class="stat-card">
+                <div class="stat-value" id="total-agents">0</div>
+                <div class="stat-label">Connected Agents</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="active-agents">0</div>
+                <div class="stat-label">Active Now</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="total-threats">0</div>
+                <div class="stat-label">Total Threats</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="critical-threats">0</div>
+                <div class="stat-label">Critical Threats</div>
+            </div>
+        </div>
+
+        <!-- Agent List -->
+        <div id="agents-container"></div>
+
+        <!-- VPS Heatmap -->
+        <div class="vps-heatmap" style="grid-column: 1 / -1;">
+            <div class="heatmap-header">🔥 VPS Threat Heatmap</div>
+            <div class="heatmap-grid" id="heatmap-grid">
+                <div class="empty-state">
+                    <div class="empty-state-icon">🌐</div>
+                    <div>No agents registered yet</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Threat Timeline -->
+        <div class="threat-timeline" style="grid-column: 1 / -1;">
+            <div class="timeline-header">
+                <span>🚨 Remote Shield Threat Timeline</span>
+                <span class="threat-count" id="threat-filter-active">All</span>
+            </div>
+            <div id="threat-timeline-container">
+                <div class="empty-state">
+                    <div class="empty-state-icon">✓</div>
+                    <div>No threats detected</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        let agentsData = {};
+        let threatsData = [];
+
+        // Initialize WebSocket for real-time updates
+        function initWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.addEventListener('message', (event) => {
+                const message = JSON.parse(event.data);
+                
+                // Handle threat updates
+                if (message.type === 'threat' || message.type === 'threat:remote-shield') {
+                    threatsData.unshift(message.data);
+                    if (threatsData.length > 100) threatsData.pop();
+                    renderThreats();
+                    updateStats();
+                    updateHeatmap();
+                }
+
+                // Handle agent updates
+                if (message.type === 'agent_update') {
+                    if (message.data.id) {
+                        agentsData[message.data.id] = message.data;
+                    }
+                    renderAgents();
+                    updateHeatmap();
+                }
+            });
+
+            ws.addEventListener('error', (error) => {
+                console.error('WebSocket error:', error);
+            });
+
+            ws.addEventListener('close', () => {
+                console.log('WebSocket closed, reconnecting...');
+                setTimeout(initWebSocket, 3000);
+            });
+        }
+
+        // Fetch agents from backend
+        async function fetchAgents() {
+            try {
+                const response = await fetch(`${API_BASE}/agents`);
+                const agents = await response.json();
+                agents.forEach(agent => {
+                    agentsData[agent.id] = agent;
+                });
+                renderAgents();
+                updateHeatmap();
+            } catch (error) {
+                console.error('Failed to fetch agents:', error);
+            }
+        }
+
+        // Fetch threats from backend
+        async function fetchThreats() {
+            try {
+                const response = await fetch(`${API_BASE}/threats/remote-shield?limit=50`);
+                threatsData = await response.json();
+                renderThreats();
+                updateStats();
+            } catch (error) {
+                console.error('Failed to fetch threats:', error);
+            }
+        }
+
+        // Render agent panels
+        function renderAgents() {
+            const container = document.getElementById('agents-container');
+            
+            if (Object.keys(agentsData).length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <div class="empty-state-icon">🤖</div>
+                        <div>No agents connected</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = Object.values(agentsData).map(agent => {
+                const isActive = agent.status === 'active';
+                const lastHeartbeat = agent.last_heartbeat ? new Date(agent.last_heartbeat).toLocaleString() : 'Never';
+                const lastScan = agent.last_scan_at ? new Date(agent.last_scan_at).toLocaleString() : 'Never';
+
+                return `
+                    <div class="agent-panel">
+                        <div class="agent-header">
+                            <div class="agent-status-indicator ${isActive ? 'active' : 'inactive'}"></div>
+                            <div class="agent-name">${agent.hostname}</div>
+                        </div>
+                        <div class="agent-info">
+                            <div class="info-row">
+                                <span class="info-label">Status:</span>
+                                <span class="info-value">${agent.status.toUpperCase()}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">IP Address:</span>
+                                <span class="info-value">${agent.ip_address}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Last Heartbeat:</span>
+                                <span class="info-value">${lastHeartbeat}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Last Scan:</span>
+                                <span class="info-value">${lastScan}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Registered:</span>
+                                <span class="info-value">${new Date(agent.registered_at).toLocaleDateString()}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render threat timeline
+        function renderThreats() {
+            const container = document.getElementById('threat-timeline-container');
+
+            if (threatsData.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">✓</div>
+                        <div>No threats detected</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = threatsData.map(threat => {
+                const severity = threat.severity || 5;
+                let severityClass = 'low';
+                if (severity >= 8) severityClass = 'critical';
+                else if (severity >= 6) severityClass = 'high';
+                else if (severity >= 5) severityClass = 'medium';
+
+                const threatTime = new Date(threat.reported_at || threat.timestamp).toLocaleString();
+                
+                return `
+                    <div class="threat-item severity-${severityClass}">
+                        <div class="threat-title">
+                            ${threat.title}
+                            <span class="threat-badge ${severityClass}">S${severity}</span>
+                        </div>
+                        <div class="threat-meta">
+                            <span class="threat-meta-item">🖥️ ${threat.hostname}</span>
+                            <span class="threat-meta-item">📋 ${threat.type}</span>
+                            <span class="threat-meta-item">🕐 ${threatTime}</span>
+                        </div>
+                        ${threat.details ? `<div style="font-size: 0.8rem; color: #818cf8; margin-top: 0.5rem;">Details: ${JSON.stringify(threat.details).substring(0, 100)}...</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Update heatmap
+        function updateHeatmap() {
+            const grid = document.getElementById('heatmap-grid');
+            
+            if (Object.keys(agentsData).length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🌐</div>
+                        <div>No agents registered yet</div>
+                    </div>
+                `;
+                return;
+            }
+
+            grid.innerHTML = Object.values(agentsData).map(agent => {
+                const agentThreats = threatsData.filter(t => t.agent_id === agent.id || t.hostname === agent.hostname);
+                const threatCount = agentThreats.length;
+                let level = 'none';
+                if (threatCount >= 5) level = 'critical';
+                else if (threatCount >= 3) level = 'high';
+                else if (threatCount > 0) level = 'medium';
+
+                return `
+                    <div class="heatmap-cell">
+                        <div class="heatmap-hostname">${agent.hostname}</div>
+                        <div class="heatmap-count">${threatCount}</div>
+                        <div class="heatmap-level ${level}">${level.toUpperCase()}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Update statistics
+        function updateStats() {
+            const totalAgents = Object.keys(agentsData).length;
+            const activeAgents = Object.values(agentsData).filter(a => a.status === 'active').length;
+            const totalThreats = threatsData.length;
+            const criticalThreats = threatsData.filter(t => (t.severity || 5) >= 8).length;
+
+            document.getElementById('total-agents').textContent = totalAgents;
+            document.getElementById('active-agents').textContent = activeAgents;
+            document.getElementById('total-threats').textContent = totalThreats;
+            document.getElementById('critical-threats').textContent = criticalThreats;
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initWebSocket();
+            fetchAgents();
+            fetchThreats();
+
+            // Refresh data every 30 seconds
+            setInterval(() => {
+                fetchAgents();
+                fetchThreats();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>

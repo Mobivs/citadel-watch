@@ -185,6 +185,10 @@
                     <span class="tab-icon">💻</span>
                     <span>Assets</span>
                 </button>
+                <button id="tab-btn-remote-shield" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-remote-shield">
+                    <span class="tab-icon">🛡️</span>
+                    <span>Remote Shield</span>
+                </button>
             </div>
         </nav>
 
@@ -266,6 +270,13 @@
         <div id="tab-panel-assets" role="tabpanel" aria-labelledby="tab-btn-assets" aria-hidden="true" style="display:none;">
             <div class="container mx-auto px-6 py-6">
                 <iframe id="tab-iframe-assets" class="tab-iframe" title="Assets"></iframe>
+            </div>
+        </div>
+
+        <!-- Remote Shield Panel (iframe) -->
+        <div id="tab-panel-remote-shield" role="tabpanel" aria-labelledby="tab-btn-remote-shield" aria-hidden="true" style="display:none;">
+            <div class="container mx-auto px-6 py-6">
+                <iframe id="tab-iframe-remote-shield" class="tab-iframe" title="Remote Shield" src="remote-shield.html"></iframe>
             </div>
         </div>
 
