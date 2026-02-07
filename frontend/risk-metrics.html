@@ -6,33 +6,11 @@
     <title>Citadel Archer - Risk Metrics</title>
 
     <!-- PRD: Risk Metrics page - threat gauges, bars, sparklines -->
-    <!-- Tailwind CSS (CDN - matches index.html) -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Production Tailwind CSS Build -->
+    <link rel="stylesheet" href="css/tailwind.css">
 
     <!-- Chart.js CDN (for asset bar chart) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-
-    <!-- Custom Tailwind Configuration (matches index.html) -->
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        'neon-blue': '#00D9FF',
-                        'dark-bg': '#0A0E27',
-                        'card-bg': 'rgba(15, 23, 42, 0.6)',
-                    },
-                    backdropBlur: {
-                        'glass': '20px',
-                    }
-                }
-            }
-        }
-    </script>
-
-    <!-- Custom Styles (shared) -->
-    <link rel="stylesheet" href="css/styles.css">
 
     <style>
         /* Risk metrics specific styles */

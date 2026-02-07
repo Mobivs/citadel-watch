@@ -81,6 +81,19 @@ frontend/.next/
 frontend/build/
 frontend/.env.local
 
+# Node.js & npm
+node_modules/
+package-lock.json
+yarn.lock
+dist/
+build/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # Quarantine - files flagged by security monitoring
 quarantine/
 
