@@ -30,6 +30,9 @@ let sortField = 'threat_level';
 let sortOrder = 'desc';
 let selectedAssetId = null;
 let refreshInterval = null;
+let _wsUnsubs = [];
+let _onWsConnected = null;
+let _onWsDisconnected = null;
 
 // ── API ─────────────────────────────────────────────────────────────
 
@@ -181,7 +184,7 @@ function renderTable() {
                 <td data-label="Asset Name">
                     <div class="flex items-center gap-2">
                         <span class="text-sm font-medium text-gray-200">${name}</span>
-                        ${asset.guardian_active ? '<span class="text-xs text-neon-blue" title="Guardian active">🛡️</span>' : ''}
+                        ${asset.guardian_active ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#00D9FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Guardian active" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' : ''}
                     </div>
                     <span class="text-xs text-gray-500">${escapeHtml(asset.hostname || asset.ip_address || '')}</span>
                 </td>
@@ -319,13 +322,15 @@ function closeDetail() {
 // ── WebSocket ───────────────────────────────────────────────────────
 
 function connectWebSocket() {
-    wsHandler.subscribe('event', handleWebSocketMessage);
-    wsHandler.subscribe('threat_detected', handleWebSocketMessage);
-    wsHandler.subscribe('security_level_changed', handleWebSocketMessage);
-    wsHandler.subscribe('asset_status_changed', handleWebSocketMessage);
+    _wsUnsubs.push(wsHandler.subscribe('event', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('threat_detected', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('security_level_changed', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('asset_status_changed', handleWebSocketMessage));
 
-    window.addEventListener('ws-connected', () => setLiveStatus(true));
-    window.addEventListener('ws-disconnected', () => setLiveStatus(false));
+    _onWsConnected = () => setLiveStatus(true);
+    _onWsDisconnected = () => setLiveStatus(false);
+    window.addEventListener('ws-connected', _onWsConnected);
+    window.addEventListener('ws-disconnected', _onWsDisconnected);
 
     wsHandler.connect();
 }
@@ -350,11 +355,11 @@ function setLiveStatus(connected) {
         if (dot) dot.style.background = '#00cc66';
         if (text) text.textContent = 'Live';
     } else {
-        badge.style.background = 'rgba(255,51,51,0.15)';
-        badge.style.color = '#ff3333';
-        badge.style.borderColor = 'rgba(255,51,51,0.3)';
-        if (dot) dot.style.background = '#ff3333';
-        if (text) text.textContent = 'Offline';
+        badge.style.background = 'rgba(230,184,0,0.15)';
+        badge.style.color = '#e6b800';
+        badge.style.borderColor = 'rgba(230,184,0,0.3)';
+        if (dot) dot.style.background = '#e6b800';
+        if (text) text.textContent = 'Simulated';
     }
 }
 
@@ -490,9 +495,24 @@ async function refreshData() {
     renderTable();
 }
 
+// ── Cleanup ─────────────────────────────────────────────────────────
+
+function destroy() {
+    if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
+    _wsUnsubs.forEach(fn => { if (typeof fn === 'function') fn(); });
+    _wsUnsubs = [];
+    if (_onWsConnected) { window.removeEventListener('ws-connected', _onWsConnected); _onWsConnected = null; }
+    if (_onWsDisconnected) { window.removeEventListener('ws-disconnected', _onWsDisconnected); _onWsDisconnected = null; }
+    allAssets = [];
+    filteredAssets = [];
+    currentPage = 1;
+    selectedAssetId = null;
+}
+
 // ── Init ────────────────────────────────────────────────────────────
 
 async function init() {
+    destroy();
     try {
         await apiClient.initialize();
     } catch (err) {
@@ -520,6 +540,8 @@ if (document.readyState === 'loading') {
 // ── Exports ─────────────────────────────────────────────────────────
 
 export {
+    init,
+    destroy,
     THREAT_RANK,
     STATUS_RANK,
     ROW_COLOURS,

@@ -29,22 +29,23 @@ class ThreatLevel extends HTMLElement {
     }
 
     getLevelConfig() {
+        const dot = (c) => `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c};box-shadow:0 0 8px ${c};"></span>`;
         const configs = {
             green: {
                 color: '#10B981',
-                icon: '🟢',
+                icon: dot('#10B981'),
                 text: 'All Clear',
                 message: "You're protected. No active threats detected."
             },
             yellow: {
                 color: '#F59E0B',
-                icon: '🟡',
+                icon: dot('#F59E0B'),
                 text: 'Investigating',
                 message: "I'm checking something unusual. You're still protected."
             },
             red: {
                 color: '#EF4444',
-                icon: '🔴',
+                icon: dot('#EF4444'),
                 text: 'Active Threats',
                 message: "Threats detected and blocked. You're safe."
             }
@@ -66,10 +67,10 @@ class ThreatLevel extends HTMLElement {
                     background: rgba(15, 23, 42, 0.6);
                     backdrop-filter: blur(20px);
                     border: 1px solid rgba(0, 217, 255, 0.1);
-                    border-radius: 16px;
-                    padding: 1.5rem;
+                    border-radius: 10px;
+                    padding: 0.875rem;
                     transition: all 0.3s ease;
-                    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+                    box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.37);
                     height: 100%;
                     box-sizing: border-box;
                     overflow: hidden;
@@ -77,42 +78,42 @@ class ThreatLevel extends HTMLElement {
 
                 .card:hover {
                     border-color: rgba(0, 217, 255, 0.3);
-                    transform: translateY(-2px);
+                    transform: translateY(-1px);
                 }
 
                 .title {
-                    font-size: 0.875rem;
+                    font-size: 0.75rem;
                     color: #9CA3AF;
-                    margin-bottom: 0.5rem;
+                    margin-bottom: 0.25rem;
                 }
 
                 .level-display {
                     display: flex;
                     align-items: center;
-                    gap: 0.75rem;
-                    margin-bottom: 0.75rem;
+                    gap: 0.5rem;
+                    margin-bottom: 0.375rem;
                 }
 
                 .level-icon {
-                    font-size: 2rem;
+                    font-size: 1.25rem;
                 }
 
                 .level-text {
-                    font-size: 1.5rem;
+                    font-size: 1.1rem;
                     font-weight: 700;
                     color: ${config.color};
                 }
 
                 .message {
-                    font-size: 0.875rem;
+                    font-size: 0.75rem;
                     color: #D1D5DB;
-                    margin-bottom: 1rem;
+                    margin-bottom: 0.5rem;
                 }
 
                 .stats {
                     display: flex;
                     justify-content: space-between;
-                    padding-top: 1rem;
+                    padding-top: 0.5rem;
                     border-top: 1px solid rgba(0, 217, 255, 0.1);
                 }
 
@@ -121,13 +122,13 @@ class ThreatLevel extends HTMLElement {
                 }
 
                 .stat-value {
-                    font-size: 1.25rem;
+                    font-size: 1rem;
                     font-weight: 700;
                     color: #00D9FF;
                 }
 
                 .stat-label {
-                    font-size: 0.75rem;
+                    font-size: 0.65rem;
                     color: #9CA3AF;
                 }
             </style>

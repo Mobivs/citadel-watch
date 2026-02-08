@@ -2,31 +2,42 @@
 // Reference: PHASE_2_SPEC.md
 //
 // Provides tabbed navigation within the main dashboard:
-//   1. Intelligence — overview (Phase 1 Web Components)
-//   2. Charts — threat visualisations (charts.html content)
-//   3. Timeline — event history (timeline.html content)
-//   4. Risk Metrics — threat indicators (risk-metrics.html content)
-//   5. Assets — asset overview (assets.html content)
+//   1. Intelligence — overview (Phase 1 Web Components, always inline)
+//   2. Charts — threat visualisations (loaded dynamically)
+//   3. Timeline — event history (loaded dynamically)
+//   4. Risk Metrics — threat indicators (loaded dynamically)
+//   5. Assets — asset overview (loaded dynamically)
+//   6. Remote Shield — VPS monitoring (loaded dynamically)
+//
+// Architecture:
+//   - Intelligence panel is always in the DOM (Web Components)
+//   - Other tabs are loaded on demand via tab-loader.js (fetch + inject)
+//   - Only one non-intelligence tab's content exists in DOM at a time
+//   - This prevents ID collisions between pages sharing element IDs
 //
 // Features:
-//   - Tab switching via show/hide content panels
+//   - Tab switching via show/hide + dynamic content loading
 //   - Active tab persistence (localStorage)
-//   - WebSocket connection at startup
-//   - Error handling for disconnects/reconnects
+//   - WebSocket connection badge in header
+//   - Error handling for load failures
 //   - Tab-change custom event broadcasting
+//   - Keyboard navigation (arrow keys, Home/End)
+
+import { activate, deactivate } from './tab-loader.js';
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const TAB_IDS = ['intelligence', 'charts', 'timeline', 'risk-metrics', 'assets'];
+const TAB_IDS = ['intelligence', 'charts', 'timeline', 'risk-metrics', 'assets', 'remote-shield'];
 
 const STORAGE_KEY = 'citadel_active_tab';
 
 const TAB_CONFIG = {
-    intelligence: { label: 'Intelligence', icon: '🖥️', src: null },
-    charts:       { label: 'Charts',       icon: '📊', src: 'charts.html' },
-    timeline:     { label: 'Timeline',     icon: '📋', src: 'timeline.html' },
-    'risk-metrics': { label: 'Risk',       icon: '🎯', src: 'risk-metrics.html' },
-    assets:       { label: 'Assets',       icon: '💻', src: 'assets.html' },
+    intelligence:    { label: 'Intelligence',  src: null },
+    charts:          { label: 'Charts',        src: 'charts.html' },
+    timeline:        { label: 'Timeline',      src: 'timeline.html' },
+    'risk-metrics':  { label: 'Risk',          src: 'risk-metrics.html' },
+    assets:          { label: 'Assets',        src: 'assets.html' },
+    'remote-shield': { label: 'Remote Shield', src: 'remote-shield.html' },
 };
 
 
@@ -62,18 +73,21 @@ function saveTab(tabId) {
 // ── Panel visibility ───────────────────────────────────────────────
 
 function showPanel(tabId) {
-    TAB_IDS.forEach(id => {
-        const panel = document.getElementById(`tab-panel-${id}`);
-        if (!panel) return;
+    // Intelligence panel is always in the DOM; other panels share a dynamic area
+    const intellPanel = document.getElementById('tab-panel-intelligence');
+    const dynamicPanel = document.getElementById('tab-panel-dynamic');
 
-        if (id === tabId) {
-            panel.style.display = '';
-            panel.removeAttribute('aria-hidden');
-        } else {
-            panel.style.display = 'none';
-            panel.setAttribute('aria-hidden', 'true');
+    if (tabId === 'intelligence') {
+        if (intellPanel) { intellPanel.style.display = ''; intellPanel.removeAttribute('aria-hidden'); }
+        if (dynamicPanel) { dynamicPanel.style.display = 'none'; dynamicPanel.setAttribute('aria-hidden', 'true'); }
+    } else {
+        if (intellPanel) { intellPanel.style.display = 'none'; intellPanel.setAttribute('aria-hidden', 'true'); }
+        if (dynamicPanel) {
+            dynamicPanel.style.display = '';
+            dynamicPanel.removeAttribute('aria-hidden');
+            dynamicPanel.setAttribute('aria-labelledby', `tab-btn-${tabId}`);
         }
-    });
+    }
 }
 
 
@@ -85,41 +99,38 @@ function updateTabButtons(tabId) {
         if (id === tabId) {
             btn.classList.add('tab-active');
             btn.setAttribute('aria-selected', 'true');
+            btn.setAttribute('tabindex', '0');
         } else {
             btn.classList.remove('tab-active');
             btn.setAttribute('aria-selected', 'false');
+            btn.setAttribute('tabindex', '-1');
         }
     });
 }
 
 
-// ── Iframe loading ─────────────────────────────────────────────────
-
-const _loadedIframes = new Set();
-
-function loadIframe(tabId) {
-    if (tabId === 'intelligence') return; // no iframe for overview
-    if (_loadedIframes.has(tabId)) return; // already loaded
-
-    const iframe = document.getElementById(`tab-iframe-${tabId}`);
-    const config = TAB_CONFIG[tabId];
-    if (!iframe || !config || !config.src) return;
-
-    iframe.src = config.src;
-    _loadedIframes.add(tabId);
-}
-
-
 // ── Core switch ────────────────────────────────────────────────────
 
-function switchTab(tabId) {
+async function switchTab(tabId) {
     if (!TAB_IDS.includes(tabId)) return;
 
+    const prevTab = _activeTab;
     _activeTab = tabId;
+
+    // 1. Update UI immediately (buttons + panel visibility)
     showPanel(tabId);
     updateTabButtons(tabId);
     saveTab(tabId);
-    loadIframe(tabId);
+
+    // 2. Load content for non-intelligence tabs
+    if (tabId !== 'intelligence') {
+        try {
+            await activate(tabId);
+        } catch (err) {
+            console.error(`[nav] Failed to load tab ${tabId}:`, err);
+            showError(`Failed to load ${TAB_CONFIG[tabId]?.label || tabId}`);
+        }
+    }
 
     // Broadcast tab change event
     window.dispatchEvent(new CustomEvent('tab-changed', {
@@ -137,19 +148,15 @@ function updateConnectionBadge(connected) {
     if (!badge || !dot || !text) return;
 
     if (connected) {
-        badge.style.background = 'rgba(0,204,102,0.15)';
-        badge.style.color      = '#00cc66';
-        badge.style.border     = '1px solid rgba(0,204,102,0.3)';
-        dot.style.background   = '#00cc66';
-        text.textContent       = 'Live';
+        badge.classList.remove('conn-offline');
+        badge.classList.add('conn-live');
+        text.textContent = 'Live';
         badge.setAttribute('aria-label', 'WebSocket connection status: Live');
     } else {
-        badge.style.background = 'rgba(255,51,51,0.15)';
-        badge.style.color      = '#ff3333';
-        badge.style.border     = '1px solid rgba(255,51,51,0.3)';
-        dot.style.background   = '#ff3333';
-        text.textContent       = 'Offline';
-        badge.setAttribute('aria-label', 'WebSocket connection status: Offline');
+        badge.classList.remove('conn-live');
+        badge.classList.add('conn-simulated');
+        text.textContent = 'Simulated';
+        badge.setAttribute('aria-label', 'WebSocket connection status: Simulated data');
     }
 }
 
@@ -162,6 +169,7 @@ function showError(message, showRetry = false) {
 
     const toast = document.createElement('div');
     toast.className = 'nav-error-toast';
+    toast.setAttribute('role', 'alert');
     toast.innerHTML = `
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
             <span>${escapeHtml(message)}</span>
@@ -247,7 +255,7 @@ function initDashboardNav() {
     window.addEventListener('ws-connected', () => updateConnectionBadge(true));
     window.addEventListener('ws-disconnected', () => updateConnectionBadge(false));
 
-    console.log('🗂️ Dashboard navigation initialised');
+    console.log('[nav] Dashboard navigation initialised');
 }
 
 
@@ -269,7 +277,6 @@ export {
     saveTab,
     showPanel,
     updateTabButtons,
-    loadIframe,
     updateConnectionBadge,
     showError,
     initDashboardNav,

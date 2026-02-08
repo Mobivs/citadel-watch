@@ -29,13 +29,14 @@ class EventLog extends HTMLElement {
     }
 
     getSeverityIcon(severity) {
+        const dot = (c) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};box-shadow:0 0 6px ${c};flex-shrink:0;"></span>`;
         const icons = {
-            info: '🟢',
-            investigate: '🟡',
-            alert: '🟠',
-            critical: '🔴'
+            info: dot('#10B981'),
+            investigate: dot('#F59E0B'),
+            alert: dot('#FF9900'),
+            critical: dot('#EF4444')
         };
-        return icons[severity] || '⚪';
+        return icons[severity] || dot('#6B7280');
     }
 
     render() {
@@ -49,7 +50,7 @@ class EventLog extends HTMLElement {
                     </div>
                 </div>
             `).join('')
-            : '<div class="no-events">No recent events. All clear! 🟢</div>';
+            : '<div class="no-events">No recent events. All clear.</div>';
 
         this.shadowRoot.innerHTML = `
             <style>
@@ -65,27 +66,27 @@ class EventLog extends HTMLElement {
                 }
                 .event-item {
                     display: flex;
-                    gap: 0.75rem;
-                    padding: 0.75rem;
-                    margin-bottom: 0.5rem;
+                    gap: 0.5rem;
+                    padding: 0.5rem;
+                    margin-bottom: 0.25rem;
                     background: rgba(0, 217, 255, 0.05);
-                    border-radius: 8px;
-                    border-left: 3px solid rgba(0, 217, 255, 0.3);
+                    border-radius: 6px;
+                    border-left: 2px solid rgba(0, 217, 255, 0.3);
                     transition: all 0.3s ease;
                 }
                 .event-item:hover {
                     background: rgba(0, 217, 255, 0.1);
                     transform: translateX(4px);
                 }
-                .severity-icon { font-size: 1.25rem; }
+                .severity-icon { font-size: 0.9rem; }
                 .event-content { flex: 1; }
                 .event-message {
-                    font-size: 0.875rem;
+                    font-size: 0.8rem;
                     color: #F3F4F6;
-                    margin-bottom: 0.25rem;
+                    margin-bottom: 0.125rem;
                 }
                 .event-time {
-                    font-size: 0.75rem;
+                    font-size: 0.65rem;
                     color: #9CA3AF;
                 }
                 .no-events {

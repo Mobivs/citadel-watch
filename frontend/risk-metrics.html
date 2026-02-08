@@ -6,8 +6,22 @@
     <title>Citadel Archer - Risk Metrics</title>
 
     <!-- PRD: Risk Metrics page - threat gauges, bars, sparklines -->
-    <!-- Production Tailwind CSS Build -->
-    <link rel="stylesheet" href="css/tailwind.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'neon-blue': '#00D9FF',
+                        'dark-bg': '#0A0E27',
+                        'card-bg': 'rgba(15, 23, 42, 0.6)',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="css/styles.css">
 
     <!-- Chart.js CDN (for asset bar chart) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -152,6 +166,7 @@
     </style>
 </head>
 <body class="dark bg-dark-bg text-gray-100 font-sans antialiased">
+    <script>if (window !== window.top) document.body.classList.add('in-iframe');</script>
 
     <div id="app" class="min-h-screen">
 
@@ -215,9 +230,9 @@
 
                 <div class="flex items-center space-x-4">
                     <!-- Live badge -->
-                    <div id="live-badge" class="live-badge" style="background:rgba(239,68,68,0.15);color:#EF4444;border:1px solid rgba(239,68,68,0.3);">
-                        <span id="live-dot" class="live-dot" style="background:#EF4444;"></span>
-                        <span id="live-text">Offline</span>
+                    <div id="live-badge" class="live-badge" style="background:rgba(230,184,0,0.15);color:#e6b800;border:1px solid rgba(230,184,0,0.3);">
+                        <span id="live-dot" class="live-dot" style="background:#e6b800;"></span>
+                        <span id="live-text">Simulated</span>
                     </div>
 
                     <!-- Sensitivity control -->

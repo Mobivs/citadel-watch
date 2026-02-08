@@ -1,12 +1,35 @@
 # Citadel Archer - Product Requirements Document (PRD)
 
-**Version:** 0.2.3
-**Last Updated:** 2026-02-02
+**Version:** 0.2.4
+**Last Updated:** 2026-02-07
 **Status:** Active Development
 
 ---
 
 ## Version History & Changelog
+
+### v0.2.4 (2026-02-07) - Browser Extension Protection (Attack Surface Defense)
+**Status**: Active - New Guardian capability added
+
+**Changes**:
+- ✅ **Browser Extension Detection & Protection**: Guardian now defends against unauthorized browser extensions injecting code into protected pages
+- ✅ **Real-world motivation**: Discovered 14 unauthorized extensions silently installed in Microsoft Edge (never installed by user, never used Edge) — including "Mano" AI extension that injects content scripts on ALL URLs, reads Gmail data, and admits to keystroke logging
+- ✅ **Cross-browser scope**: Protects against extensions in Chrome, Edge, Firefox, and any Chromium-based browser
+- ✅ **Dashboard integration**: Extension threat alerts appear in Guardian status and event log
+
+**Sections Updated**:
+- Guardian Module → Browser Extension Protection (expanded from single bullet to full sub-section)
+- Security Considerations → Threat Model (added browser extension threat class)
+- Security Considerations → Browser Extension Attack Surface (new section)
+
+**Rationale**:
+1. **Real attack vector**: Browser extensions have `<all_urls>` permissions, can inject JavaScript into any page including localhost/security dashboards
+2. **Silent installation**: Software bundlers (Norton, OEM bloatware) silently sideload extensions into Edge/Chrome without user consent
+3. **Keystroke logging**: Extensions can capture keystrokes, read page DOM, exfiltrate data — directly undermining Citadel Archer's protection
+4. **Supply chain risk**: Extension updates can introduce malicious behavior after initial install (extensions auto-update silently)
+5. **Cross-browser leakage**: Edge on Windows can intercept localhost URLs even when Chrome is the default browser
+
+---
 
 ### v0.2.3 (2026-02-02) - Vanilla JS Over React (Security-First Frontend)
 **Status**: Active - Frontend architecture simplified
@@ -202,7 +225,7 @@ Modern users face sophisticated, persistent threats:
 - Real-time filesystem monitoring (unauthorized changes, suspicious binaries)
 - Network traffic analysis (outbound C2 connections, data exfiltration)
 - Process monitoring (suspicious processes, privilege escalation attempts)
-- Browser protection (hooks, extensions, injected scripts)
+- **Browser Extension Protection** (see detailed sub-section below)
 - Memory scanning for rootkits and injected code
 - Boot integrity verification
 - Automated quarantine and cleanup
@@ -212,6 +235,66 @@ Modern users face sophisticated, persistent threats:
 - Local ML model for behavior analysis
 - Signature updates from Intel module
 - Logs all activity for forensics
+
+#### Browser Extension Protection (v0.2.4)
+
+**Problem**: Browser extensions are one of the most dangerous and overlooked attack surfaces. They can:
+- Inject JavaScript into ANY page (including localhost security dashboards)
+- Read and modify page DOM, intercept form submissions, capture keystrokes
+- Exfiltrate data to external servers with minimal user visibility
+- Be silently installed by software bundlers, OEM bloatware, or malware
+- Auto-update silently, introducing malicious behavior post-install
+- Operate across browser boundaries (Edge extensions loading on Chrome-intended pages)
+
+**Detection Capabilities:**
+
+1. **Extension Inventory Scanning**
+   - Enumerate installed extensions across all Chromium browsers (Chrome, Edge, Brave, Vivaldi)
+   - Parse each extension's `manifest.json` for permission analysis
+   - Flag extensions with dangerous permission combinations:
+     - `<all_urls>` content script matches (injects into every page)
+     - `webRequest`/`webRequestBlocking` (can intercept/modify all HTTP traffic)
+     - `tabs` + `activeTab` (can read all tab URLs and content)
+     - `clipboardRead`/`clipboardWrite` (clipboard access)
+     - `nativeMessaging` (can communicate with local executables)
+   - Detect non-standard extension ID formats (UUID-style IDs indicate sideloaded/dev extensions)
+   - Cross-reference extension IDs against known malicious extension databases
+
+2. **Unauthorized Installation Detection**
+   - Monitor browser extension directories for new installations
+   - Alert when extensions appear that user didn't explicitly install
+   - Detect sideloaded extensions (installed by other software, group policy, or registry manipulation)
+   - Track extension install source (Chrome Web Store vs. sideloaded vs. enterprise policy)
+
+3. **Runtime Behavior Monitoring**
+   - Monitor extension network traffic (what domains do extensions phone home to?)
+   - Detect extensions injecting content scripts into Citadel Archer's dashboard
+   - Flag extensions making requests to suspicious or newly-registered domains
+   - Monitor for extensions accessing sensitive page content (password fields, API keys)
+
+4. **Content Security Policy (CSP) Enforcement**
+   - Apply strict CSP headers to Citadel Archer's dashboard pages
+   - Detect and alert when extensions bypass or modify CSP headers
+   - Use nonce-based script loading to identify unauthorized injected scripts
+
+5. **Cross-Browser Awareness**
+   - Scan ALL installed browsers, not just the default
+   - Detect when non-default browsers (e.g., Edge) have extensions that could affect browsing
+   - Alert users to extensions in browsers they don't actively use (common sideload target)
+
+**Response Actions (by Security Level):**
+
+| Level | Action |
+|-------|--------|
+| Observer | Inventory and report all extensions, flag risky permissions |
+| Guardian | Alert on new/unauthorized extensions, recommend removal of dangerous ones |
+| Sentinel | Auto-disable sideloaded extensions, block extension network traffic to suspicious domains |
+
+**Dashboard Integration:**
+- Extension health status in Guardian panel ("X extensions found, Y flagged")
+- Extension threat alerts in event log with severity ratings
+- Detailed extension audit view (permissions, install source, network behavior)
+- One-click "audit all extensions" action
 
 ---
 
@@ -830,8 +913,9 @@ This sets the default verbosity + UI complexity.
 - [ ] Vault (password storage, basic encryption)
 - [ ] Threat detection rules engine
 - [ ] Initial dark glassmorphic UI
+- [ ] Browser extension inventory scan (enumerate + permission analysis across all installed browsers)
 
-**Milestone**: User can secure their local machine and store secrets
+**Milestone**: User can secure their local machine, store secrets, and audit browser extensions
 
 ### Phase 2: Intelligence & VPS Protection (Months 4-6) 🔥 **PRIORITY**
 **Focus**: Add AI threat analysis + Extend protection to VPS (Ubuntu)
@@ -842,6 +926,8 @@ This sets the default verbosity + UI complexity.
 - [ ] AI-powered anomaly detection (context engine learns user behavior)
 - [ ] Automatic Guardian signature updates
 - [ ] Advanced UI (charts, timelines, threat scoring)
+- [ ] Browser extension runtime monitoring (behavior analysis, network traffic, injection detection)
+- [ ] Extension threat intelligence (cross-reference extension IDs against known malicious databases)
 
 **Remote Shield - VPS Protection**:
 - [ ] Lightweight Python agent for Ubuntu/Debian VPS
@@ -1061,6 +1147,7 @@ This sets the default verbosity + UI complexity.
 - Data exfiltration
 - Persistent backdoors
 - Zero-day exploits (through behavior analysis)
+- **Browser extension threats** (unauthorized extensions, sideloaded spyware, keystroke loggers, DOM injection)
 
 **What we DON'T protect against:**
 - Nation-state actors with unlimited resources (but we make it harder)
@@ -1082,6 +1169,27 @@ This sets the default verbosity + UI complexity.
 - Minimal dependencies (reduce supply chain risk)
 - Sandboxed components where possible
 - Regular security audits and penetration testing
+- **Browser extension audit and protection** (see Guardian module)
+
+### Browser Extension Attack Surface (v0.2.4)
+
+Browser extensions represent a critical and often overlooked attack vector that directly undermines endpoint security:
+
+**Why Extensions Are Dangerous:**
+1. **Invisible code injection**: Extensions inject JavaScript into every page the user visits, including security dashboards, banking sites, and localhost applications
+2. **Silent sideloading**: Software installers (antivirus, OEM utilities, browser itself) can add extensions without user consent via registry keys, group policy, or browser-specific APIs
+3. **Auto-update abuse**: A benign extension can become malicious through a silent auto-update — user never re-consents
+4. **Cross-browser contamination**: On Windows, Edge extensions can affect browsing even when Chrome is the default browser (Edge intercepts localhost URLs)
+5. **Excessive permissions normalized**: Users are trained to click "Add extension" without reading permissions; `<all_urls>` + `webRequest` = full MITM capability
+6. **Keystroke logging**: Chrome Web Store privacy disclosures show many extensions admit to collecting "keystrokes" — functionally a keylogger with user "consent"
+7. **Extension ID spoofing**: Sideloaded extensions use non-standard IDs (UUIDs instead of Chrome's a-p character set), making them harder to audit
+
+**Citadel Archer's Defense Strategy:**
+- **Inventory**: Know every extension across every browser on the system
+- **Classify**: Score each extension's risk based on permissions, install source, and behavior
+- **Alert**: Notify user of unauthorized, sideloaded, or high-risk extensions
+- **Protect**: CSP enforcement and runtime injection detection for Citadel Archer's own pages
+- **Educate**: Explain to non-technical users why specific extensions are dangerous, in plain language
 
 ---
 

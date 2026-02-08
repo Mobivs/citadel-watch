@@ -30,7 +30,7 @@ class GuardianStatus extends HTMLElement {
     render() {
         const statusColor = this.isActive ? 'status-green' : 'status-red';
         const statusText = this.isActive ? 'Active' : 'Inactive';
-        const statusIcon = this.isActive ? '🟢' : '🔴';
+        const dotColor = this.isActive ? '#10B981' : '#EF4444';
 
         this.shadowRoot.innerHTML = `
             <style>
@@ -46,10 +46,10 @@ class GuardianStatus extends HTMLElement {
                     background: rgba(15, 23, 42, 0.6);
                     backdrop-filter: blur(20px);
                     border: 1px solid rgba(0, 217, 255, 0.1);
-                    border-radius: 16px;
-                    padding: 1.5rem;
+                    border-radius: 10px;
+                    padding: 0.875rem;
                     transition: all 0.3s ease;
-                    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+                    box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.37);
                     height: 100%;
                     box-sizing: border-box;
                     overflow: hidden;
@@ -57,16 +57,16 @@ class GuardianStatus extends HTMLElement {
 
                 .card:hover {
                     border-color: rgba(0, 217, 255, 0.3);
-                    transform: translateY(-2px);
+                    transform: translateY(-1px);
                 }
 
                 .status-badge {
                     display: inline-flex;
                     align-items: center;
-                    gap: 0.5rem;
-                    padding: 0.5rem 1rem;
+                    gap: 0.375rem;
+                    padding: 0.3rem 0.75rem;
                     border-radius: 9999px;
-                    font-size: 0.875rem;
+                    font-size: 0.75rem;
                     font-weight: 600;
                 }
 
@@ -81,20 +81,20 @@ class GuardianStatus extends HTMLElement {
                 }
 
                 .title {
-                    font-size: 0.875rem;
+                    font-size: 0.75rem;
                     color: #9CA3AF;
-                    margin-bottom: 0.5rem;
+                    margin-bottom: 0.25rem;
                 }
 
                 .value {
-                    font-size: 1.5rem;
+                    font-size: 1.25rem;
                     font-weight: 700;
                     color: #F3F4F6;
-                    margin-bottom: 1rem;
+                    margin-bottom: 0.5rem;
                 }
 
                 .security-level {
-                    font-size: 0.75rem;
+                    font-size: 0.7rem;
                     color: #00D9FF;
                     text-transform: capitalize;
                 }
@@ -104,7 +104,7 @@ class GuardianStatus extends HTMLElement {
                 <div class="title">Guardian Status</div>
                 <div class="value">
                     <span class="status-badge ${this.isActive ? 'status-active' : 'status-inactive'}">
-                        ${statusIcon} ${statusText}
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};box-shadow:0 0 6px ${dotColor};"></span> ${statusText}
                     </span>
                 </div>
                 <div class="security-level">

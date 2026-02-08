@@ -53,25 +53,25 @@ class ProcessList extends HTMLElement {
                     padding-right: 4px;
                 }
                 .process-item {
-                    padding: 0.75rem;
-                    margin-bottom: 0.5rem;
+                    padding: 0.5rem;
+                    margin-bottom: 0.25rem;
                     background: rgba(0, 217, 255, 0.05);
-                    border-radius: 8px;
+                    border-radius: 6px;
                     transition: all 0.3s ease;
                 }
                 .process-item:hover {
                     background: rgba(0, 217, 255, 0.1);
                 }
                 .process-name {
-                    font-size: 0.875rem;
+                    font-size: 0.8rem;
                     color: #F3F4F6;
-                    margin-bottom: 0.25rem;
+                    margin-bottom: 0.125rem;
                     font-weight: 500;
                 }
                 .process-stats {
                     display: flex;
-                    gap: 1rem;
-                    font-size: 0.75rem;
+                    gap: 0.75rem;
+                    font-size: 0.7rem;
                 }
                 .cpu { color: #00D9FF; }
                 .mem { color: #9CA3AF; }

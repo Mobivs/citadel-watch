@@ -67,7 +67,7 @@ async def get_vault_status(token: str = Depends(verify_session_token)):
     """
     return VaultStatusResponse(
         is_unlocked=vault_manager.is_unlocked,
-        vault_exists=vault_manager.vault_path.exists()
+        vault_exists=vault_manager.vault_path.exists() and vault_manager.vault_path.stat().st_size > 0
     )
 
 

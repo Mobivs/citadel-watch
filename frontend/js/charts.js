@@ -41,6 +41,9 @@ let timelineChart = null;
 let categoryChart = null;
 let refreshInterval = null;
 let selectedHours = 24;
+let _wsUnsubs = [];
+let _onWsConnected = null;
+let _onWsDisconnected = null;
 
 // ── API fetch ───────────────────────────────────────────────────────
 
@@ -418,6 +421,12 @@ function updateCategoryChart(chart, timelineData) {
 }
 
 function updateSummaryStats(chartData) {
+    const elTotal = document.getElementById('stat-total');
+    const elCritical = document.getElementById('stat-critical');
+    const elHigh = document.getElementById('stat-high');
+    const elMedium = document.getElementById('stat-medium');
+    if (!elTotal) return; // DOM not present (tab switched away)
+
     let total = 0, critical = 0, high = 0, medium = 0;
     if (chartData && chartData.points) {
         for (const p of chartData.points) {
@@ -427,10 +436,10 @@ function updateSummaryStats(chartData) {
             medium += p.medium;
         }
     }
-    document.getElementById('stat-total').textContent = total;
-    document.getElementById('stat-critical').textContent = critical;
-    document.getElementById('stat-high').textContent = high;
-    document.getElementById('stat-medium').textContent = medium;
+    elTotal.textContent = total;
+    if (elCritical) elCritical.textContent = critical;
+    if (elHigh) elHigh.textContent = high;
+    if (elMedium) elMedium.textContent = medium;
 }
 
 function updateLastRefresh() {
@@ -445,14 +454,16 @@ function updateLastRefresh() {
 
 function connectWebSocket() {
     // Subscribe to relevant message types via shared handler
-    wsHandler.subscribe('event', handleWebSocketMessage);
-    wsHandler.subscribe('threat_detected', handleWebSocketMessage);
-    wsHandler.subscribe('security_level_changed', handleWebSocketMessage);
-    wsHandler.subscribe('alert_created', handleWebSocketMessage);
+    _wsUnsubs.push(wsHandler.subscribe('event', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('threat_detected', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('security_level_changed', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('alert_created', handleWebSocketMessage));
 
     // Track connection status
-    window.addEventListener('ws-connected', () => setLiveStatus(true));
-    window.addEventListener('ws-disconnected', () => setLiveStatus(false));
+    _onWsConnected = () => setLiveStatus(true);
+    _onWsDisconnected = () => setLiveStatus(false);
+    window.addEventListener('ws-connected', _onWsConnected);
+    window.addEventListener('ws-disconnected', _onWsDisconnected);
 
     // Connect if not already
     wsHandler.connect();
@@ -477,9 +488,9 @@ function setLiveStatus(connected) {
         dot.className = 'live-dot connected';
         text.textContent = 'Live';
     } else {
-        badge.className = 'live-badge disconnected';
-        dot.className = 'live-dot disconnected';
-        text.textContent = 'Offline';
+        badge.className = 'live-badge simulated';
+        dot.className = 'live-dot simulated';
+        text.textContent = 'Simulated';
     }
 }
 
@@ -534,9 +545,33 @@ function setupTimeRangeSelector() {
     });
 }
 
+// ── Cleanup ─────────────────────────────────────────────────────────
+
+function destroy() {
+    // Clear auto-refresh
+    if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
+
+    // Destroy Chart.js instances
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    if (severityChart) { severityChart.destroy(); severityChart = null; }
+    if (timelineChart) { timelineChart.destroy(); timelineChart = null; }
+    if (categoryChart) { categoryChart.destroy(); categoryChart = null; }
+
+    // Unsubscribe WebSocket
+    _wsUnsubs.forEach(fn => { if (typeof fn === 'function') fn(); });
+    _wsUnsubs = [];
+
+    // Remove event listeners
+    if (_onWsConnected) { window.removeEventListener('ws-connected', _onWsConnected); _onWsConnected = null; }
+    if (_onWsDisconnected) { window.removeEventListener('ws-disconnected', _onWsDisconnected); _onWsDisconnected = null; }
+}
+
 // ── Initialization ──────────────────────────────────────────────────
 
 async function init() {
+    // Clean up any previous state (idempotent re-init)
+    destroy();
+
     // Initialize API client (fetches session token)
     try {
         await apiClient.initialize();
@@ -610,6 +645,8 @@ if (document.readyState === 'loading') {
 // ── Exports for testing ─────────────────────────────────────────────
 
 export {
+    init,
+    destroy,
     COLOURS,
     CATEGORY_COLOURS,
     fetchChartData,

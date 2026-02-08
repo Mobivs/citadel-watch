@@ -1,8 +1,7 @@
 // PRD: Vault - Password List Component
-// Reference: docs/PRD.md v0.2.3, Section: Vault
+// Reference: docs/PRD.md v0.2.4, Section: Vault
 //
 // Displays list of stored passwords (without showing actual passwords)
-// Click to view/copy password
 
 import { apiClient } from '../utils/api-client.js';
 
@@ -15,10 +14,6 @@ class VaultPasswordList extends HTMLElement {
 
     connectedCallback() {
         this.render();
-        // Don't load passwords automatically - wait for vault to be unlocked
-        // Passwords will be loaded by VaultManager.updateUI() when vault is unlocked
-
-        // Listen for password added/deleted events
         window.addEventListener('password-added', () => this.loadPasswords());
         window.addEventListener('password-deleted', () => this.loadPasswords());
     }
@@ -46,70 +41,80 @@ class VaultPasswordList extends HTMLElement {
                 .password-list {
                     display: flex;
                     flex-direction: column;
-                    gap: 0.75rem;
+                    gap: 0.5rem;
                     max-height: 500px;
                     overflow-y: auto;
                 }
 
-                /* Empty State */
                 .empty-state {
                     text-align: center;
-                    padding: 3rem 1rem;
+                    padding: 1.5rem 1rem;
                     color: #94a3b8;
                 }
 
                 .empty-icon {
-                    font-size: 3rem;
-                    margin-bottom: 1rem;
-                    opacity: 0.5;
+                    margin-bottom: 0.5rem;
+                    display: flex;
+                    justify-content: center;
+                    opacity: 0.4;
                 }
 
-                /* Password Card */
+                .empty-state p {
+                    font-size: 0.8rem;
+                    margin: 0;
+                }
+
+                .empty-state .hint {
+                    font-size: 0.7rem;
+                    margin-top: 0.375rem;
+                    color: #6B7280;
+                }
+
                 .password-card {
                     background: rgba(15, 23, 42, 0.4);
                     border: 1px solid rgba(0, 217, 255, 0.1);
-                    border-radius: 12px;
-                    padding: 1rem;
+                    border-radius: 10px;
+                    padding: 0.875rem;
                     cursor: pointer;
-                    transition: all 0.3s ease;
+                    transition: all 0.2s ease;
                 }
 
                 .password-card:hover {
                     border-color: rgba(0, 217, 255, 0.3);
                     background: rgba(15, 23, 42, 0.6);
-                    transform: translateX(4px);
+                    transform: translateX(3px);
                 }
 
                 .card-header {
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
-                    margin-bottom: 0.5rem;
+                    margin-bottom: 0.375rem;
                 }
 
                 .card-title {
                     font-weight: 600;
                     color: #e2e8f0;
-                    font-size: 1rem;
+                    font-size: 0.85rem;
                 }
 
                 .category-badge {
-                    padding: 0.25rem 0.75rem;
-                    border-radius: 12px;
-                    font-size: 0.75rem;
+                    padding: 0.125rem 0.5rem;
+                    border-radius: 8px;
+                    font-size: 0.65rem;
                     font-weight: 500;
                 }
 
-                .category-email { background: rgba(16, 185, 129, 0.2); color: #10B981; }
-                .category-banking { background: rgba(245, 158, 11, 0.2); color: #F59E0B; }
-                .category-social { background: rgba(139, 92, 246, 0.2); color: #8B5CF6; }
-                .category-work { background: rgba(59, 130, 246, 0.2); color: #3B82F6; }
-                .category-general { background: rgba(100, 116, 139, 0.2); color: #64748b; }
+                .category-email { background: rgba(16, 185, 129, 0.15); color: #10B981; }
+                .category-banking { background: rgba(245, 158, 11, 0.15); color: #F59E0B; }
+                .category-social { background: rgba(0, 217, 255, 0.15); color: #00D9FF; }
+                .category-work { background: rgba(0, 204, 102, 0.15); color: #00cc66; }
+                .category-general { background: rgba(100, 116, 139, 0.15); color: #64748b; }
 
                 .card-meta {
                     display: flex;
-                    gap: 1rem;
-                    font-size: 0.875rem;
+                    gap: 0.75rem;
+                    font-size: 0.75rem;
                     color: #94a3b8;
                 }
 
@@ -119,30 +124,33 @@ class VaultPasswordList extends HTMLElement {
                     gap: 0.25rem;
                 }
 
-                /* Loading State */
-                .loading {
-                    text-align: center;
-                    padding: 2rem;
-                    color: #94a3b8;
+                .meta-item svg {
+                    opacity: 0.6;
                 }
 
-                /* Scrollbar */
+                .loading {
+                    text-align: center;
+                    padding: 1.5rem;
+                    color: #94a3b8;
+                    font-size: 0.8rem;
+                }
+
                 .password-list::-webkit-scrollbar {
-                    width: 8px;
+                    width: 6px;
                 }
 
                 .password-list::-webkit-scrollbar-track {
                     background: rgba(15, 23, 42, 0.4);
-                    border-radius: 4px;
+                    border-radius: 3px;
                 }
 
                 .password-list::-webkit-scrollbar-thumb {
-                    background: rgba(0, 217, 255, 0.3);
-                    border-radius: 4px;
+                    background: rgba(0, 217, 255, 0.25);
+                    border-radius: 3px;
                 }
 
                 .password-list::-webkit-scrollbar-thumb:hover {
-                    background: rgba(0, 217, 255, 0.5);
+                    background: rgba(0, 217, 255, 0.4);
                 }
             </style>
 
@@ -158,9 +166,11 @@ class VaultPasswordList extends HTMLElement {
         if (this.passwords.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-icon">🔑</div>
+                    <div class="empty-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                    </div>
                     <p>No passwords stored yet</p>
-                    <p style="font-size: 0.875rem; margin-top: 0.5rem;">Click "Add Password" to get started</p>
+                    <p class="hint">Click "Add Password" to get started</p>
                 </div>
             `;
             return;
@@ -175,13 +185,13 @@ class VaultPasswordList extends HTMLElement {
                 <div class="card-meta">
                     ${pwd.username ? `
                         <div class="meta-item">
-                            <span>👤</span>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                             <span>${this.escapeHtml(pwd.username)}</span>
                         </div>
                     ` : ''}
                     ${pwd.website ? `
                         <div class="meta-item">
-                            <span>🌐</span>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                             <span>${this.escapeHtml(this.getDomain(pwd.website))}</span>
                         </div>
                     ` : ''}
@@ -189,7 +199,6 @@ class VaultPasswordList extends HTMLElement {
             </div>
         `).join('');
 
-        // Add click handlers
         container.querySelectorAll('.password-card').forEach(card => {
             card.addEventListener('click', () => {
                 const id = card.dataset.id;

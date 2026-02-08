@@ -23,16 +23,16 @@
     --text-muted:     #6B7280;
 
     /* Accent */
-    --accent:         #00d4ff;
-    --accent-rgb:     0, 212, 255;
+    --accent:         #00D9FF;
+    --accent-rgb:     0, 217, 255;
 
     /* Severity colours (unified Phase 1 → 2.1) */
     --sev-critical:     #ff3333;
     --sev-critical-rgb: 255, 51, 51;
     --sev-high:         #ff9900;
     --sev-high-rgb:     255, 153, 0;
-    --sev-medium:       #ffcc00;
-    --sev-medium-rgb:   255, 204, 0;
+    --sev-medium:       #e6b800;
+    --sev-medium-rgb:   230, 184, 0;
     --sev-low:          #00cc66;
     --sev-low-rgb:      0, 204, 102;
 
@@ -60,40 +60,6 @@
     --radius-full: 9999px;
 }
 
-/* Light mode support - respects OS/browser preference */
-@media (prefers-color-scheme: light) {
-    :root {
-        /* Core palette - Light mode */
-        --bg-primary:    #ffffff;
-        --bg-secondary:  #f5f5f5;
-        --bg-gradient-start: #f9fafb;
-        --bg-gradient-end:   #ffffff;
-        --card-bg:       rgba(0, 0, 0, 0.05);
-        --card-border:   rgba(0, 152, 204, 0.2);
-        --card-hover:    rgba(0, 152, 204, 0.15);
-        --card-shadow:   rgba(0, 0, 0, 0.08);
-
-        /* Text colours */
-        --text-primary:   #1f2937;
-        --text-secondary: #6b7280;
-        --text-muted:     #9ca3af;
-
-        /* Accent - use darker blue for light mode */
-        --accent:         #0099cc;
-        --accent-rgb:     0, 153, 204;
-
-        /* Severity colours - adjust for light backgrounds */
-        --sev-critical:     #dc2626;
-        --sev-critical-rgb: 220, 38, 38;
-        --sev-high:         #ea580c;
-        --sev-high-rgb:     234, 88, 12;
-        --sev-medium:       #ca8a04;
-        --sev-medium-rgb:   202, 138, 4;
-        --sev-low:          #16a34a;
-        --sev-low-rgb:      22, 163, 74;
-    }
-}
-
 /* ═══════════════════════════════════════════════════════════════════
    Global Styles
    ═══════════════════════════════════════════════════════════════════ */
@@ -102,6 +68,8 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(var(--accent-rgb), 0.2) transparent;
 }
 
 body {
@@ -109,8 +77,9 @@ body {
     background-attachment: fixed;
     min-height: 100vh;
     color: var(--text-primary);
-    font-size: 16px;
-    line-height: 1.5;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
@@ -124,8 +93,8 @@ body {
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--card-border);
-    border-radius: var(--radius-xl);
-    box-shadow: 0 8px 32px 0 var(--card-shadow);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 16px 0 var(--card-shadow);
     transition: border-color var(--transition-normal),
                 box-shadow var(--transition-normal),
                 transform var(--transition-normal);
@@ -133,8 +102,14 @@ body {
 
 .glass-card:hover {
     border-color: var(--card-hover);
-    box-shadow: 0 8px 32px 0 rgba(var(--accent-rgb), 0.1);
-    transform: translateY(-2px);
+    box-shadow: 0 4px 16px 0 rgba(var(--accent-rgb), 0.1);
+    transform: translateY(-1px);
+}
+
+/* Don't lift the header or footer on hover */
+header.glass-card:hover,
+footer.glass-card:hover {
+    transform: none;
 }
 
 /* Glassmorphic overlay on hover (for interactive cards) */
@@ -222,11 +197,6 @@ body {
    Scrollbar Styling
    ═══════════════════════════════════════════════════════════════════ */
 
-* {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(var(--accent-rgb), 0.2) transparent;
-}
-
 ::-webkit-scrollbar {
     width: 5px;
     height: 5px;
@@ -257,8 +227,8 @@ body {
 .btn-primary {
     background: linear-gradient(135deg, var(--accent) 0%, #0099CC 100%);
     color: white;
-    padding: 0.5rem 1.5rem;
-    border-radius: var(--radius-md);
+    padding: 0.375rem 1rem;
+    border-radius: var(--radius-sm);
     border: none;
     font-weight: 600;
     cursor: pointer;
@@ -275,8 +245,8 @@ body {
 .btn-secondary {
     background: rgba(var(--accent-rgb), 0.1);
     color: var(--accent);
-    padding: 0.5rem 1.5rem;
-    border-radius: var(--radius-md);
+    padding: 0.375rem 1rem;
+    border-radius: var(--radius-sm);
     border: 1px solid rgba(var(--accent-rgb), 0.3);
     font-weight: 600;
     cursor: pointer;
@@ -288,6 +258,55 @@ body {
     background: rgba(var(--accent-rgb), 0.2);
     border-color: rgba(var(--accent-rgb), 0.5);
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Focus Visible (keyboard accessibility)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.tab-btn:focus-visible,
+button:focus-visible,
+a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Connection Badge (WebSocket status)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.conn-live {
+    background: rgba(var(--sev-low-rgb), 0.15);
+    color: var(--sev-low);
+    border: 1px solid rgba(var(--sev-low-rgb), 0.3);
+}
+
+.conn-live .conn-dot {
+    background: var(--sev-low);
+}
+
+.conn-offline {
+    background: rgba(var(--sev-critical-rgb), 0.15);
+    color: var(--sev-critical);
+    border: 1px solid rgba(var(--sev-critical-rgb), 0.3);
+}
+
+.conn-offline .conn-dot {
+    background: var(--sev-critical);
+}
+
+.conn-simulated {
+    background: rgba(var(--sev-medium-rgb), 0.15);
+    color: var(--sev-medium);
+    border: 1px solid rgba(var(--sev-medium-rgb), 0.3);
+}
+
+.conn-simulated .conn-dot {
+    background: var(--sev-medium);
+}
+
+/* Iframe embedding removed — content is now loaded inline via tab-loader */
 
 /* ═══════════════════════════════════════════════════════════════════
    Severity Alert Styles (unified colours)
@@ -397,13 +416,8 @@ body {
 .chart-container {
     position: relative;
     width: 100%;
-    height: 100%;
-    min-height: 280px;
-}
-
-.chart-container canvas {
-    width: 100% !important;
-    height: 100% !important;
+    height: 300px;
+    min-height: 240px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -608,7 +622,7 @@ process-list {
 
 /* Make event/process cards equal height with fixed size */
 .panel-card {
-    height: 600px !important; /* Fixed height for side-by-side cards */
-    max-height: 600px !important; /* Prevent overflow */
-    overflow: hidden !important; /* Prevent content from overflowing card */
+    height: min(460px, 60vh);
+    max-height: min(460px, 60vh);
+    overflow: hidden;
 }

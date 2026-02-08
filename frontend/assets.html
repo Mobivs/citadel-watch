@@ -6,8 +6,22 @@
     <title>Citadel Archer - Asset Management</title>
 
     <!-- PRD: Assets page - Multi-asset overview table -->
-    <!-- Production Tailwind CSS Build -->
-    <link rel="stylesheet" href="css/tailwind.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'neon-blue': '#00D9FF',
+                        'dark-bg': '#0A0E27',
+                        'card-bg': 'rgba(15, 23, 42, 0.6)',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="css/styles.css">
 
     <style>
         /* Asset table styles */
@@ -315,6 +329,7 @@
     </style>
 </head>
 <body class="dark bg-dark-bg text-gray-100 font-sans antialiased">
+    <script>if (window !== window.top) document.body.classList.add('in-iframe');</script>
 
     <div id="app" class="min-h-screen flex flex-col">
 
@@ -429,9 +444,9 @@
                 <div class="flex-1"></div>
 
                 <!-- Live badge -->
-                <div id="live-badge" style="display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.625rem;border-radius:9999px;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;background:rgba(239,68,68,0.15);color:#EF4444;border:1px solid rgba(239,68,68,0.3);">
-                    <span id="live-dot" style="width:6px;height:6px;border-radius:50%;background:#EF4444;animation:pulse 2s infinite;"></span>
-                    <span id="live-text">Offline</span>
+                <div id="live-badge" style="display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.625rem;border-radius:9999px;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;background:rgba(230,184,0,0.15);color:#e6b800;border:1px solid rgba(230,184,0,0.3);">
+                    <span id="live-dot" style="width:6px;height:6px;border-radius:50%;background:#e6b800;animation:pulse 2s infinite;"></span>
+                    <span id="live-text">Simulated</span>
                 </div>
             </div>
 

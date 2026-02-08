@@ -36,6 +36,9 @@ let trendChart = null;
 let assetRiskChart = null;
 let refreshInterval = null;
 let currentSensitivity = 'moderate';
+let _wsUnsubs = [];
+let _onWsConnected = null;
+let _onWsDisconnected = null;
 
 // ── API ─────────────────────────────────────────────────────────────
 
@@ -410,13 +413,15 @@ function setupSensitivity() {
 // ── WebSocket ───────────────────────────────────────────────────────
 
 function connectWebSocket() {
-    wsHandler.subscribe('event', handleWebSocketMessage);
-    wsHandler.subscribe('threat_detected', handleWebSocketMessage);
-    wsHandler.subscribe('security_level_changed', handleWebSocketMessage);
-    wsHandler.subscribe('alert_created', handleWebSocketMessage);
+    _wsUnsubs.push(wsHandler.subscribe('event', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('threat_detected', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('security_level_changed', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('alert_created', handleWebSocketMessage));
 
-    window.addEventListener('ws-connected', () => setLiveStatus(true));
-    window.addEventListener('ws-disconnected', () => setLiveStatus(false));
+    _onWsConnected = () => setLiveStatus(true);
+    _onWsDisconnected = () => setLiveStatus(false);
+    window.addEventListener('ws-connected', _onWsConnected);
+    window.addEventListener('ws-disconnected', _onWsDisconnected);
 
     wsHandler.connect();
 }
@@ -441,11 +446,11 @@ function setLiveStatus(connected) {
         if (dot) dot.style.background = '#00cc66';
         if (text) text.textContent = 'Live';
     } else {
-        badge.style.background = 'rgba(255,51,51,0.15)';
-        badge.style.color = '#ff3333';
-        badge.style.borderColor = 'rgba(255,51,51,0.3)';
-        if (dot) dot.style.background = '#ff3333';
-        if (text) text.textContent = 'Offline';
+        badge.style.background = 'rgba(230,184,0,0.15)';
+        badge.style.color = '#e6b800';
+        badge.style.borderColor = 'rgba(230,184,0,0.3)';
+        if (dot) dot.style.background = '#e6b800';
+        if (text) text.textContent = 'Simulated';
     }
 }
 
@@ -493,9 +498,22 @@ async function refreshAll() {
     }
 }
 
+// ── Cleanup ─────────────────────────────────────────────────────────
+
+function destroy() {
+    if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    if (assetRiskChart) { assetRiskChart.destroy(); assetRiskChart = null; }
+    _wsUnsubs.forEach(fn => { if (typeof fn === 'function') fn(); });
+    _wsUnsubs = [];
+    if (_onWsConnected) { window.removeEventListener('ws-connected', _onWsConnected); _onWsConnected = null; }
+    if (_onWsDisconnected) { window.removeEventListener('ws-disconnected', _onWsDisconnected); _onWsDisconnected = null; }
+}
+
 // ── Initialization ──────────────────────────────────────────────────
 
 async function init() {
+    destroy();
     // Initialize API client
     try {
         await apiClient.initialize();
@@ -562,6 +580,8 @@ if (document.readyState === 'loading') {
 // ── Exports for testing ─────────────────────────────────────────────
 
 export {
+    init,
+    destroy,
     COLOURS,
     GAUGE_ZONES,
     fetchThreatScore,

@@ -1,9 +1,9 @@
 # PRD: Vault Manager - Encrypted Password Database
-# Reference: docs/PRD.md v0.2.3, Section: Vault
+# Reference: docs/PRD.md v0.2.4, Section: Vault
 #
-# SQLCipher database for password storage
+# SQLite database with AES-256-GCM encrypted password fields
 # CRUD operations for passwords
-# Master password verification
+# Master password verification via encrypted canary
 
 import sqlite3
 from pathlib import Path
@@ -18,16 +18,23 @@ from ..core import get_audit_logger, EventType, EventSeverity
 
 class VaultManager:
     """
-    Manages encrypted password vault using SQLCipher.
+    Manages encrypted password vault.
 
     PRD: "Vault: Secure password manager (password storage, basic encryption)"
 
     Security:
-    - SQLCipher database (encrypted at rest)
-    - Each password encrypted with AES-256-GCM
-    - Master password never stored (only salt for derivation)
+    - Each password encrypted with AES-256-GCM (per-entry encryption)
+    - Master password verified via encrypted canary (CITADEL_VAULT_OK)
+    - Master password never stored (only salt for key derivation)
     - Audit logging for all vault access
+
+    Note: Uses standard sqlite3 (not SQLCipher). Database-level encryption
+    via PRAGMA key is a no-op with standard sqlite3 — actual security comes
+    from AES-256-GCM encryption of each password field and the canary check
+    that rejects wrong master passwords at unlock time.
     """
+
+    CANARY_PLAINTEXT = "CITADEL_VAULT_OK"
 
     def __init__(self, vault_path: Optional[Path] = None):
         """
@@ -89,9 +96,13 @@ class VaultManager:
         if not is_valid:
             return False, error_msg
 
-        # Check if vault already exists
-        if self.vault_path.exists():
+        # Check if vault already exists (0-byte files are not valid vaults)
+        if self.vault_path.exists() and self.vault_path.stat().st_size > 0:
             return False, "Vault already exists. Use unlock_vault() instead."
+
+        # Remove stale 0-byte file if present
+        if self.vault_path.exists() and self.vault_path.stat().st_size == 0:
+            self.vault_path.unlink()
 
         try:
             # Generate salt for PBKDF2
@@ -130,6 +141,14 @@ class VaultManager:
                 )
             """)
 
+            # Derive encryption key and create verification canary
+            encryption_key = EncryptionService.derive_key(master_password, salt)
+            canary_nonce, canary_ciphertext = EncryptionService.encrypt(
+                self.CANARY_PLAINTEXT, encryption_key
+            )
+            canary_nonce_b64 = EncryptionService.encode_for_storage(canary_nonce)
+            canary_ct_b64 = EncryptionService.encode_for_storage(canary_ciphertext)
+
             # Store vault metadata
             conn.execute(
                 "INSERT INTO vault_config (key, value) VALUES (?, ?)",
@@ -137,11 +156,19 @@ class VaultManager:
             )
             conn.execute(
                 "INSERT INTO vault_config (key, value) VALUES (?, ?)",
+                ("verify_nonce", canary_nonce_b64)
+            )
+            conn.execute(
+                "INSERT INTO vault_config (key, value) VALUES (?, ?)",
+                ("verify_ciphertext", canary_ct_b64)
+            )
+            conn.execute(
+                "INSERT INTO vault_config (key, value) VALUES (?, ?)",
                 ("created_at", datetime.utcnow().isoformat())
             )
             conn.execute(
                 "INSERT INTO vault_config (key, value) VALUES (?, ?)",
-                ("version", "1.0")
+                ("version", "1.1")
             )
 
             conn.commit()
@@ -192,17 +219,13 @@ class VaultManager:
             )
             return False, f"Too many failed attempts. Please wait {remaining} seconds."
 
-        if not self.vault_path.exists():
+        if not self.vault_path.exists() or self.vault_path.stat().st_size == 0:
             return False, "Vault does not exist. Initialize vault first."
 
         try:
-            # Open SQLCipher database
             conn = sqlite3.connect(str(self.vault_path))
-            # Security: Escape single quotes to prevent SQL injection
-            escaped_password = self._escape_pragma_value(master_password)
-            conn.execute(f"PRAGMA key = '{escaped_password}'")
 
-            # Verify password is correct by reading from database
+            # Read salt for key derivation
             cursor = conn.execute(
                 "SELECT value FROM vault_config WHERE key = 'salt'"
             )
@@ -210,28 +233,57 @@ class VaultManager:
 
             if result is None:
                 conn.close()
+                return False, "Corrupted vault: missing salt"
 
-                # Rate limiting: Increment failed attempts
-                self.failed_attempts += 1
-                delay_seconds = min(2 ** (self.failed_attempts - 1), 16)  # Max 16 seconds
-                self.lockout_until = datetime.now() + timedelta(seconds=delay_seconds)
-
-                self.logger.log_event(
-                    event_type=EventType.VAULT_UNLOCK_FAILED,
-                    severity=EventSeverity.ALERT,
-                    message=f"Vault unlock failed: incorrect password (attempt {self.failed_attempts}, {delay_seconds}s lockout)"
-                )
-
-                if self.failed_attempts == 1:
-                    return False, "Incorrect master password"
-                else:
-                    return False, f"Incorrect master password. Please wait {delay_seconds} seconds before trying again."
-
-            # Derive encryption key for password encryption
+            # Derive encryption key from password + stored salt
             salt_b64 = result[0]
             salt = EncryptionService.decode_from_storage(salt_b64)
-            self.encryption_key = EncryptionService.derive_key(master_password, salt)
+            candidate_key = EncryptionService.derive_key(master_password, salt)
 
+            # Verify password by decrypting the canary value
+            cursor = conn.execute(
+                "SELECT value FROM vault_config WHERE key = 'verify_nonce'"
+            )
+            nonce_row = cursor.fetchone()
+            cursor = conn.execute(
+                "SELECT value FROM vault_config WHERE key = 'verify_ciphertext'"
+            )
+            ct_row = cursor.fetchone()
+
+            if nonce_row is None or ct_row is None:
+                # Legacy vault (v1.0) without canary — upgrade it
+                # Accept the password this once, then add canary for future
+                canary_nonce, canary_ct = EncryptionService.encrypt(
+                    self.CANARY_PLAINTEXT, candidate_key
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO vault_config (key, value) VALUES (?, ?)",
+                    ("verify_nonce", EncryptionService.encode_for_storage(canary_nonce))
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO vault_config (key, value) VALUES (?, ?)",
+                    ("verify_ciphertext", EncryptionService.encode_for_storage(canary_ct))
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO vault_config (key, value) VALUES (?, ?)",
+                    ("version", "1.1")
+                )
+                conn.commit()
+            else:
+                # Verify the canary — this is the actual password check
+                verify_nonce = EncryptionService.decode_from_storage(nonce_row[0])
+                verify_ct = EncryptionService.decode_from_storage(ct_row[0])
+                try:
+                    plaintext = EncryptionService.decrypt(verify_nonce, verify_ct, candidate_key)
+                    if plaintext != self.CANARY_PLAINTEXT:
+                        raise ValueError("Canary mismatch")
+                except Exception:
+                    # Wrong password — AES-GCM authentication tag will fail
+                    conn.close()
+                    return self._handle_failed_unlock()
+
+            # Password verified — unlock the vault
+            self.encryption_key = candidate_key
             self.conn = conn
             self.is_unlocked = True
 
@@ -248,21 +300,7 @@ class VaultManager:
             return True, "Vault unlocked successfully!"
 
         except sqlite3.DatabaseError:
-            # Rate limiting: Increment failed attempts
-            self.failed_attempts += 1
-            delay_seconds = min(2 ** (self.failed_attempts - 1), 16)  # Max 16 seconds
-            self.lockout_until = datetime.now() + timedelta(seconds=delay_seconds)
-
-            self.logger.log_event(
-                event_type=EventType.VAULT_UNLOCK_FAILED,
-                severity=EventSeverity.ALERT,
-                message=f"Vault unlock failed: incorrect password (attempt {self.failed_attempts}, {delay_seconds}s lockout)"
-            )
-
-            if self.failed_attempts == 1:
-                return False, "Incorrect master password or corrupted vault"
-            else:
-                return False, f"Incorrect master password. Please wait {delay_seconds} seconds before trying again."
+            return self._handle_failed_unlock()
 
         except Exception as e:
             self.logger.log_event(
@@ -271,6 +309,23 @@ class VaultManager:
                 message=f"Vault unlock error: {str(e)}"
             )
             return False, f"Failed to unlock vault: {str(e)}"
+
+    def _handle_failed_unlock(self) -> Tuple[bool, str]:
+        """Rate-limited failure response for wrong password attempts."""
+        self.failed_attempts += 1
+        delay_seconds = min(2 ** (self.failed_attempts - 1), 16)
+        self.lockout_until = datetime.now() + timedelta(seconds=delay_seconds)
+
+        self.logger.log_event(
+            event_type=EventType.VAULT_UNLOCK_FAILED,
+            severity=EventSeverity.ALERT,
+            message=f"Vault unlock failed: incorrect password (attempt {self.failed_attempts}, {delay_seconds}s lockout)"
+        )
+
+        if self.failed_attempts == 1:
+            return False, "Incorrect master password"
+        else:
+            return False, f"Incorrect master password. Please wait {delay_seconds} seconds before trying again."
 
     def lock_vault(self):
         """Lock vault (close database connection)."""

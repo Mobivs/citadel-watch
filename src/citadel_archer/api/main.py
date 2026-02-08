@@ -305,6 +305,37 @@ async def serve_charts_redirect():
         raise HTTPException(status_code=404, detail="Charts page not found")
 
 
+@app.get("/remote-shield.html")
+async def serve_remote_shield():
+    """Serve Remote Shield page."""
+    path = FRONTEND_DIR / "remote-shield.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Remote Shield page not found")
+
+
+@app.get("/remote-shield")
+async def serve_remote_shield_redirect():
+    """Redirect /remote-shield to /remote-shield.html"""
+    path = FRONTEND_DIR / "remote-shield.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Remote Shield page not found")
+
+
+@app.get("/favicon.ico")
+async def serve_favicon():
+    """Serve favicon."""
+    favicon_path = FRONTEND_DIR / "favicon.ico"
+    if favicon_path.exists():
+        return FileResponse(favicon_path)
+    # Return 204 No Content instead of 404 to silence browser errors
+    from starlette.responses import Response
+    return Response(status_code=204)
+
+
 @app.get("/vault.html")
 async def serve_vault():
     """Serve Vault page for desktop app."""
