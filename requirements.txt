@@ -8,6 +8,12 @@ python-multipart==0.0.6
 pydantic==2.5.3
 pydantic-settings==2.1.0
 
+# Database - PostgreSQL with async support
+asyncpg==0.29.0          # High-performance async PostgreSQL driver
+sqlalchemy==2.0.25       # ORM and SQL toolkit
+alembic==1.13.1          # Database migration tool
+psycopg2-binary==2.9.9   # PostgreSQL adapter (fallback)
+
 # WebSocket Support
 websockets==12.0
 
