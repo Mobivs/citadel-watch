@@ -146,13 +146,7 @@ class CitadelDashboard {
     }
 
     setupEventListeners() {
-        // Settings button
-        const settingsBtn = document.getElementById('settings-btn');
-        if (settingsBtn) {
-            settingsBtn.addEventListener('click', () => {
-                this.openSettings();
-            });
-        }
+        // Settings button is handled by settings.js
     }
 
     updateState(updates) {
@@ -201,11 +195,6 @@ class CitadelDashboard {
             this.state.threatsBlocked++;
             this.broadcastStateUpdates();
         }
-    }
-
-    openSettings() {
-        // TODO: Phase 1 - Implement settings modal
-        alert('Settings coming soon! (Phase 1)');
     }
 
     showError(message) {
