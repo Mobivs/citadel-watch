@@ -121,14 +121,22 @@ class SettingsManager {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 
+            // Extract styles from the parsed document
+            const styleElements = doc.querySelectorAll('head style');
+            let stylesHTML = '';
+            
+            styleElements.forEach(style => {
+                stylesHTML += style.outerHTML;
+            });
+
             // Get the main container (skip header/footer)
             const container = doc.querySelector('.container');
             if (!container) {
                 throw new Error('Could not find container in test-events.html');
             }
 
-            // Inject the content
-            content.innerHTML = container.innerHTML;
+            // Inject styles + content (styles must be inside content for scoping)
+            content.innerHTML = stylesHTML + container.innerHTML;
 
             // Re-run any scripts in the injected content
             this.reloadScripts(content);
