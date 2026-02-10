@@ -10,304 +10,543 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             color: #fff;
-            padding: 20px;
+            padding: 16px;
             min-height: 100vh;
         }
         .container {
-            max-width: 900px;
+            max-width: 960px;
             margin: 0 auto;
         }
+        .header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
         h1 {
-            font-size: 2em;
-            margin-bottom: 10px;
+            font-size: 1.3em;
             color: #00d4ff;
         }
-        .subtitle {
-            color: #aaa;
-            margin-bottom: 30px;
-            font-size: 0.9em;
+        .api-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
         }
-        .warning {
-            background: rgba(255, 193, 7, 0.1);
-            border: 1px solid #ffc107;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 30px;
-            color: #ffc107;
+        .api-badge.online {
+            background: rgba(0,204,102,0.15);
+            color: #00cc66;
+            border: 1px solid rgba(0,204,102,0.3);
         }
-        .grid {
+        .api-badge.offline {
+            background: rgba(255,51,51,0.15);
+            color: #ff3333;
+            border: 1px solid rgba(255,51,51,0.3);
+        }
+        .api-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+        .api-badge.online .api-dot { background: #00cc66; }
+        .api-badge.offline .api-dot { background: #ff3333; }
+
+        .top-layout {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .buttons-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
         }
         .card {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(0, 212, 255, 0.2);
-            border-radius: 12px;
-            padding: 20px;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
-        }
-        .card:hover {
-            border-color: rgba(0, 212, 255, 0.6);
-            background: rgba(255, 255, 255, 0.08);
-            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(0, 212, 255, 0.15);
+            border-radius: 8px;
+            padding: 12px;
         }
         .card h3 {
             color: #00d4ff;
-            margin-bottom: 15px;
-            font-size: 1.1em;
+            margin-bottom: 8px;
+            font-size: 0.85em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
+        .card h3 svg { flex-shrink: 0; }
         button {
             display: block;
             width: 100%;
-            padding: 12px 20px;
-            margin: 8px 0;
+            padding: 7px 10px;
+            margin: 4px 0;
             background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
             border: none;
-            border-radius: 6px;
+            border-radius: 4px;
             color: #000;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
-            font-size: 0.95em;
+            transition: all 0.15s;
+            font-size: 0.75em;
         }
         button:hover {
             transform: translateY(-1px);
-            box-shadow: 0 8px 16px rgba(0, 212, 255, 0.3);
+            box-shadow: 0 4px 10px rgba(0, 212, 255, 0.3);
         }
-        button:active {
-            transform: translateY(0);
+        button:active { transform: translateY(0); }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
         }
-        .status {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 6px;
-            background: rgba(76, 175, 80, 0.1);
-            border: 1px solid rgba(76, 175, 80, 0.3);
-            color: #4caf50;
-            display: none;
-        }
-        .status.show {
-            display: block;
-        }
-        .status.error {
-            background: rgba(244, 67, 54, 0.1);
-            border-color: rgba(244, 67, 54, 0.3);
-            color: #f44336;
-        }
-        .stats {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(0, 212, 255, 0.2);
-            border-radius: 12px;
-            padding: 20px;
-            margin-top: 30px;
-        }
-        .stat-row {
+
+        /* Stats bar */
+        .stats-bar {
             display: flex;
+            gap: 16px;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(0,212,255,0.15);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 0.75rem;
+        }
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .stat-label { color: #94a3b8; }
+        .stat-value { color: #00d4ff; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .stat-value.highlight {
+            animation: flash 0.4s ease-out;
+        }
+        @keyframes flash {
+            0% { color: #fff; transform: scale(1.3); }
+            100% { color: #00d4ff; transform: scale(1); }
+        }
+
+        /* Activity Log */
+        .log-panel {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(0,212,255,0.15);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            min-height: 280px;
+            max-height: 280px;
+        }
+        .log-header {
+            display: flex;
+            align-items: center;
             justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
         }
-        .stat-row:last-child {
-            border-bottom: none;
+        .log-header h3 {
+            font-size: 0.8em;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
-        .stat-label {
-            color: #aaa;
+        .log-count {
+            font-size: 0.7em;
+            color: #64748b;
         }
-        .stat-value {
-            color: #00d4ff;
-            font-weight: 600;
+        .log-clear-btn {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #94a3b8;
+            padding: 2px 8px;
+            font-size: 0.65em;
+            width: auto;
+            margin: 0;
+            border-radius: 4px;
+        }
+        .log-clear-btn:hover {
+            color: #fff;
+            border-color: rgba(255,255,255,0.3);
+            box-shadow: none;
+            transform: none;
+        }
+        .log-entries {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 0;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.7rem;
+            line-height: 1.5;
+        }
+        .log-entry {
+            padding: 4px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            display: grid;
+            grid-template-columns: 65px 1fr;
+            gap: 8px;
+        }
+        .log-entry:hover {
+            background: rgba(255,255,255,0.03);
+        }
+        .log-time {
+            color: #475569;
+            flex-shrink: 0;
+        }
+        .log-msg { word-break: break-word; }
+        .log-entry.success .log-msg { color: #00cc66; }
+        .log-entry.error .log-msg { color: #ff3333; }
+        .log-entry.info .log-msg { color: #e6b800; }
+        .log-entry.dedup .log-msg { color: #a78bfa; }
+        .log-detail {
+            color: #475569;
+            font-size: 0.65rem;
+            margin-top: 2px;
+            max-height: 60px;
+            overflow-y: auto;
+        }
+        .log-entries::-webkit-scrollbar,
+        .log-detail::-webkit-scrollbar {
+            width: 4px;
+        }
+        .log-entries::-webkit-scrollbar-thumb,
+        .log-detail::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+        }
+        .log-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: #475569;
+            font-size: 0.8rem;
+        }
+
+        .warning {
+            background: rgba(255, 193, 7, 0.08);
+            border: 1px solid rgba(255,193,7,0.2);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: #ffc107;
+            font-size: 0.7rem;
+            margin-top: 12px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🧪 Test Events UI - Citadel Archer Phase 2</h1>
-        
-        <div class="grid">
-            <!-- Threat Simulation Card -->
-            <div class="card">
-                <h3>🎯 Threat Simulation</h3>
-                <button onclick="simulateThreat('port_scan', 7)">Port Scan (Severity 7)</button>
-                <button onclick="simulateThreat('malware', 9)">Malware Alert (Severity 9)</button>
-                <button onclick="simulateThreat('brute_force', 5)">Brute Force (Severity 5)</button>
-                <button onclick="simulateThreat('cve', 8)">CVE Alert (Severity 8)</button>
-            </div>
-            
-            <!-- Alert Management Card -->
-            <div class="card">
-                <h3>⚡ Alert Management</h3>
-                <button onclick="acknowledgeAllAlerts()">Acknowledge All Alerts</button>
-                <button onclick="clearAlertHistory()">Clear Alert History</button>
-                <button onclick="triggerEscalation()">Trigger 3-Stage Escalation</button>
-            </div>
-            
-            <!-- Testing Flows Card -->
-            <div class="card">
-                <h3>🔄 Testing Flows</h3>
-                <button onclick="testDeduplication()">Test Deduplication (5x)</button>
-                <button onclick="testDefaultConfig()">Test Default Config</button>
-                <button onclick="testConfigOverride()">Test Config Override</button>
+        <!-- Header with API status -->
+        <div class="header-row">
+            <h1>Phase 2 Test Console</h1>
+            <div id="api-badge" class="api-badge offline">
+                <span class="api-dot"></span>
+                <span id="api-status-text">Checking...</span>
             </div>
         </div>
-        
-        <div class="stats">
-            <h3>📊 Quick Stats</h3>
-            <div class="stat-row">
-                <span class="stat-label">API Status:</span>
-                <span class="stat-value" id="api-status">Checking...</span>
-            </div>
-            <div class="stat-row">
-                <span class="stat-label">Total Alerts:</span>
+
+        <!-- Stats bar -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="stat-label">Alerts:</span>
                 <span class="stat-value" id="alert-count">0</span>
             </div>
-            <div class="stat-row">
-                <span class="stat-label">Critical Alerts:</span>
+            <div class="stat-item">
+                <span class="stat-label">Critical:</span>
                 <span class="stat-value" id="critical-count">0</span>
             </div>
-            <div class="stat-row">
-                <span class="stat-label">Test Events Sent:</span>
+            <div class="stat-item">
+                <span class="stat-label">Acknowledged:</span>
+                <span class="stat-value" id="ack-count">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Sent:</span>
                 <span class="stat-value" id="events-sent">0</span>
             </div>
         </div>
-        
-        <p class="subtitle">Development Testing Tool - Not for Production</p>
-        
-        <div class="warning">
-            ⚠️ <strong>Development Only:</strong> This test UI is for development and testing purposes only. 
-            Do not expose to production or use with real threat data.
+
+        <!-- Top: Buttons left, Log right -->
+        <div class="top-layout">
+            <!-- Button cards -->
+            <div>
+                <div class="buttons-col">
+                    <div class="card">
+                        <h3>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>
+                            Threats
+                        </h3>
+                        <button onclick="simulateThreat('port_scan', 7)">Port Scan (7)</button>
+                        <button onclick="simulateThreat('malware', 9)">Malware (9)</button>
+                        <button onclick="simulateThreat('brute_force', 5)">Brute Force (5)</button>
+                        <button onclick="simulateThreat('cve', 8)">CVE Alert (8)</button>
+                    </div>
+                    <div class="card">
+                        <h3>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                            Alerts
+                        </h3>
+                        <button onclick="acknowledgeAllAlerts()">Acknowledge All</button>
+                        <button onclick="clearAlertHistory()">Clear History</button>
+                        <button onclick="triggerEscalation()">Escalation Test</button>
+                    </div>
+                    <div class="card">
+                        <h3>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                            Flows
+                        </h3>
+                        <button onclick="testDeduplication()">Dedup Test (5x)</button>
+                        <button onclick="testDefaultConfig()">Get Config</button>
+                        <button onclick="testConfigOverride()">Override Config</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="log-panel">
+                <div class="log-header">
+                    <h3>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        Activity Log
+                        <span class="log-count" id="log-count">(0)</span>
+                    </h3>
+                    <button class="log-clear-btn" onclick="clearLog()">Clear</button>
+                </div>
+                <div class="log-entries" id="log-entries">
+                    <div class="log-empty">Click a button to start testing...</div>
+                </div>
+            </div>
         </div>
-        
-        <div id="status" class="status"></div>
+
+        <div class="warning">
+            Dev Only: This test console is for Phase 2 E2E testing. Do not expose to production.
+        </div>
     </div>
-    
+
     <script>
         let eventsSent = 0;
+        let logCount = 0;
         const API_BASE = '/api';
-        
-        async function showStatus(message, isError = false) {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.classList.add('show');
-            status.classList.toggle('error', isError);
-            setTimeout(() => status.classList.remove('show'), 5000);
+
+        function timestamp() {
+            return new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
         }
-        
+
+        function addLog(type, message, detail) {
+            const entries = document.getElementById('log-entries');
+            // Remove empty message on first log
+            const empty = entries.querySelector('.log-empty');
+            if (empty) empty.remove();
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
+
+            let detailHtml = '';
+            if (detail) {
+                const formatted = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2);
+                detailHtml = '<div class="log-detail">' + escapeHtml(formatted) + '</div>';
+            }
+
+            entry.innerHTML = '<span class="log-time">' + timestamp() + '</span>' +
+                '<div><span class="log-msg">' + escapeHtml(message) + '</span>' + detailHtml + '</div>';
+
+            entries.insertBefore(entry, entries.firstChild);
+            logCount++;
+            document.getElementById('log-count').textContent = '(' + logCount + ')';
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function clearLog() {
+            const entries = document.getElementById('log-entries');
+            entries.innerHTML = '<div class="log-empty">Log cleared. Click a button to start testing...</div>';
+            logCount = 0;
+            document.getElementById('log-count').textContent = '(0)';
+        }
+
+        function flashStat(id) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.classList.remove('highlight');
+                void el.offsetWidth; // force reflow
+                el.classList.add('highlight');
+            }
+        }
+
         async function updateStats() {
             try {
                 const resp = await fetch(API_BASE + '/health');
-                document.getElementById('api-status').textContent = resp.ok ? '✓ Online' : '✗ Offline';
-                
+                const badge = document.getElementById('api-badge');
+                const text = document.getElementById('api-status-text');
+                if (resp.ok) {
+                    badge.className = 'api-badge online';
+                    text.textContent = 'API Online';
+                } else {
+                    badge.className = 'api-badge offline';
+                    text.textContent = 'API Offline';
+                }
+
                 const alerts = await fetch(API_BASE + '/alerts').then(r => r.json());
                 const alertList = alerts.alerts || [];
-                document.getElementById('alert-count').textContent = alertList.length;
-                
-                const critical = alertList.filter(a => a.severity >= 8).length;
-                document.getElementById('critical-count').textContent = critical;
-                
+
+                const totalEl = document.getElementById('alert-count');
+                const critEl = document.getElementById('critical-count');
+                const ackEl = document.getElementById('ack-count');
+
+                const newTotal = alertList.length;
+                const newCritical = alertList.filter(a => a.severity >= 8).length;
+                const newAck = alertList.filter(a => a.acknowledged).length;
+
+                if (totalEl.textContent !== String(newTotal)) flashStat('alert-count');
+                if (critEl.textContent !== String(newCritical)) flashStat('critical-count');
+                if (ackEl.textContent !== String(newAck)) flashStat('ack-count');
+
+                totalEl.textContent = newTotal;
+                critEl.textContent = newCritical;
+                ackEl.textContent = newAck;
                 document.getElementById('events-sent').textContent = eventsSent;
             } catch (e) {
-                document.getElementById('api-status').textContent = '✗ Offline';
+                const badge = document.getElementById('api-badge');
+                const text = document.getElementById('api-status-text');
+                badge.className = 'api-badge offline';
+                text.textContent = 'API Offline';
             }
         }
-        
+
         async function simulateThreat(threatType, severity) {
             try {
+                const source = '192.168.' + Math.floor(Math.random() * 256) + '.' + Math.floor(Math.random() * 256);
                 const payload = {
                     threat_type: threatType,
                     severity: severity,
-                    source: '192.168.' + Math.floor(Math.random() * 256) + '.' + Math.floor(Math.random() * 256),
+                    source: source,
                     target: '10.0.0.1',
-                    description: `Test ${threatType} threat`,
+                    description: 'Test ' + threatType + ' threat',
                     timestamp: new Date().toISOString()
                 };
-                
+
                 const resp = await fetch(API_BASE + '/threats/submit', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                
+
+                const data = await resp.json();
+
                 if (resp.ok) {
                     eventsSent++;
-                    await showStatus(`✓ ${threatType} threat submitted (severity ${severity})`);
+                    if (data.status === 'deduplicated') {
+                        addLog('dedup', 'DEDUP: ' + threatType + ' from ' + source + ' (x' + data.duplicate_count + ')', data);
+                    } else {
+                        addLog('success', 'ALERT: ' + threatType + ' sev=' + severity + ' level=' + data.severity_level + ' from ' + source, data);
+                    }
                     updateStats();
                 } else {
-                    await showStatus(`✗ Failed to submit threat: ${resp.status}`, true);
+                    addLog('error', 'FAILED: submit ' + threatType + ' - HTTP ' + resp.status, data);
                 }
             } catch (e) {
-                await showStatus(`✗ Error: ${e.message}`, true);
+                addLog('error', 'ERROR: ' + e.message);
             }
         }
-        
+
         async function acknowledgeAllAlerts() {
             try {
                 const resp = await fetch(API_BASE + '/alerts/acknowledge-all', { method: 'POST' });
+                const data = await resp.json();
                 if (resp.ok) {
-                    await showStatus('✓ All alerts acknowledged');
+                    addLog('success', 'ACK ALL: ' + data.acknowledged_count + ' alerts acknowledged', data);
                     updateStats();
                 } else {
-                    await showStatus('✗ Failed to acknowledge alerts', true);
+                    addLog('error', 'FAILED: acknowledge-all - HTTP ' + resp.status, data);
                 }
             } catch (e) {
-                await showStatus(`✗ Error: ${e.message}`, true);
+                addLog('error', 'ERROR: ' + e.message);
             }
         }
-        
+
         async function clearAlertHistory() {
-            if (confirm('Are you sure? This will delete all alert history.')) {
+            try {
+                const resp = await fetch(API_BASE + '/alerts/clear', { method: 'DELETE' });
+                const data = await resp.json();
+                if (resp.ok) {
+                    addLog('info', 'CLEARED: ' + data.deleted_count + ' alerts deleted', data);
+                    updateStats();
+                } else {
+                    addLog('error', 'FAILED: clear alerts - HTTP ' + resp.status, data);
+                }
+            } catch (e) {
+                addLog('error', 'ERROR: ' + e.message);
+            }
+        }
+
+        async function triggerEscalation() {
+            addLog('info', 'ESCALATION: Submitting severity-9 threat for 3-stage escalation test...');
+            await simulateThreat('escalation_test', 9);
+            addLog('info', 'ESCALATION: Stage 1 active. Stage 2 in ~5min, Stage 3 in ~10min (use Config Override to shorten)');
+        }
+
+        async function testDeduplication() {
+            addLog('info', 'DEDUP TEST: Sending 5 identical threats rapidly...');
+            const threatType = 'dedup_test';
+            const source = '10.99.99.99';
+            let created = 0;
+            let duped = 0;
+
+            for (let i = 0; i < 5; i++) {
                 try {
-                    const resp = await fetch(API_BASE + '/alerts/clear', { method: 'DELETE' });
-                    if (resp.ok) {
-                        await showStatus('✓ Alert history cleared');
-                        updateStats();
+                    const payload = {
+                        threat_type: threatType,
+                        severity: 6,
+                        source: source,
+                        target: '10.0.0.1',
+                        description: 'Dedup test threat #' + (i + 1),
+                        timestamp: new Date().toISOString()
+                    };
+                    const resp = await fetch(API_BASE + '/threats/submit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await resp.json();
+                    eventsSent++;
+                    if (data.status === 'deduplicated') {
+                        duped++;
                     } else {
-                        await showStatus('✗ Failed to clear history', true);
+                        created++;
                     }
                 } catch (e) {
-                    await showStatus(`✗ Error: ${e.message}`, true);
+                    addLog('error', 'ERROR on threat #' + (i + 1) + ': ' + e.message);
                 }
+                await new Promise(r => setTimeout(r, 50));
             }
+
+            const passed = created === 1 && duped === 4;
+            addLog(passed ? 'success' : 'info',
+                'DEDUP RESULT: ' + created + ' created, ' + duped + ' deduplicated' +
+                (passed ? ' - PASS' : ' - expected 1 created + 4 deduped'));
+            updateStats();
         }
-        
-        async function triggerEscalation() {
-            try {
-                await simulateThreat('escalation_test', 9);
-                await showStatus('✓ Escalation test alert created - watch for stage progression');
-            } catch (e) {
-                await showStatus(`✗ Error: ${e.message}`, true);
-            }
-        }
-        
-        async function testDeduplication() {
-            try {
-                for (let i = 0; i < 5; i++) {
-                    await simulateThreat('dup_test_' + Date.now(), 6);
-                    await new Promise(r => setTimeout(r, 100));
-                }
-                await showStatus('✓ 5 identical threats submitted - check for deduplication');
-                updateStats();
-            } catch (e) {
-                await showStatus(`✗ Error: ${e.message}`, true);
-            }
-        }
-        
+
         async function testDefaultConfig() {
             try {
                 const resp = await fetch(API_BASE + '/alert-config');
+                const data = await resp.json();
                 if (resp.ok) {
-                    const config = await resp.json();
-                    await showStatus(`✓ Default config loaded: ${Object.keys(config).length} properties`);
+                    addLog('success', 'CONFIG: Loaded ' + Object.keys(data).length + ' properties', data);
                 } else {
-                    await showStatus('✗ Failed to load config', true);
+                    addLog('error', 'FAILED: get config - HTTP ' + resp.status, data);
                 }
             } catch (e) {
-                await showStatus(`✗ Error: ${e.message}`, true);
+                addLog('error', 'ERROR: ' + e.message);
             }
         }
-        
+
         async function testConfigOverride() {
             try {
                 const newConfig = {
@@ -320,16 +559,17 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(newConfig)
                 });
+                const data = await resp.json();
                 if (resp.ok) {
-                    await showStatus('✓ Config override applied');
+                    addLog('success', 'CONFIG: Updated ' + data.changes_applied + ' settings (escalation intervals now 0/30/60s)', data);
                 } else {
-                    await showStatus('✗ Failed to override config', true);
+                    addLog('error', 'FAILED: override config - HTTP ' + resp.status, data);
                 }
             } catch (e) {
-                await showStatus(`✗ Error: ${e.message}`, true);
+                addLog('error', 'ERROR: ' + e.message);
             }
         }
-        
+
         // Initialize
         updateStats();
         setInterval(updateStats, 5000);

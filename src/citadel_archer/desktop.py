@@ -15,6 +15,8 @@ import time
 import sys
 import signal
 import atexit
+import socket
+import os
 from pathlib import Path
 
 from .api.main import app, file_monitor, process_monitor
@@ -35,6 +37,7 @@ class CitadelDesktopApp:
         self.backend_server = None
         self.backend_started = False
         self.is_shutting_down = False
+        self.edge_process = None  # Track Edge subprocess for window-close detection
 
         # Register cleanup handlers
         atexit.register(self.cleanup)
@@ -89,6 +92,41 @@ class CitadelDesktopApp:
 
         print("✅ Cleanup complete. All processes stopped.")
 
+    @staticmethod
+    def _is_port_in_use(port):
+        """Check if a TCP port is already bound."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return False
+            except OSError:
+                return True
+
+    @staticmethod
+    def _kill_stale_server(port):
+        """Find and kill a stale process holding the given port (Windows)."""
+        try:
+            # netstat to find the PID owning the port
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if f"127.0.0.1:{port}" in line and "LISTENING" in line:
+                    pid = int(line.strip().split()[-1])
+                    if pid == os.getpid():
+                        continue  # Don't kill ourselves
+                    print(f"  Found stale process PID {pid} on port {port}, terminating...")
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True, timeout=5
+                    )
+                    time.sleep(0.5)  # Give OS time to release the port
+                    return True
+        except Exception as e:
+            print(f"  Warning: Could not clean stale process on port {port}: {e}")
+        return False
+
     def start_backend(self):
         """Start FastAPI backend in background thread."""
         config = uvicorn.Config(
@@ -123,12 +161,50 @@ class CitadelDesktopApp:
         print("❌ Backend failed to start within timeout")
         return False
 
+    def _start_ws_watchdog(self):
+        """
+        Monitor WebSocket connections to detect window close.
+
+        After the first client connects, if ALL clients disconnect
+        for 30+ seconds, assume the user closed the app window and
+        trigger shutdown. Handles page refreshes gracefully (brief
+        disconnect followed by reconnect).
+        """
+        from .api.main import manager  # Import here to avoid circular at module level
+
+        def watchdog():
+            # Wait for at least one client to connect
+            while not self.is_shutting_down:
+                if len(manager.active_connections) > 0:
+                    break
+                time.sleep(1)
+
+            # Now watch for all-disconnected state
+            disconnected_since = None
+            grace_period = 30  # seconds
+
+            while not self.is_shutting_down:
+                if len(manager.active_connections) == 0:
+                    if disconnected_since is None:
+                        disconnected_since = time.time()
+                    elif time.time() - disconnected_since > grace_period:
+                        print(f"\n🪟 No connected clients for {grace_period}s — window likely closed.")
+                        self.cleanup()
+                        break
+                else:
+                    disconnected_since = None  # Reset on reconnect
+                time.sleep(2)
+
+        t = threading.Thread(target=watchdog, daemon=True)
+        t.start()
+
     def open_app_window(self):
         """
         Open Edge in app mode (looks like native window).
 
         Windows 10/11 guaranteed to have Edge.
         App mode = no address bar, no tabs, looks like desktop app.
+        Stores the process handle so we can detect when the user closes the window.
         """
         url = "http://127.0.0.1:8000"
 
@@ -137,7 +213,7 @@ class CitadelDesktopApp:
 
         # Try to launch Edge in app mode
         try:
-            subprocess.Popen([
+            self.edge_process = subprocess.Popen([
                 edge_path,
                 f"--app={url}",
                 "--window-size=1280,800",
@@ -159,12 +235,13 @@ class CitadelDesktopApp:
         PRD: Desktop application with embedded backend and process management.
 
         Lifecycle:
-        1. Start FastAPI backend in background thread (internal)
-        2. Start Guardian agents (file & process monitoring)
-        3. Wait for backend to be ready
-        4. Open Edge in app mode (looks like native window)
-        5. Display glassmorphic UI
-        6. On close: cleanup ALL processes (no ghosts)
+        1. Kill any stale backend on our port
+        2. Start FastAPI backend in background thread (internal)
+        3. Start Guardian agents (file & process monitoring)
+        4. Wait for backend to be ready
+        5. Open Edge in app mode (looks like native window)
+        6. Monitor Edge process — auto-shutdown when window closes
+        7. On close: cleanup ALL processes (no ghosts)
         """
         print("=" * 60)
         print("  🛡️  Citadel Archer Desktop v0.2.3")
@@ -173,6 +250,17 @@ class CitadelDesktopApp:
         print("  Philosophy: Proactive protection. Acts first, informs after.")
         print("=" * 60)
         print()
+
+        # Kill stale backend if port is occupied
+        if self._is_port_in_use(8000):
+            print("⚠️  Port 8000 already in use — cleaning up stale server...")
+            if not self._kill_stale_server(8000):
+                print("❌ Could not free port 8000. Is another instance running?")
+                sys.exit(1)
+            if self._is_port_in_use(8000):
+                print("❌ Port 8000 still in use after cleanup. Exiting.")
+                sys.exit(1)
+            print("✅ Port 8000 freed.")
 
         # Start backend in background thread
         print("🔧 Starting backend server...")
@@ -199,14 +287,22 @@ class CitadelDesktopApp:
         print("   Or press Ctrl+C in this terminal")
         print()
 
-        # Keep backend running until Ctrl+C
+        # Wait for shutdown signal.
+        # Edge --app= exits immediately (hands off to main Edge process),
+        # so we cannot use subprocess.poll() to detect window close.
+        # Instead, we rely on:
+        #   - Ctrl+C / SIGINT (signal handler triggers cleanup)
+        #   - WebSocket disconnect watchdog (all clients gone for 30s)
+        #   - Port cleanup on next startup (catches any ghost)
+        self._start_ws_watchdog()
+
         try:
-            while True:
+            while not self.is_shutting_down:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
 
-        print("\n🛑 Desktop application closed.")
+        print("\n🛑 Desktop application closing...")
 
 
 def main():

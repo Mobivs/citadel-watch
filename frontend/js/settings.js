@@ -11,7 +11,6 @@ class SettingsManager {
     constructor() {
         this.settingsModal = null;
         this.devToolsModal = null;
-        this.devToolsLoaded = false;
     }
 
     init() {
@@ -92,10 +91,8 @@ class SettingsManager {
             this.devToolsModal.classList.add('open');
         }
 
-        // Load dev tools content if not already loaded
-        if (!this.devToolsLoaded) {
-            await this.loadDevToolsContent();
-        }
+        // Always reload dev tools content (no caching - dev tool changes often)
+        await this.loadDevToolsContent();
     }
 
     closeDevTools() {
@@ -109,8 +106,8 @@ class SettingsManager {
         if (!content) return;
 
         try {
-            // Fetch the test-events.html
-            const response = await fetch('test-events.html');
+            // Fetch the test-events.html (cache-busted to always get latest)
+            const response = await fetch('test-events.html', { cache: 'no-store' });
             if (!response.ok) {
                 throw new Error(`Failed to load test events: ${response.status}`);
             }
@@ -149,7 +146,6 @@ class SettingsManager {
             // Re-run any scripts in the injected content to ensure they execute
             this.reloadScripts(content);
 
-            this.devToolsLoaded = true;
             console.log('[settings] Developer Tools content loaded with scripts enabled');
 
         } catch (error) {

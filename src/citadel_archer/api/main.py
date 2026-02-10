@@ -360,10 +360,13 @@ async def serve_vault_redirect():
 
 @app.get("/test-events.html")
 async def serve_test_events():
-    """Serve test-events.html for Developer Tools."""
+    """Serve test-events.html for Developer Tools (no-cache for dev tool)."""
     test_events_path = FRONTEND_DIR / "test-events.html"
     if test_events_path.exists():
-        return FileResponse(test_events_path)
+        return FileResponse(
+            test_events_path,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
+        )
     else:
         raise HTTPException(status_code=404, detail="Test events page not found")
 
@@ -373,7 +376,10 @@ async def serve_test_events_redirect():
     """Redirect /test-events to /test-events.html"""
     test_events_path = FRONTEND_DIR / "test-events.html"
     if test_events_path.exists():
-        return FileResponse(test_events_path)
+        return FileResponse(
+            test_events_path,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
+        )
     else:
         raise HTTPException(status_code=404, detail="Test events page not found")
 
