@@ -135,14 +135,22 @@ class SettingsManager {
                 throw new Error('Could not find container in test-events.html');
             }
 
-            // Inject styles + content (styles must be inside content for scoping)
-            content.innerHTML = stylesHTML + container.innerHTML;
+            // Extract scripts from the parsed document
+            const scriptElements = doc.querySelectorAll('body script');
+            let scriptsHTML = '';
+            
+            scriptElements.forEach(script => {
+                scriptsHTML += script.outerHTML;
+            });
 
-            // Re-run any scripts in the injected content
+            // Inject styles + content + scripts (scripts must be last for proper execution)
+            content.innerHTML = stylesHTML + container.innerHTML + scriptsHTML;
+
+            // Re-run any scripts in the injected content to ensure they execute
             this.reloadScripts(content);
 
             this.devToolsLoaded = true;
-            console.log('[settings] Developer Tools content loaded');
+            console.log('[settings] Developer Tools content loaded with scripts enabled');
 
         } catch (error) {
             console.error('[settings] Failed to load dev tools:', error);
@@ -168,7 +176,9 @@ class SettingsManager {
             } else {
                 newScript.textContent = oldScript.textContent;
             }
-            oldScript.parentNode.replaceChild(newScript, oldScript);
+            // Insert the new script before removing the old one to preserve execution order
+            oldScript.parentNode.insertBefore(newScript, oldScript);
+            oldScript.parentNode.removeChild(oldScript);
         });
     }
 }
