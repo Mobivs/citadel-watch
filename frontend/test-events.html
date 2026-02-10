@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Events UI - Citadel Archer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+            color: #00d4ff;
+        }
+        .subtitle {
+            color: #aaa;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+        .warning {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 30px;
+            color: #ffc107;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            border-color: rgba(0, 212, 255, 0.6);
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateY(-2px);
+        }
+        .card h3 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        button {
+            display: block;
+            width: 100%;
+            padding: 12px 20px;
+            margin: 8px 0;
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            border: none;
+            border-radius: 6px;
+            color: #000;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.95em;
+        }
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 16px rgba(0, 212, 255, 0.3);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 6px;
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            color: #4caf50;
+            display: none;
+        }
+        .status.show {
+            display: block;
+        }
+        .status.error {
+            background: rgba(244, 67, 54, 0.1);
+            border-color: rgba(244, 67, 54, 0.3);
+            color: #f44336;
+        }
+        .stats {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+        .stat-label {
+            color: #aaa;
+        }
+        .stat-value {
+            color: #00d4ff;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Events UI - Citadel Archer Phase 2</h1>
+        <p class="subtitle">Development Testing Tool - Not for Production</p>
+        
+        <div class="warning">
+            ⚠️ <strong>Development Only:</strong> This test UI is for development and testing purposes only. 
+            Do not expose to production or use with real threat data.
+        </div>
+        
+        <div class="grid">
+            <!-- Threat Simulation Card -->
+            <div class="card">
+                <h3>🎯 Threat Simulation</h3>
+                <button onclick="simulateThreat('port_scan', 7)">Port Scan (Severity 7)</button>
+                <button onclick="simulateThreat('malware', 9)">Malware Alert (Severity 9)</button>
+                <button onclick="simulateThreat('brute_force', 5)">Brute Force (Severity 5)</button>
+                <button onclick="simulateThreat('cve', 8)">CVE Alert (Severity 8)</button>
+            </div>
+            
+            <!-- Alert Management Card -->
+            <div class="card">
+                <h3>⚡ Alert Management</h3>
+                <button onclick="acknowledgeAllAlerts()">Acknowledge All Alerts</button>
+                <button onclick="clearAlertHistory()">Clear Alert History</button>
+                <button onclick="triggerEscalation()">Trigger 3-Stage Escalation</button>
+            </div>
+            
+            <!-- Testing Flows Card -->
+            <div class="card">
+                <h3>🔄 Testing Flows</h3>
+                <button onclick="testDeduplication()">Test Deduplication (5x)</button>
+                <button onclick="testDefaultConfig()">Test Default Config</button>
+                <button onclick="testConfigOverride()">Test Config Override</button>
+            </div>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div class="stats">
+            <h3>📊 Quick Stats</h3>
+            <div class="stat-row">
+                <span class="stat-label">API Status:</span>
+                <span class="stat-value" id="api-status">Checking...</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Alerts:</span>
+                <span class="stat-value" id="alert-count">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Critical Alerts:</span>
+                <span class="stat-value" id="critical-count">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Test Events Sent:</span>
+                <span class="stat-value" id="events-sent">0</span>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let eventsSent = 0;
+        const API_BASE = '/api';
+        
+        async function showStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.classList.add('show');
+            status.classList.toggle('error', isError);
+            setTimeout(() => status.classList.remove('show'), 5000);
+        }
+        
+        async function updateStats() {
+            try {
+                const resp = await fetch(API_BASE + '/health');
+                document.getElementById('api-status').textContent = resp.ok ? '✓ Online' : '✗ Offline';
+                
+                const alerts = await fetch(API_BASE + '/alerts').then(r => r.json());
+                const alertList = alerts.alerts || [];
+                document.getElementById('alert-count').textContent = alertList.length;
+                
+                const critical = alertList.filter(a => a.severity >= 8).length;
+                document.getElementById('critical-count').textContent = critical;
+                
+                document.getElementById('events-sent').textContent = eventsSent;
+            } catch (e) {
+                document.getElementById('api-status').textContent = '✗ Offline';
+            }
+        }
+        
+        async function simulateThreat(threatType, severity) {
+            try {
+                const payload = {
+                    threat_type: threatType,
+                    severity: severity,
+                    source: '192.168.' + Math.floor(Math.random() * 256) + '.' + Math.floor(Math.random() * 256),
+                    target: '10.0.0.1',
+                    description: `Test ${threatType} threat`,
+                    timestamp: new Date().toISOString()
+                };
+                
+                const resp = await fetch(API_BASE + '/threats/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (resp.ok) {
+                    eventsSent++;
+                    await showStatus(`✓ ${threatType} threat submitted (severity ${severity})`);
+                    updateStats();
+                } else {
+                    await showStatus(`✗ Failed to submit threat: ${resp.status}`, true);
+                }
+            } catch (e) {
+                await showStatus(`✗ Error: ${e.message}`, true);
+            }
+        }
+        
+        async function acknowledgeAllAlerts() {
+            try {
+                const resp = await fetch(API_BASE + '/alerts/acknowledge-all', { method: 'POST' });
+                if (resp.ok) {
+                    await showStatus('✓ All alerts acknowledged');
+                    updateStats();
+                } else {
+                    await showStatus('✗ Failed to acknowledge alerts', true);
+                }
+            } catch (e) {
+                await showStatus(`✗ Error: ${e.message}`, true);
+            }
+        }
+        
+        async function clearAlertHistory() {
+            if (confirm('Are you sure? This will delete all alert history.')) {
+                try {
+                    const resp = await fetch(API_BASE + '/alerts/clear', { method: 'DELETE' });
+                    if (resp.ok) {
+                        await showStatus('✓ Alert history cleared');
+                        updateStats();
+                    } else {
+                        await showStatus('✗ Failed to clear history', true);
+                    }
+                } catch (e) {
+                    await showStatus(`✗ Error: ${e.message}`, true);
+                }
+            }
+        }
+        
+        async function triggerEscalation() {
+            try {
+                await simulateThreat('escalation_test', 9);
+                await showStatus('✓ Escalation test alert created - watch for stage progression');
+            } catch (e) {
+                await showStatus(`✗ Error: ${e.message}`, true);
+            }
+        }
+        
+        async function testDeduplication() {
+            try {
+                for (let i = 0; i < 5; i++) {
+                    await simulateThreat('dup_test_' + Date.now(), 6);
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                await showStatus('✓ 5 identical threats submitted - check for deduplication');
+                updateStats();
+            } catch (e) {
+                await showStatus(`✗ Error: ${e.message}`, true);
+            }
+        }
+        
+        async function testDefaultConfig() {
+            try {
+                const resp = await fetch(API_BASE + '/alert-config');
+                if (resp.ok) {
+                    const config = await resp.json();
+                    await showStatus(`✓ Default config loaded: ${Object.keys(config).length} properties`);
+                } else {
+                    await showStatus('✗ Failed to load config', true);
+                }
+            } catch (e) {
+                await showStatus(`✗ Error: ${e.message}`, true);
+            }
+        }
+        
+        async function testConfigOverride() {
+            try {
+                const newConfig = {
+                    escalation_enabled: true,
+                    stage_intervals: [0, 30, 60],
+                    deduplication: true
+                };
+                const resp = await fetch(API_BASE + '/alert-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newConfig)
+                });
+                if (resp.ok) {
+                    await showStatus('✓ Config override applied');
+                } else {
+                    await showStatus('✗ Failed to override config', true);
+                }
+            } catch (e) {
+                await showStatus(`✗ Error: ${e.message}`, true);
+            }
+        }
+        
+        // Initialize
+        updateStats();
+        setInterval(updateStats, 5000);
+    </script>
+</body>
+</html>
