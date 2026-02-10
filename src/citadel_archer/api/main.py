@@ -355,6 +355,26 @@ async def serve_vault_redirect():
     else:
         raise HTTPException(status_code=404, detail="Vault page not found")
 
+
+@app.get("/test-events.html")
+async def serve_test_events():
+    """Serve test-events.html for Developer Tools."""
+    test_events_path = FRONTEND_DIR / "test-events.html"
+    if test_events_path.exists():
+        return FileResponse(test_events_path)
+    else:
+        raise HTTPException(status_code=404, detail="Test events page not found")
+
+
+@app.get("/test-events")
+async def serve_test_events_redirect():
+    """Redirect /test-events to /test-events.html"""
+    test_events_path = FRONTEND_DIR / "test-events.html"
+    if test_events_path.exists():
+        return FileResponse(test_events_path)
+    else:
+        raise HTTPException(status_code=404, detail="Test events page not found")
+
 @app.get("/api/session")
 async def get_session():
     """
