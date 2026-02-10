@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 import structlog
+from .log_throttle import get_log_throttler
 
 
 class EventType(str, Enum):
@@ -180,6 +181,30 @@ class AuditLogger:
         PRD: "Logs include timestamps, user context, AI decisions"
         """
         event_id = str(uuid4())
+        
+        # Check for throttling if this looks like a rate limit message
+        throttler = get_log_throttler()
+        
+        # Identify agent ID from context or details
+        agent_id = "system"
+        if details and "agent_id" in details:
+            agent_id = details["agent_id"]
+        elif user_context and "agent_id" in user_context:
+            agent_id = user_context["agent_id"]
+        
+        # Check if this message should be throttled
+        should_log, summary_msg = throttler.should_log(
+            agent_id=agent_id,
+            message=message,
+            severity=severity.value
+        )
+        
+        # If throttled, return early (but still generate an event ID)
+        if not should_log:
+            if summary_msg:
+                # Log the summary message
+                self.logger.info("throttle_summary", message=summary_msg)
+            return event_id
 
         event_data = {
             "event_id": event_id,
@@ -191,6 +216,10 @@ class AuditLogger:
             "ai_decision": ai_decision,
             "user_context": user_context or self._get_default_user_context(),
         }
+        
+        # Add summary of previously suppressed messages if any
+        if summary_msg:
+            event_data["throttle_note"] = summary_msg
 
         # Log to structured log
         self.logger.info(
