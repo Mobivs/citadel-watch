@@ -4,7 +4,7 @@
 # FastAPI REST API + WebSocket server for Dashboard communication.
 # PRD: "FastAPI REST API setup, WebSocket endpoint for real-time updates"
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -13,7 +13,9 @@ from pydantic import BaseModel
 from pathlib import Path
 import uvicorn
 import json
-from datetime import datetime
+import uuid
+import asyncio
+from datetime import datetime, timezone
 
 from ..core import (
     SecurityLevel,
@@ -464,7 +466,7 @@ async def update_security_level(update: SecurityLevelUpdate):
             "type": "security_level_changed",
             "old_level": old_level.value,
             "new_level": new_level.value,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
         return {"status": "success", "level": new_level.value}
@@ -511,7 +513,7 @@ async def kill_process(pid: int, reason: Optional[str] = "User requested"):
             "type": "process_killed",
             "pid": pid,
             "reason": reason,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         return {"status": "success", "pid": pid}
     else:
@@ -543,7 +545,7 @@ async def start_guardian():
 
     await manager.broadcast({
         "type": "guardian_started",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     })
 
     return {"status": "success", "message": "Guardian started"}
@@ -559,11 +561,450 @@ async def stop_guardian():
 
     await manager.broadcast({
         "type": "guardian_stopped",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     })
 
     return {"status": "success", "message": "Guardian stopped"}
 
+
+# ============================================================================
+# PHASE 2: ALERT SYSTEM ENDPOINTS
+# ============================================================================
+
+# In-memory storage for alerts and threats (Phase 2 implementation)
+# In production, this would be stored in a database
+alerts_storage = []
+threats_storage = []
+alert_config = {
+    "escalation_enabled": True,
+    "stage_intervals": [0, 300, 600],  # seconds between escalation stages
+    "deduplication": True,
+    "deduplication_window": 300,  # seconds
+    "max_alerts": 1000,
+    "auto_acknowledge": False,
+    "severity_thresholds": {
+        "low": 3,
+        "medium": 5,
+        "high": 7,
+        "critical": 9
+    }
+}
+
+class ThreatSubmission(BaseModel):
+    """Phase 2: Threat submission model"""
+    threat_type: str
+    severity: int  # 1-10 scale
+    source: str
+    target: Optional[str] = None
+    description: str
+    timestamp: Optional[str] = None
+    metadata: Optional[dict] = None
+
+class Alert(BaseModel):
+    """Phase 2: Alert model"""
+    id: str
+    threat_id: Optional[str] = None
+    threat_type: str
+    severity: int
+    severity_level: str  # low, medium, high, critical
+    source: str
+    target: Optional[str] = None
+    description: str
+    timestamp: str
+    created_at: str
+    acknowledged: bool = False
+    acknowledged_at: Optional[str] = None
+    escalation_stage: int = 1  # 1, 2, or 3
+    escalated_at: Optional[str] = None
+    deduplicated: bool = False
+    duplicate_count: int = 0
+
+class AlertFilter(BaseModel):
+    """Phase 2: Alert filter model"""
+    severity_min: Optional[int] = None
+    severity_max: Optional[int] = None
+    threat_type: Optional[str] = None
+    acknowledged: Optional[bool] = None
+    limit: Optional[int] = 100
+
+class AlertConfig(BaseModel):
+    """Phase 2: Alert configuration model"""
+    escalation_enabled: Optional[bool] = None
+    stage_intervals: Optional[List[int]] = None
+    deduplication: Optional[bool] = None
+    deduplication_window: Optional[int] = None
+    max_alerts: Optional[int] = None
+    auto_acknowledge: Optional[bool] = None
+    severity_thresholds: Optional[dict] = None
+
+def get_severity_level(severity: int) -> str:
+    """Convert numeric severity to level string"""
+    thresholds = alert_config["severity_thresholds"]
+    if severity < thresholds["low"]:
+        return "info"
+    elif severity < thresholds["medium"]:
+        return "low"
+    elif severity < thresholds["high"]:
+        return "medium"
+    elif severity < thresholds["critical"]:
+        return "high"
+    else:
+        return "critical"
+
+def check_deduplication(threat: ThreatSubmission) -> Optional[Alert]:
+    """
+    Phase 2: Check if threat is duplicate within deduplication window
+    Returns existing alert if duplicate, None otherwise
+    """
+    if not alert_config["deduplication"]:
+        return None
+    
+    window = alert_config["deduplication_window"]
+    current_time = datetime.now(timezone.utc)
+    
+    for alert in alerts_storage:
+        # Check if alert is within deduplication window
+        # Parse the created_at timestamp properly
+        alert_time_str = alert.created_at.replace('Z', '')
+        if not alert_time_str.endswith('+00:00'):
+            alert_time_str = alert_time_str.split('+')[0]  # Remove any existing offset
+        alert_time = datetime.fromisoformat(alert_time_str)
+        time_diff = (current_time - alert_time).total_seconds()
+        
+        if time_diff <= window:
+            # Check if threat characteristics match
+            if (alert.threat_type == threat.threat_type and 
+                alert.source == threat.source and
+                alert.severity == threat.severity):
+                return alert
+    
+    return None
+
+async def escalate_alert(alert: Alert):
+    """
+    Phase 2: Handle alert escalation through stages
+    Stage 1: Initial alert
+    Stage 2: Elevated priority
+    Stage 3: Critical escalation
+    """
+    if not alert_config["escalation_enabled"]:
+        return
+    
+    intervals = alert_config["stage_intervals"]
+    
+    # Schedule stage 2 escalation
+    if alert.escalation_stage == 1 and len(intervals) > 1:
+        import asyncio
+        await asyncio.sleep(intervals[1])
+        if not alert.acknowledged:
+            alert.escalation_stage = 2
+            alert.escalated_at = datetime.now(timezone.utc).isoformat() + "Z"
+            # Broadcast escalation
+            await manager.broadcast({
+                "type": "alert_escalated",
+                "alert_id": alert.id,
+                "stage": 2,
+                "timestamp": alert.escalated_at
+            })
+            
+            # Schedule stage 3 escalation
+            if len(intervals) > 2:
+                await asyncio.sleep(intervals[2] - intervals[1])
+                if not alert.acknowledged:
+                    alert.escalation_stage = 3
+                    alert.escalated_at = datetime.now(timezone.utc).isoformat() + "Z"
+                    await manager.broadcast({
+                        "type": "alert_escalated",
+                        "alert_id": alert.id,
+                        "stage": 3,
+                        "timestamp": alert.escalated_at
+                    })
+
+@app.get("/api/health")
+async def health_check():
+    """
+    Phase 2: Health check endpoint for monitoring
+    """
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat() + "Z"}
+
+@app.post("/api/threats/submit")
+async def submit_threat(threat: ThreatSubmission):
+    """
+    Phase 2: Accept threat JSON, store in database, run deduplication, trigger alert engine
+    """
+    import uuid
+    import asyncio
+    
+    # Store threat
+    threat_id = str(uuid.uuid4())
+    threat_data = threat.model_dump()
+    threat_data["id"] = threat_id
+    threat_data["received_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+    
+    if not threat_data.get("timestamp"):
+        threat_data["timestamp"] = threat_data["received_at"]
+    
+    threats_storage.append(threat_data)
+    
+    # Check for deduplication
+    existing_alert = check_deduplication(threat)
+    
+    if existing_alert:
+        # Update duplicate count
+        existing_alert.duplicate_count += 1
+        existing_alert.deduplicated = True
+        
+        # Log deduplication
+        get_audit_logger().log_event(
+            event_type=EventType.AI_ALERT,
+            severity=EventSeverity.INFO,
+            message=f"Duplicate threat detected: {threat.threat_type}",
+            details={"alert_id": existing_alert.id, "duplicate_count": existing_alert.duplicate_count}
+        )
+        
+        return {
+            "status": "deduplicated",
+            "alert_id": existing_alert.id,
+            "duplicate_count": existing_alert.duplicate_count
+        }
+    
+    # Create new alert
+    alert = Alert(
+        id=str(uuid.uuid4()),
+        threat_id=threat_id,
+        threat_type=threat.threat_type,
+        severity=threat.severity,
+        severity_level=get_severity_level(threat.severity),
+        source=threat.source,
+        target=threat.target,
+        description=threat.description,
+        timestamp=threat_data["timestamp"],
+        created_at=datetime.now(timezone.utc).isoformat() + "Z",
+        acknowledged=False,
+        escalation_stage=1,
+        deduplicated=False,
+        duplicate_count=0
+    )
+    
+    # Store alert
+    alerts_storage.append(alert)
+    
+    # Enforce max alerts limit
+    if len(alerts_storage) > alert_config["max_alerts"]:
+        alerts_storage.pop(0)  # Remove oldest alert
+    
+    # Log alert creation
+    # Map severity levels to EventSeverity
+    severity_map = {
+        "info": EventSeverity.INFO,
+        "low": EventSeverity.INFO,
+        "medium": EventSeverity.INVESTIGATE,
+        "high": EventSeverity.ALERT,
+        "critical": EventSeverity.CRITICAL
+    }
+    log_severity = severity_map.get(alert.severity_level, EventSeverity.INFO)
+    
+    get_audit_logger().log_event(
+        event_type=EventType.AI_ALERT,
+        severity=log_severity,
+        message=f"Alert created: {threat.threat_type}",
+        details={"alert_id": alert.id, "severity": threat.severity}
+    )
+    
+    # Broadcast to WebSocket clients
+    await manager.broadcast({
+        "type": "alert_created",
+        "alert": alert.model_dump(),
+        "timestamp": alert.created_at
+    })
+    
+    # Start escalation process in background
+    if alert_config["escalation_enabled"] and threat.severity >= 7:
+        asyncio.create_task(escalate_alert(alert))
+    
+    return {
+        "status": "created",
+        "alert_id": alert.id,
+        "severity_level": alert.severity_level,
+        "escalation_enabled": alert_config["escalation_enabled"]
+    }
+
+@app.get("/api/alerts")
+async def get_alerts(
+    severity_min: Optional[int] = None,
+    severity_max: Optional[int] = None,
+    threat_type: Optional[str] = None,
+    acknowledged: Optional[bool] = None,
+    limit: int = 100
+):
+    """
+    Phase 2: List alerts with filters
+    """
+    filtered_alerts = alerts_storage.copy()
+    
+    # Apply filters
+    if severity_min is not None:
+        filtered_alerts = [a for a in filtered_alerts if a.severity >= severity_min]
+    
+    if severity_max is not None:
+        filtered_alerts = [a for a in filtered_alerts if a.severity <= severity_max]
+    
+    if threat_type is not None:
+        filtered_alerts = [a for a in filtered_alerts if a.threat_type == threat_type]
+    
+    if acknowledged is not None:
+        filtered_alerts = [a for a in filtered_alerts if a.acknowledged == acknowledged]
+    
+    # Sort by creation time (newest first) and apply limit
+    filtered_alerts.sort(key=lambda x: x.created_at, reverse=True)
+    filtered_alerts = filtered_alerts[:limit]
+    
+    return {
+        "alerts": [a.model_dump() for a in filtered_alerts],
+        "total": len(filtered_alerts),
+        "filters_applied": {
+            "severity_min": severity_min,
+            "severity_max": severity_max,
+            "threat_type": threat_type,
+            "acknowledged": acknowledged
+        }
+    }
+
+@app.post("/api/alerts/acknowledge-all")
+async def acknowledge_all_alerts():
+    """
+    Phase 2: Mark all alerts as acknowledged
+    """
+    acknowledged_count = 0
+    current_time = datetime.now(timezone.utc).isoformat() + "Z"
+    
+    for alert in alerts_storage:
+        if not alert.acknowledged:
+            alert.acknowledged = True
+            alert.acknowledged_at = current_time
+            acknowledged_count += 1
+    
+    # Log bulk acknowledgment
+    if acknowledged_count > 0:
+        get_audit_logger().log_event(
+            event_type=EventType.USER_OVERRIDE,
+            severity=EventSeverity.INFO,
+            message=f"Bulk alert acknowledgment: {acknowledged_count} alerts",
+            details={"count": acknowledged_count}
+        )
+        
+        # Broadcast update
+        await manager.broadcast({
+            "type": "alerts_acknowledged",
+            "count": acknowledged_count,
+            "timestamp": current_time
+        })
+    
+    return {
+        "status": "success",
+        "acknowledged_count": acknowledged_count,
+        "timestamp": current_time
+    }
+
+@app.delete("/api/alerts/clear")
+async def clear_alert_history():
+    """
+    Phase 2: Delete alert history
+    """
+    alert_count = len(alerts_storage)
+    alerts_storage.clear()
+    
+    # Log clearing
+    get_audit_logger().log_event(
+        event_type=EventType.USER_OVERRIDE,
+        severity=EventSeverity.ALERT,  # Using ALERT for important user actions
+        message=f"Alert history cleared: {alert_count} alerts deleted",
+        details={"deleted_count": alert_count}
+    )
+    
+    # Broadcast update
+    await manager.broadcast({
+        "type": "alerts_cleared",
+        "deleted_count": alert_count,
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
+    })
+    
+    return {
+        "status": "success",
+        "deleted_count": alert_count
+    }
+
+@app.get("/api/alert-config")
+async def get_alert_config():
+    """
+    Phase 2: Return current alert configuration
+    """
+    return alert_config
+
+@app.post("/api/alert-config")
+async def update_alert_config(config: AlertConfig):
+    """
+    Phase 2: Update alert configuration
+    """
+    global alert_config
+    
+    # Track changes for audit
+    changes = {}
+    
+    # Update only provided fields
+    if config.escalation_enabled is not None:
+        changes["escalation_enabled"] = (alert_config["escalation_enabled"], config.escalation_enabled)
+        alert_config["escalation_enabled"] = config.escalation_enabled
+    
+    if config.stage_intervals is not None:
+        changes["stage_intervals"] = (alert_config["stage_intervals"], config.stage_intervals)
+        alert_config["stage_intervals"] = config.stage_intervals
+    
+    if config.deduplication is not None:
+        changes["deduplication"] = (alert_config["deduplication"], config.deduplication)
+        alert_config["deduplication"] = config.deduplication
+    
+    if config.deduplication_window is not None:
+        changes["deduplication_window"] = (alert_config["deduplication_window"], config.deduplication_window)
+        alert_config["deduplication_window"] = config.deduplication_window
+    
+    if config.max_alerts is not None:
+        changes["max_alerts"] = (alert_config["max_alerts"], config.max_alerts)
+        alert_config["max_alerts"] = config.max_alerts
+    
+    if config.auto_acknowledge is not None:
+        changes["auto_acknowledge"] = (alert_config["auto_acknowledge"], config.auto_acknowledge)
+        alert_config["auto_acknowledge"] = config.auto_acknowledge
+    
+    if config.severity_thresholds is not None:
+        changes["severity_thresholds"] = (alert_config["severity_thresholds"], config.severity_thresholds)
+        alert_config["severity_thresholds"] = config.severity_thresholds
+    
+    # Log configuration change
+    if changes:
+        get_audit_logger().log_event(
+            event_type=EventType.AI_DECISION,  # Using AI_DECISION for config changes
+            severity=EventSeverity.INFO,
+            message="Alert configuration updated",
+            details={"changes": changes}
+        )
+        
+        # Broadcast update
+        await manager.broadcast({
+            "type": "config_updated",
+            "config": alert_config,
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
+        })
+    
+    return {
+        "status": "success",
+        "config": alert_config,
+        "changes_applied": len(changes)
+    }
+
+# ============================================================================
+# END PHASE 2 ALERT SYSTEM
+# ============================================================================
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")

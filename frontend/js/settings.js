@@ -110,7 +110,7 @@ class SettingsManager {
 
         try {
             // Fetch the test-events.html
-            const response = await fetch('../test-events.html');
+            const response = await fetch('test-events.html');
             if (!response.ok) {
                 throw new Error(`Failed to load test events: ${response.status}`);
             }
@@ -159,7 +159,7 @@ class SettingsManager {
                     <p><strong>Failed to load Developer Tools</strong></p>
                     <p style="font-size: 0.9rem; color: #9CA3AF; margin-top: 1rem;">${error.message}</p>
                     <p style="font-size: 0.85rem; color: #9CA3AF; margin-top: 1rem;">
-                        You can also access it directly at: <a href="../test-events.html" target="_blank" style="color: #00D9FF; text-decoration: underline;">test-events.html</a>
+                        You can also access it directly at: <a href="test-events.html" target="_blank" style="color: #00D9FF; text-decoration: underline;">test-events.html</a>
                     </p>
                 </div>
             `;
