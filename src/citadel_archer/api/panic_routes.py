@@ -23,15 +23,24 @@ from ..core.audit_log import AuditLogger
 router = APIRouter(prefix="/api/panic", tags=["panic"])
 audit = AuditLogger()
 
-# Initialize panic manager (would be dependency injected in production)
-panic_manager: Optional[PanicManager] = None
+# Initialize panic manager (lazy singleton)
+_panic_manager: Optional[PanicManager] = None
 
 
 def get_panic_manager() -> PanicManager:
-    """Dependency to get panic manager instance"""
-    if not panic_manager:
-        raise HTTPException(status_code=500, detail="Panic manager not initialized")
-    return panic_manager
+    """Dependency to get or create panic manager instance"""
+    global _panic_manager
+    if _panic_manager is None:
+        db = PanicDatabase()
+        config = {
+            "confirmation_timeout": 30,
+            "max_concurrent_sessions": 1,
+            "default_playbooks": [],
+            "recovery_dir": "/var/lib/citadel/panic/recovery",
+            "backup_dir": "/var/lib/citadel/panic/backups",
+        }
+        _panic_manager = PanicManager(db, config)
+    return _panic_manager
 
 
 # Request/Response Models
