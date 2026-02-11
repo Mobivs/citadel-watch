@@ -18,7 +18,7 @@ from ..panic import PanicManager, TriggerSource
 from ..panic.panic_database import PanicDatabase, PanicSession
 from ..panic.playbooks import PlaybookLibrary, PlaybookValidator, PlaybookScheduler
 from ..core.auth import get_current_user
-from ..core.audit_log import AuditLogger
+from ..core.audit_log import AuditLogger, EventType, EventSeverity
 
 router = APIRouter(prefix="/api/panic", tags=["panic"])
 audit = AuditLogger()
@@ -109,7 +109,7 @@ async def activate_panic(
         # Validate confirmation token
         if request.confirmation_token != expected_token:
             # Log failed attempt
-            await audit.log_event(
+            audit.log_event(
                 event_type="panic_activation_failed",
                 severity="warning",
                 details={
@@ -141,7 +141,7 @@ async def activate_panic(
         )
         
     except Exception as e:
-        await audit.log_event(
+        audit.log_event(
             event_type="panic_activation_error",
             severity="error",
             details={
@@ -201,7 +201,7 @@ async def rollback_panic(
         
         # Validate confirmation
         if request.confirmation_token != expected_token:
-            await audit.log_event(
+            audit.log_event(
                 event_type="panic_rollback_denied",
                 severity="warning",
                 details={
@@ -224,7 +224,7 @@ async def rollback_panic(
         )
         
         # Log rollback
-        await audit.log_event(
+        audit.log_event(
             event_type="panic_rollback",
             severity="info",
             details={
@@ -445,25 +445,34 @@ async def cancel_panic_session(
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    await audit.log_event(
-        event_type="panic_session_cancelled",
-        severity="warning",
-        details={
-            "session_id": session_id,
-            "user_id": current_user['id']
-        }
-    )
+    try:
+        audit.log_event(
+            event_type=EventType.USER_OVERRIDE,
+            severity=EventSeverity.ALERT,
+            message=f"Panic session cancelled: {session_id}",
+            details={
+                "session_id": session_id,
+                "user_id": current_user['id']
+            }
+        )
+    except Exception:
+        pass
     
     return {"status": "cancelled", "session_id": session_id}
+
+
+class PanicActivateV2Request(BaseModel):
+    """Request body for v2 panic activation"""
+    playbooks: List[str]
+    reason: str
+    confirmation_token: str
+    config: Optional[Dict] = None
 
 
 # Enhanced activation with Phase 3 features
 @router.post("/activate/v2", response_model=dict)
 async def activate_panic_v2(
-    playbooks: List[str],
-    reason: str,
-    confirmation_token: str,
-    config: Optional[Dict] = None,
+    request: PanicActivateV2Request,
     current_user: dict = Depends(get_current_user)
 ) -> dict:
     """
@@ -474,12 +483,12 @@ async def activate_panic_v2(
         f"panic_{current_user['id']}_{datetime.utcnow().date()}".encode()
     ).hexdigest()[:16]
     
-    if confirmation_token != expected_token:
+    if request.confirmation_token != expected_token:
         raise HTTPException(status_code=403, detail="Invalid confirmation token")
-    
+
     # Create execution plan
-    plan = PlaybookScheduler.create_execution_plan(playbooks)
-    
+    plan = PlaybookScheduler.create_execution_plan(request.playbooks)
+
     # Check for issues
     blocked_playbooks = [p for p in plan if not p['can_execute']]
     if blocked_playbooks:
@@ -487,19 +496,19 @@ async def activate_panic_v2(
             "status": "validation_failed",
             "blocked_playbooks": blocked_playbooks
         }
-    
+
     # Create panic session
     session_id = f"panic_{int(time.time() * 1000)}"
     session = PanicSession(
         session_id=session_id,
         status="active",
-        playbooks=playbooks,
+        playbooks=request.playbooks,
         started_at=datetime.utcnow(),
         trigger_source="manual",
         user_id=current_user['id'],
-        confirmation_token=confirmation_token,
-        reason=reason,
-        metadata=config or {}
+        confirmation_token=request.confirmation_token,
+        reason=request.reason,
+        metadata=request.config or {}
     )
     
     # Store in database
@@ -507,16 +516,20 @@ async def activate_panic_v2(
     db.create_session(session)
     
     # Log activation
-    await audit.log_event(
-        event_type="panic_activated_v2",
-        severity="critical",
-        details={
-            "session_id": session_id,
-            "user_id": current_user['id'],
-            "playbooks": playbooks,
-            "reason": reason
-        }
-    )
+    try:
+        audit.log_event(
+            event_type=EventType.AI_ALERT,
+            severity=EventSeverity.CRITICAL,
+            message=f"Panic Room activated: {request.reason}",
+            details={
+                "session_id": session_id,
+                "user_id": current_user['id'],
+                "playbooks": request.playbooks,
+                "reason": request.reason
+            }
+        )
+    except Exception:
+        pass  # Audit logging should never block panic operations
     
     # Calculate estimated duration
     total_duration = sum(p['estimated_duration'] for p in plan)
