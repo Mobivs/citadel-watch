@@ -28,6 +28,7 @@ from ..guardian import FileMonitor, ProcessMonitor
 from .vault_routes import router as vault_router
 from .dashboard_ext import router as dashboard_ext_router
 from .remote_shield_routes import router as remote_shield_router
+from .panic_routes import router as panic_router
 from .security import initialize_session_token, get_session_token
 
 # FastAPI app
@@ -50,6 +51,7 @@ app.add_middleware(
 app.include_router(vault_router)
 app.include_router(dashboard_ext_router)
 app.include_router(remote_shield_router)
+app.include_router(panic_router)
 
 # Serve frontend static files for desktop app
 FRONTEND_DIR = Path(__file__).parent.parent.parent.parent / "frontend"

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citadel - Panic Room</title>
+    <link href="/css/main.css" rel="stylesheet">
+    <link href="/css/panic-room.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-4">
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <div class="glassmorphism rounded-lg p-6 mb-6">
+            <h1 class="text-3xl font-bold text-red-400">🚨 Panic Room</h1>
+            <p class="text-gray-400 mt-2">Emergency Response System</p>
+        </div>
+
+        <!-- Main Panic Button Section -->
+        <div class="glassmorphism rounded-lg p-8 mb-6 text-center">
+            <button id="panicButton" class="panic-button bg-red-600 hover:bg-red-700 text-white font-bold py-6 px-12 rounded-full text-2xl transform hover:scale-105 transition-all">
+                🚨 ACTIVATE PANIC MODE
+            </button>
+            <p class="text-gray-400 mt-4">Click to initiate emergency security response</p>
+        </div>
+
+        <!-- Playbook Selection -->
+        <div id="playbookSection" class="glassmorphism rounded-lg p-6 mb-6 hidden">
+            <h2 class="text-xl font-semibold mb-4">Select Response Playbooks:</h2>
+            <div class="space-y-3">
+                <label class="flex items-center space-x-3">
+                    <input type="checkbox" value="IsolateNetwork" class="playbook-checkbox w-5 h-5 text-red-600">
+                    <span>🔒 Isolate Network - Block all external connections</span>
+                </label>
+                <label class="flex items-center space-x-3">
+                    <input type="checkbox" value="RotateCredentials" class="playbook-checkbox w-5 h-5 text-red-600">
+                    <span>🔑 Rotate Credentials - Change all passwords/keys</span>
+                </label>
+                <label class="flex items-center space-x-3">
+                    <input type="checkbox" value="SnapshotSystem" class="playbook-checkbox w-5 h-5 text-red-600">
+                    <span>📸 Snapshot System - Capture forensic state</span>
+                </label>
+                <label class="flex items-center space-x-3">
+                    <input type="checkbox" value="SecureBackup" class="playbook-checkbox w-5 h-5 text-red-600">
+                    <span>💾 Secure Backup - Encrypt critical data</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Confirmation Modal -->
+        <div id="confirmModal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-50">
+            <div class="glassmorphism rounded-lg p-8 max-w-md">
+                <h2 class="text-2xl font-bold text-red-400 mb-4">⚠️ Confirm Panic Mode</h2>
+                <p class="mb-4">Selected playbooks:</p>
+                <ul id="selectedPlaybooks" class="list-disc list-inside mb-6 text-gray-300"></ul>
+                <div class="flex space-x-4">
+                    <button id="confirmPanic" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
+                        Confirm Panic Mode
+                    </button>
+                    <button id="cancelPanic" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Session Panel -->
+        <div id="activeSession" class="glassmorphism rounded-lg p-6 mb-6 hidden">
+            <h2 class="text-xl font-semibold mb-4 text-yellow-400">🔄 Active Panic Response</h2>
+            <div class="mb-4">
+                <div class="bg-gray-800 rounded-full h-4 overflow-hidden">
+                    <div id="progressBar" class="bg-gradient-to-r from-yellow-500 to-red-500 h-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <p class="text-sm text-gray-400 mt-2">Progress: <span id="progressText">0%</span></p>
+            </div>
+            <div id="actionLog" class="bg-gray-800 rounded p-4 max-h-64 overflow-y-auto">
+                <p class="text-gray-400">Action log:</p>
+            </div>
+            <div class="mt-4 flex space-x-4">
+                <button id="cancelActive" class="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded">
+                    Cancel Panic Mode
+                </button>
+                <button id="rollbackButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded hidden">
+                    Rollback Changes
+                </button>
+            </div>
+        </div>
+
+        <!-- Whitelist Management -->
+        <div class="glassmorphism rounded-lg p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">📋 Whitelist Management</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block mb-2">IP Whitelist (one per line):</label>
+                    <textarea id="ipWhitelist" class="w-full bg-gray-800 rounded p-2 h-32" placeholder="127.0.0.1&#10;192.168.1.1"></textarea>
+                </div>
+                <div>
+                    <label class="block mb-2">Process Whitelist (one per line):</label>
+                    <textarea id="processWhitelist" class="w-full bg-gray-800 rounded p-2 h-32" placeholder="ssh&#10;nginx&#10;mysql"></textarea>
+                </div>
+            </div>
+            <button id="saveConfig" class="mt-4 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                Save Configuration
+            </button>
+        </div>
+
+        <!-- History -->
+        <div class="glassmorphism rounded-lg p-6">
+            <h2 class="text-xl font-semibold mb-4">📊 Panic Response History</h2>
+            <div id="historyList" class="space-y-2">
+                <p class="text-gray-400">No panic responses recorded</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/panic-room.js"></script>
+</body>
+</html>

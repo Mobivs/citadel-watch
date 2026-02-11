@@ -1,0 +1,50 @@
+/* Panic Room Styles - Phase 3 */
+
+.panic-button {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .7; }
+}
+
+.glassmorphism {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Additional panic room specific styles */
+.panic-active {
+    background-color: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.panic-status-bar {
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.05) 100%);
+}
+
+.playbook-item {
+    transition: all 0.3s ease;
+}
+
+.playbook-item:hover {
+    transform: translateX(5px);
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.action-log-item {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
