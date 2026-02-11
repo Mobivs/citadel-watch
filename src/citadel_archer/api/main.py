@@ -41,7 +41,7 @@ app = FastAPI(
 # CORS configuration (local only for security)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8000", "http://127.0.0.1:8000", "http://187.77.15.247:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -327,6 +327,26 @@ async def serve_remote_shield_redirect():
         return FileResponse(path)
     else:
         raise HTTPException(status_code=404, detail="Remote Shield page not found")
+
+
+@app.get("/panic-room.html")
+async def serve_panic_room():
+    """Serve Panic Room page."""
+    path = FRONTEND_DIR / "panic-room.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Panic Room page not found")
+
+
+@app.get("/panic-room")
+async def serve_panic_room_redirect():
+    """Redirect /panic-room to /panic-room.html"""
+    path = FRONTEND_DIR / "panic-room.html"
+    if path.exists():
+        return FileResponse(path)
+    else:
+        raise HTTPException(status_code=404, detail="Panic Room page not found")
 
 
 @app.get("/favicon.ico")
