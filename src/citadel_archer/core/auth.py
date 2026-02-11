@@ -27,6 +27,7 @@ async def get_current_user(
         pass
 
     return {
+        "id": "root",
         "user_id": "root",
         "username": "admin",
         "role": "administrator",
