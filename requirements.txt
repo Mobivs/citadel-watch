@@ -60,10 +60,6 @@ isort==5.13.2            # Import sorting
 # Windows-specific
 pywin32==306; sys_platform == 'win32'  # Windows API access
 wmi==1.5.1; sys_platform == 'win32'    # Windows Management Instrumentation
-# Phase 3 Panic Room - Python Dependencies
-flask==3.0.0
-flask-cors==4.0.0
-dataclasses-json==0.6.3
-python-dotenv==1.0.0
-cryptography==41.0.0
-requests==2.31.0
+# Phase 3 Panic Room - Additional Dependencies
+dataclasses-json==0.6.3  # Serializable dataclasses
+requests==2.31.0         # HTTP client for credential rotation APIs

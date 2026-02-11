@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 import base64
 
@@ -28,7 +28,7 @@ class SecretsStore:
     def _derive_cipher(self, password: str) -> Fernet:
         """Derive encryption cipher from master password using PBKDF2."""
         salt = b"citadel_archer_salt_v1"  # Static salt for reproducibility
-        kdf = PBKDF2(
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,

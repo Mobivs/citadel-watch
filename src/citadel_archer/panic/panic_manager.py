@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from enum import Enum
 
 from ..core.audit_log import AuditLogger
-from ..secrets import SecretsManager
+from ..secrets import SecretsStore
 from .playbook_engine import PlaybookEngine
 from .models import PanicSession, PanicLog, RecoveryState
 from .exceptions import (
@@ -53,7 +53,7 @@ class PanicManager:
         self.db = db_connection
         self.config = config
         self.playbook_engine = PlaybookEngine(db_connection, config)
-        self.secrets_manager = SecretsManager()
+        self.secrets_manager = SecretsStore()
         self.active_sessions: Dict[UUID, PanicSession] = {}
         self.websocket_handlers: Dict[UUID, List] = {}
         

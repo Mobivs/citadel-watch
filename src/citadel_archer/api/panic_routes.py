@@ -72,7 +72,7 @@ class RollbackRequest(BaseModel):
 
 class WhitelistEntry(BaseModel):
     """Whitelist entry for panic mode"""
-    resource_type: str = Field(..., regex="^(ip|domain|port|process|file)$")
+    resource_type: str = Field(..., pattern="^(ip|domain|port|process|file)$")
     resource_value: str
     description: Optional[str] = None
     is_permanent: bool = False

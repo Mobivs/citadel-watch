@@ -3,7 +3,7 @@ Citadel Commander Panic Room Module
 Emergency response system for active threats
 """
 
-from .panic_manager import PanicManager
+from .panic_manager import PanicManager, TriggerSource
 from .playbook_engine import PlaybookEngine, Playbook, Action
 from .actions import (
     NetworkIsolation,
