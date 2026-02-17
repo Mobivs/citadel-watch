@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Citadel Archer — Architecture v0.2.8</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      background: #0a0e1a;
+      color: #c0c8e0;
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 20px 40px;
+    }
+    h1 { color: #00D9FF; font-size: 1.6rem; margin-bottom: 4px; }
+    h2 { color: #00D9FF; font-size: 1.2rem; margin-top: 40px; margin-bottom: 8px; }
+    p.sub { color: #6b7394; font-size: 0.85rem; margin-top: 0; }
+    .mermaid {
+      background: #10142a;
+      border: 1px solid #1a2040;
+      border-radius: 10px;
+      padding: 24px;
+      margin: 16px 0 32px;
+    }
+    .legend {
+      display: flex; gap: 24px; flex-wrap: wrap;
+      font-size: 0.8rem; margin: 8px 0 20px;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  </style>
+</head>
+<body>
+
+<h1>Citadel Archer — System Architecture v0.2.8</h1>
+<p class="sub">Always-On Protection, Defense Mesh, Multi-AI Architecture & Token Minimization</p>
+
+<!-- ============================================================ -->
+<h2>1. Full System Overview</h2>
+<div class="legend">
+  <span><span class="dot" style="background:#00D9FF"></span> SCS (SecureChat System)</span>
+  <span><span class="dot" style="background:#ff9900"></span> ACS (Automation Comm System)</span>
+  <span><span class="dot" style="background:#00cc66"></span> Always-On Service</span>
+  <span><span class="dot" style="background:#ff3333"></span> Defense Mesh</span>
+  <span><span class="dot" style="background:#e6b800"></span> Threshold Engine</span>
+  <span><span class="dot" style="background:#a78bfa"></span> AI Brain</span>
+</div>
+
+<div class="mermaid">
+graph TB
+  subgraph DESKTOP["<b>DESKTOP MACHINE</b>"]
+    direction TB
+
+    subgraph SERVICE["citadel-service (Always-On 24/7)"]
+      direction LR
+      GS[Guardian Sensors<br/>FS / Process / Network / Browser]
+      ES[(Event Store<br/>SQLite)]
+      TR[Tripwire Rules<br/>Auto-block, Kill]
+      HB[Heartbeat Emitter<br/>Defense Mesh]
+      GS -->|events| ES
+      GS -->|trigger| TR
+    end
+
+    subgraph APP["citadel-archer (User-Facing App)"]
+      direction TB
+
+      subgraph UI["Dashboard + SecureChat"]
+        direction LR
+        DASH[Dashboard Tabs<br/>Charts, Timeline, Assets<br/>Risk, Remote Shield]
+        CHAT[SecureChat Sidebar<br/>Always Visible]
+      end
+
+      subgraph BRAIN["AI Brain (Multi-Agent)"]
+        direction LR
+        BRIDGE[AI Bridge<br/>In-Process<br/>Claude API]
+        EXT[External AI Agents<br/>Claude Code / Forge<br/>OpenClaw]
+      end
+
+      subgraph MODULES["Core Modules"]
+        direction LR
+        WT[Watchtower<br/>Event Aggregator]
+        INTEL[Intel<br/>Threat Feeds]
+        VAULT[Vault<br/>AES-256 Secrets]
+        PR[Panic Room<br/>Emergency Response]
+      end
+    end
+
+    ES -.->|catch-up sync| DASH
+    ES -.->|IPC push| WT
+  end
+
+  subgraph VPS1["VPS 1 — Shield Agent"]
+    direction TB
+    SA1[shield.py daemon<br/>auth.log, process, cron, files]
+    DB1[(events.db)]
+    SA1 --> DB1
+  end
+
+  subgraph VPS2["VPS 2 — Shield Agent"]
+    direction TB
+    SA2[shield.py daemon<br/>auth.log, process, cron, files]
+    DB2[(events.db)]
+    SA2 --> DB2
+  end
+
+  %% ACS flows (orange)
+  SA1 -->|"ACS: sensor data (SSH poll 60s)"| WT
+  SA2 -->|"ACS: sensor data (SSH poll 60s)"| WT
+  WT -->|ACS: metrics & health| DASH
+
+  %% Threshold engine (ACS→SCS bridge)
+  WT -->|"ACS patterns"| THRESH[Threshold Engine<br/>Correlate + Dedup<br/>Trigger 3c]
+  THRESH -.->|"breach: escalate to SCS"| CHAT
+
+  %% SCS flows (blue)
+  SA1 -.->|"SCS: critical escalation"| CHAT
+  SA2 -.->|"SCS: critical escalation"| CHAT
+  CHAT <-->|"SCS: user + AI msgs"| BRIDGE
+  EXT -->|"SCS: POST /api/chat/send"| CHAT
+
+  %% AI tool access
+  BRIDGE -->|tools| WT
+  BRIDGE -->|tools| VAULT
+  BRIDGE -->|tools| INTEL
+
+  %% Panic Room connections
+  PR -->|credentials| VAULT
+  PR -->|"SCS: triage guidance"| CHAT
+  PR -->|"remote actions"| SA1
+  PR -->|"remote actions"| SA2
+
+  %% Defense Mesh heartbeats (red)
+  HB <-.->|heartbeat| SA1
+  HB <-.->|heartbeat| SA2
+  SA1 <-.->|peer heartbeat| SA2
+
+  %% Styling
+  classDef service fill:#0d3320,stroke:#00cc66,color:#c0e8d0
+  classDef app fill:#0a1530,stroke:#1a3060,color:#c0c8e0
+  classDef scs fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef acs fill:#2a1a00,stroke:#ff9900,color:#ffe0a0
+  classDef ai fill:#1a1040,stroke:#a78bfa,color:#d4c0ff
+  classDef mesh fill:#2a0a0a,stroke:#ff3333,color:#ffb0b0
+  classDef vps fill:#1a1030,stroke:#6366f1,color:#c0c0ff
+
+  class SERVICE service
+  class GS,ES,TR,HB service
+  class DASH,CHAT scs
+  class BRIDGE,EXT ai
+  classDef thresh fill:#1a1a10,stroke:#e6b800,color:#fff0a0
+  class WT,INTEL,VAULT,PR app
+  class THRESH thresh
+  class SA1,DB1,SA2,DB2 vps
+</div>
+
+<!-- ============================================================ -->
+<h2>2. Two-Tier Communication Model (ACS / SCS)</h2>
+
+<div class="mermaid">
+graph LR
+  subgraph ACS["Automation Communication System (ACS)"]
+    direction TB
+    S1[Sensor Data<br/>auth.log, processes, files]
+    S2[Heartbeats<br/>alive/dead status]
+    S3[Metrics<br/>CPU, RAM, disk, network]
+    S4[Routine Alerts<br/>known-bad IP blocked]
+    S5[Agent Status<br/>health, scan times]
+  end
+
+  subgraph SCS["SecureChat System (SCS)"]
+    direction TB
+    C1[User Commands<br/>'add vps', 'deploy agent']
+    C2[AI Analysis<br/>threat assessments]
+    C3[Escalations<br/>critical agent events]
+    C4[Strategic Decisions<br/>mode changes, triage]
+    C5[Cross-AI Coordination<br/>Claude Code ↔ Forge]
+  end
+
+  ACS -->|"No AI, No Tokens<br/>System API Routes"| DASHBOARD[Dashboard Tabs]
+  SCS -->|"AI-Assisted, Uses Tokens<br/>SecureChat Sidebar"| SIDEBAR[SecureChat Sidebar]
+
+  classDef acs fill:#2a1a00,stroke:#ff9900,color:#ffe0a0
+  classDef scs fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef target fill:#10142a,stroke:#3a4060,color:#c0c8e0
+
+  class ACS,S1,S2,S3,S4,S5 acs
+  class SCS,C1,C2,C3,C4,C5 scs
+  class DASHBOARD,SIDEBAR target
+</div>
+
+<!-- ============================================================ -->
+<h2>3. Multi-AI Agent Participation in SecureChat</h2>
+
+<div class="mermaid">
+graph TB
+  USER["User (Human)<br/>Dashboard Sidebar / WebSocket"]
+  CC["Claude Code<br/>Per-device AI Agent<br/>REST API or In-Process"]
+  FORGE["Forge<br/>User's AI Assistant<br/>REST API / WebSocket"]
+  OC["OpenClaw<br/>External AI Agent<br/>REST API + Auth Token"]
+  CITADEL["Citadel<br/>System Process<br/>In-Process ChatManager"]
+  AGENT["agent:id<br/>Shield Agents<br/>Escalations via Poller"]
+  TG["Telegram<br/>Out-of-Band Notifications<br/>Forge reaches user anytime"]
+
+  subgraph SCS_HUB["SecureChat System (SCS)"]
+    direction TB
+    CM[ChatManager<br/>Message Routing]
+    STORE[(securechat.db<br/>Message Persistence)]
+    WS[WebSocket Push<br/>Real-Time Delivery]
+    API[REST API<br/>POST /api/chat/send<br/>GET /api/chat/messages]
+    CM --> STORE
+    CM --> WS
+    CM --> API
+  end
+
+  USER <-->|WebSocket| WS
+  CC <-->|REST API| API
+  FORGE <-->|REST / WS| API
+  OC <-->|REST + token| API
+  CITADEL <-->|in-process| CM
+  AGENT -->|escalation| CM
+  FORGE -->|"notify user anytime"| TG
+  TG -->|"user responds"| FORGE
+
+  classDef human fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef ai fill:#1a1040,stroke:#a78bfa,color:#d4c0ff
+  classDef system fill:#0d3320,stroke:#00cc66,color:#c0e8d0
+  classDef hub fill:#10142a,stroke:#3a4060,color:#c0c8e0
+
+  classDef notify fill:#1a2a1a,stroke:#2da44e,color:#b0e8c0
+  class USER human
+  class CC,FORGE,OC ai
+  class CITADEL,AGENT system
+  class CM,STORE,WS,API hub
+  class TG notify
+</div>
+
+<!-- ============================================================ -->
+<h2>4. AI Trigger Model (8 Subtypes)</h2>
+
+<div class="mermaid">
+graph TB
+  subgraph CAT1["Category 1: SecureChat Message"]
+    T1A["1a: User TEXT -- IMPLEMENTED"]
+    T1B["1b: External AI Agent -- PLANNED"]
+  end
+
+  subgraph CAT2["Category 2: Critical Threats"]
+    T2A["2a: Remote Agent Event -- IMPLEMENTED"]
+    T2B["2b: Local Guardian Event -- GAP"]
+    T2C["2c: Panic Room Activation -- PLANNED"]
+  end
+
+  subgraph CAT3["Category 3: App Processing"]
+    T3A["3a: Scheduled Analysis -- PLANNED"]
+    T3B["3b: Startup Catch-Up -- PLANNED"]
+    T3C["3c: Threshold Breach -- PLANNED"]
+  end
+
+  T1A --> AI["AI Bridge -- Claude API"]
+  T1B --> AI
+  T2A --> AI
+  T2B --> AI
+  T2C --> AI
+  T3A --> AI
+  T3B --> AI
+  T3C --> AI
+
+  AI --> RESP["Response via SecureChat"]
+  AI --> TOOLS["Tool Use<br/>block_ip, deploy, rotate"]
+  TOOLS --> EVENTS["New Events Generated"]
+  EVENTS -.->|"feedback loop"| CAT2
+  TOOLS --> AUDIT["Append-Only Audit Log<br/>AI actions immutable"]
+
+  classDef done fill:#0d3320,stroke:#00cc66,color:#c0e8d0
+  classDef gap fill:#3a0a0a,stroke:#ff3333,color:#ffb0b0
+  classDef planned fill:#1a1a30,stroke:#6366f1,color:#c0c0ff
+  classDef brain fill:#1a1040,stroke:#a78bfa,color:#d4c0ff
+
+  classDef action fill:#1a1a10,stroke:#e6b800,color:#fff0a0
+  class T1A,T2A done
+  class T2B gap
+  class T1B,T2C,T3A,T3B,T3C planned
+  class AI,RESP brain
+  class TOOLS,EVENTS action
+  class AUDIT done
+</div>
+
+<!-- ============================================================ -->
+<h2>5. Always-On Protection (Service Split)</h2>
+
+<div class="mermaid">
+graph TB
+  BOOT["System Boot"] --> SVC
+
+  subgraph SVC["citadel-service (Runs 24/7)"]
+    direction LR
+    GSVC[Guardian Sensors<br/>FS, Process, Network]
+    ESVC[(Event Store<br/>SQLite)]
+    TSVC[Tripwire Rules]
+    HSVC[Heartbeat Emitter]
+    GSVC --> ESVC
+    GSVC --> TSVC
+  end
+
+  LOGIN["User Login"] -.-> APPSTART["User Launches App"]
+  APPSTART --> ARCHER
+
+  subgraph ARCHER["citadel-archer (On Demand)"]
+    direction LR
+    DASH2[Dashboard UI]
+    CHAT2[SecureChat + AI Bridge]
+    VAULT2[Vault]
+  end
+
+  ESVC -->|"Shared SQLite<br/>(catch-up sync)"| DASH2
+  ESVC -.->|"IPC Named Pipe<br/>(real-time push)"| DASH2
+  HSVC -->|"Always-on heartbeats"| VPS["VPS Agents"]
+
+  CHAT2 -->|"AI Trigger 3b<br/>'While you were away...'"| ESVC
+
+  classDef service fill:#0d3320,stroke:#00cc66,color:#c0e8d0
+  classDef app fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef trigger fill:#1a1a10,stroke:#e6b800,color:#fff0a0
+
+  class SVC,GSVC,ESVC,TSVC,HSVC service
+  class ARCHER,DASH2,CHAT2,VAULT2 app
+  class BOOT,LOGIN,APPSTART trigger
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Defense Mesh — Distributed Resilience</h2>
+
+<div class="mermaid">
+graph TB
+  subgraph DESK["Desktop (Primary Coordinator)"]
+    DS[citadel-service 24/7<br/>Guardian Sensors, Event Store<br/>Heartbeat Emitter, Tripwires]
+    DA[citadel-archer on-demand<br/>AI Bridge, Vault, SecureChat<br/>Full Asset Registry]
+  end
+
+  subgraph V1["VPS 1 (Shield Agent)"]
+    A1[shield.py<br/>Local tripwires + event store]
+  end
+
+  subgraph V2["VPS 2 (Secondary Brain)"]
+    A2[shield.py + Lightweight AI<br/>Fallback coordinator]
+  end
+
+  DS <-->|"heartbeat (30s, HMAC-signed)"| A1
+  DS <-->|"heartbeat (30s, HMAC-signed)"| A2
+  A1 <-->|"peer heartbeat (HMAC)"| A2
+
+  DS -.-x|"OFFLINE"| FAIL["Desktop Goes Dark"]
+
+  FAIL --> ESC1["Phase 1 — Alert<br/>3 missed beats (~90s)<br/>Agents log warning"]
+  ESC1 --> ESC2["Phase 2 — Heightened<br/>5 missed beats (~150s)<br/>Tighten tripwires"]
+  ESC2 --> ESC3["Phase 3 — Autonomous<br/>10 missed beats (~5min)<br/>Full local operation"]
+  ESC2 --> PEER["Peer Alert<br/>A1 tells A2: 'Desktop is down'"]
+
+  A2 -->|"Secondary brain<br/>takes over coordination"| COORD["Event Collection +<br/>Strategic AI Analysis"]
+
+  DS2["Desktop Comes Back"] -->|"Recovery protocol:<br/>1. Sync missed events<br/>2. Merge decisions<br/>3. Desktop resumes control"| COORD
+
+  classDef desk fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef vps fill:#1a1030,stroke:#6366f1,color:#c0c0ff
+  classDef alert fill:#2a1a00,stroke:#ff9900,color:#ffe0a0
+  classDef danger fill:#3a0a0a,stroke:#ff3333,color:#ffb0b0
+  classDef recovery fill:#0d3320,stroke:#00cc66,color:#c0e8d0
+
+  class DS desk
+  class DA desk
+  class A1,A2 vps
+  class ESC1 alert
+  class FAIL,ESC2,ESC3 danger
+  class PEER alert
+  class COORD,DS2 recovery
+</div>
+
+<!-- ============================================================ -->
+<h2>7. Compartmentalized Secrets</h2>
+
+<div class="mermaid">
+graph LR
+  subgraph DESK_SEC["Desktop"]
+    D_VAULT["Vault (all secrets)"]
+    D_SSH["All SSH Keys"]
+    D_REG["Full Asset Registry"]
+  end
+
+  subgraph VPS_SEC["VPS Agent"]
+    V_CONF["Own Config Only"]
+    V_HB["Peer Heartbeat HMAC Keys"]
+    V_ESC["Escalation Endpoint"]
+    V_RATE["Rate-limited SCS API Token"]
+  end
+
+  subgraph BRAIN_SEC["Secondary Brain (VPS)"]
+    B_REG["Asset Registry (read-only)"]
+    B_KEY["Own SSH Key Only"]
+    B_API["Claude API Key"]
+  end
+
+  DESK_SEC ~~~ VPS_SEC ~~~ BRAIN_SEC
+
+  classDef desk fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef vps fill:#1a1030,stroke:#6366f1,color:#c0c0ff
+  classDef brain fill:#1a1040,stroke:#a78bfa,color:#d4c0ff
+
+  class DESK_SEC,D_VAULT,D_SSH,D_REG desk
+  class VPS_SEC,V_CONF,V_HB,V_ESC,V_RATE vps
+  class BRAIN_SEC,B_REG,B_KEY,B_API brain
+</div>
+
+<!-- ============================================================ -->
+<h2>8. Escalation Hierarchy — Token Minimization</h2>
+<p class="sub">Resolve at the lowest level possible. AI is the last resort, not the first responder.</p>
+
+<div class="mermaid">
+graph TB
+  EVENT["Security Event Detected"] --> L1
+
+  subgraph L1["Level 1: Tripwire Rules (No Tokens)"]
+    direction LR
+    TW1["Pattern match?<br/>Known-bad IP, malware sig"]
+    TW2["Auto-action:<br/>block, kill, quarantine"]
+    TW1 -->|yes| TW2
+  end
+
+  L1 -->|"resolved: log to ACS"| ACS_LOG["ACS Event Store<br/>Dashboard displays it"]
+
+  TW1 -->|"no match"| L2
+
+  subgraph L2["Level 2: Threshold Engine (No Tokens)"]
+    direction LR
+    TE1["Correlate patterns<br/>across sensors + time"]
+    TE2["Dedup: same attack<br/>from multiple agents?"]
+    TE3["Breach threshold?<br/>50 SSH fails/hr, cron tamper"]
+    TE1 --> TE2 --> TE3
+  end
+
+  TE3 -->|"below threshold"| ACS_LOG
+  TE3 -->|"breach: escalate"| L3
+
+  subgraph L3["Level 3: AI Analysis (Uses Tokens)"]
+    direction LR
+    AI1["AI Bridge invoked<br/>Context built from state"]
+    AI2["AI decides + acts<br/>within security level"]
+    AI3["Response via SCS<br/>SecureChat message"]
+    AI1 --> AI2 --> AI3
+  end
+
+  AI3 --> L4
+
+  subgraph L4["Level 4: Human Decision (Rare)"]
+    direction LR
+    H1["Ambiguous + high impact<br/>AI asks user via SCS"]
+    H2["User responds in:<br/>SecureChat, Claude Code,<br/>or Forge via Telegram"]
+    H1 --> H2
+  end
+
+  classDef auto fill:#0d3320,stroke:#00cc66,color:#c0e8d0
+  classDef thresh fill:#1a1a10,stroke:#e6b800,color:#fff0a0
+  classDef ai fill:#1a1040,stroke:#a78bfa,color:#d4c0ff
+  classDef human fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef store fill:#10142a,stroke:#3a4060,color:#c0c8e0
+
+  class L1,TW1,TW2 auto
+  class L2,TE1,TE2,TE3 thresh
+  class L3,AI1,AI2,AI3 ai
+  class L4,H1,H2 human
+  class ACS_LOG,EVENT store
+</div>
+
+<!-- ============================================================ -->
+<h2>9. User Interaction Paths</h2>
+<p class="sub">Three ways the user can interact remotely with the system.</p>
+
+<div class="mermaid">
+graph LR
+  USER["User (Human)"]
+
+  subgraph LOCAL["At Computer"]
+    SC[SecureChat Sidebar<br/>Dashboard WebSocket]
+    CCL[Claude Code CLI<br/>Direct terminal access]
+  end
+
+  subgraph REMOTE["Away from Computer"]
+    FORGE_R[Forge via Telegram<br/>Forge can reach user anytime<br/>Bidirectional notifications]
+    CC_R[Claude Code Remote<br/>SSH into machine + CLI]
+    SC_R[SecureChat via Browser<br/>Future: web client]
+  end
+
+  USER <-->|"at desk"| SC
+  USER <-->|"at desk"| CCL
+  USER <-->|"mobile/away"| FORGE_R
+  USER <-->|"SSH session"| CC_R
+  USER <-.->|"future"| SC_R
+
+  FORGE_R -->|"commands"| SCS_HUB2[SecureChat System]
+  CC_R -->|"commands"| SCS_HUB2
+  SC -->|"messages"| SCS_HUB2
+  CCL -->|"API calls"| SCS_HUB2
+
+  classDef human fill:#0a2040,stroke:#00D9FF,color:#b0e0ff
+  classDef local fill:#0d3320,stroke:#00cc66,color:#c0e8d0
+  classDef remote fill:#1a1040,stroke:#a78bfa,color:#d4c0ff
+  classDef hub fill:#10142a,stroke:#3a4060,color:#c0c8e0
+
+  class USER human
+  class SC,CCL local
+  class FORGE_R,CC_R,SC_R remote
+  class SCS_HUB2 hub
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#10142a',
+      primaryColor: '#1a2050',
+      primaryTextColor: '#c0c8e0',
+      primaryBorderColor: '#3a4060',
+      lineColor: '#4a5080',
+      secondaryColor: '#0a1530',
+      tertiaryColor: '#10142a',
+      fontFamily: 'Segoe UI, sans-serif',
+      fontSize: '13px',
+    },
+    flowchart: {
+      curve: 'basis',
+      padding: 16,
+      htmlLabels: true,
+    },
+  });
+</script>
+
+</body>
+</html>

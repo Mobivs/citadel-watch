@@ -62,6 +62,17 @@ class EventType(str, Enum):
     USER_LOGOUT = "user.logout"
     USER_OVERRIDE = "user.override"
 
+    # Backup Events
+    BACKUP_CREATED = "backup.created"
+    BACKUP_RESTORED = "backup.restored"
+    BACKUP_DELETED = "backup.deleted"
+
+    # Mesh Events (v0.3.35)
+    MESH_PEER_ONLINE = "mesh.peer.online"
+    MESH_PEER_OFFLINE = "mesh.peer.offline"
+    MESH_ESCALATION = "mesh.escalation"
+    MESH_RECOVERY = "mesh.recovery"
+
 
 class EventSeverity(str, Enum):
     """
@@ -89,6 +100,10 @@ class EventSeverity(str, Enum):
         return emoji_map[self]
 
 
+_structlog_configured = False
+_file_handler_dates: set = set()
+
+
 class AuditLogger:
     """
     Immutable, append-only audit logger for security events.
@@ -105,6 +120,7 @@ class AuditLogger:
     - User and system context capture
     - Encryption support (TODO: Phase 1)
     - Forensic query support
+    - Event callbacks for real-time forwarding (e.g. to EventAggregator)
     """
 
     def __init__(self, log_dir: Optional[Path] = None, encrypt: bool = False):
@@ -118,31 +134,54 @@ class AuditLogger:
         self.log_dir = log_dir or Path("./audit_logs")
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.encrypt = encrypt
+        self._event_callbacks = []
 
-        # Setup structured logging
-        structlog.configure(
-            processors=[
-                structlog.stdlib.add_log_level,
-                structlog.stdlib.add_logger_name,
-                structlog.processors.TimeStamper(fmt="iso"),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.format_exc_info,
-                structlog.processors.JSONRenderer()
-            ],
-            wrapper_class=structlog.stdlib.BoundLogger,
-            context_class=dict,
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            cache_logger_on_first_use=True,
-        )
+        # Configure structlog only once per process
+        global _structlog_configured
+        if not _structlog_configured:
+            structlog.configure(
+                processors=[
+                    structlog.stdlib.add_log_level,
+                    structlog.stdlib.add_logger_name,
+                    structlog.processors.TimeStamper(fmt="iso"),
+                    structlog.processors.StackInfoRenderer(),
+                    structlog.processors.format_exc_info,
+                    structlog.processors.JSONRenderer()
+                ],
+                wrapper_class=structlog.stdlib.BoundLogger,
+                context_class=dict,
+                logger_factory=structlog.stdlib.LoggerFactory(),
+                cache_logger_on_first_use=True,
+            )
+            _structlog_configured = True
 
-        # Create daily log file
+        # Create daily log file (only add handler once per date)
         self._setup_file_handler()
 
         self.logger = structlog.get_logger("citadel_archer.audit")
 
+    def on_event(self, callback) -> None:
+        """Register a callback invoked after every logged event.
+
+        The callback receives a dict with event_type, severity, message,
+        timestamp, and details keys.
+        """
+        self._event_callbacks.append(callback)
+
     def _setup_file_handler(self):
-        """Setup rotating file handler for daily logs."""
+        """Setup rotating file handler for daily logs.
+
+        Only adds one handler per date per process to prevent
+        duplicate log entries when multiple AuditLogger instances
+        are created.
+        """
+        global _file_handler_dates
         today = datetime.now().strftime("%Y-%m-%d")
+        handler_key = f"{self.log_dir}:{today}"
+
+        if handler_key in _file_handler_dates:
+            return  # Already configured for this date + dir
+
         log_file = self.log_dir / f"audit_{today}.log"
 
         # Configure Python's logging to write to file
@@ -154,6 +193,8 @@ class AuditLogger:
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
         root_logger.setLevel(logging.INFO)
+
+        _file_handler_dates.add(handler_key)
 
     def log_event(
         self,
@@ -226,6 +267,13 @@ class AuditLogger:
             "security_event",
             **event_data
         )
+
+        # Notify registered callbacks (e.g. EventAggregator)
+        for cb in self._event_callbacks:
+            try:
+                cb(event_data)
+            except Exception:
+                pass  # best-effort — never break logging
 
         return event_id
 
@@ -356,6 +404,9 @@ class AuditLogger:
         """
         Query audit logs (forensic analysis).
 
+        Reads daily JSON log files, filters by criteria, and returns
+        matching events sorted newest-first.
+
         Args:
             event_types: Filter by event types
             severity: Filter by severity level
@@ -364,13 +415,93 @@ class AuditLogger:
             limit: Maximum number of events to return
 
         Returns:
-            list: Matching events
-
-        TODO: Phase 1 - Implement efficient log querying
+            list: Matching events (newest first)
         """
-        # Placeholder for Phase 1
-        # Will implement full querying in Phase 1 completion
-        return []
+        results = []
+        # Over-read slightly so that after time-based filtering we still
+        # have enough entries to satisfy the requested limit.
+        read_cap = limit + 50
+
+        # Determine which log files to scan
+        log_files = sorted(self.log_dir.glob("audit_*.log"), reverse=True)
+
+        # Convert event_types to string values for comparison
+        type_values = None
+        if event_types:
+            type_values = set()
+            for et in event_types:
+                type_values.add(et.value if isinstance(et, EventType) else str(et))
+
+        severity_value = None
+        if severity:
+            severity_value = severity.value if isinstance(severity, EventSeverity) else str(severity)
+
+        for log_file in log_files:
+            # Quick date-range filter based on filename (audit_YYYY-MM-DD.log)
+            try:
+                file_date_str = log_file.stem.replace("audit_", "")
+                file_date = datetime.strptime(file_date_str, "%Y-%m-%d")
+                if start_time and file_date.date() < start_time.date():
+                    continue
+                if end_time and file_date.date() > end_time.date():
+                    continue
+            except ValueError:
+                pass  # Non-standard filename, scan anyway
+
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        # Only include security_event entries
+                        if entry.get("event") != "security_event":
+                            continue
+
+                        # Filter by event_type
+                        if type_values and entry.get("event_type") not in type_values:
+                            continue
+
+                        # Filter by severity
+                        if severity_value and entry.get("severity") != severity_value:
+                            continue
+
+                        # Filter by time range (strip tzinfo for comparison
+                        # since stored timestamps are naive UTC)
+                        ts = entry.get("timestamp")
+                        if ts:
+                            try:
+                                event_time = datetime.fromisoformat(ts)
+                                # Normalize to naive UTC for comparison
+                                if event_time.tzinfo is not None:
+                                    event_time = event_time.replace(tzinfo=None)
+                                st = start_time.replace(tzinfo=None) if start_time and start_time.tzinfo else start_time
+                                et = end_time.replace(tzinfo=None) if end_time and end_time.tzinfo else end_time
+                                if st and event_time < st:
+                                    continue
+                                if et and event_time > et:
+                                    continue
+                            except (ValueError, TypeError):
+                                pass
+
+                        results.append(entry)
+
+                        if len(results) >= read_cap:
+                            break
+            except OSError:
+                continue
+
+            if len(results) >= read_cap:
+                break
+
+        # Sort by timestamp descending and apply limit
+        results.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+        return results[:limit]
 
 
 # Global logger instance

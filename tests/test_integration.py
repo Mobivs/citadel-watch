@@ -75,7 +75,10 @@ def tmp_db():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     yield path
-    os.unlink(path)
+    try:
+        os.unlink(path)
+    except PermissionError:
+        pass  # SQLite may still hold file lock on Windows
 
 
 @pytest.fixture
@@ -121,7 +124,7 @@ def guardian_updater():
 
 @pytest.fixture
 def asset_inventory():
-    inv = AssetInventory()
+    inv = AssetInventory(db_path=None)
     inv.register(Asset(
         asset_id="srv-web-01", name="Web Server", platform=AssetPlatform.LINUX,
         status=AssetStatus.ONLINE, hostname="web01.internal", ip_address="10.0.1.10",

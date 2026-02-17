@@ -28,35 +28,38 @@ class SystemSnapshot(BaseAction):
         """Execute system snapshot based on action parameters"""
         action_name = action.name
         params = action.params
-        
+        asset_id = params.get('target_asset', 'local')
+
         try:
             if action_name == 'dump_processes':
-                return await self._dump_process_state(session.id)
+                return await self._dump_process_state(session.id, asset_id)
             elif action_name == 'capture_network':
-                return await self._capture_network_state(session.id)
+                return await self._capture_network_state(session.id, asset_id)
             elif action_name == 'hash_files':
-                return await self._hash_critical_files(session.id)
+                return await self._hash_critical_files(session.id, asset_id)
             elif action_name == 'collect_logs':
-                return await self._collect_system_logs(session.id)
+                return await self._collect_system_logs(session.id, asset_id)
             elif action_name == 'full_snapshot':
-                return await self._capture_full_snapshot(session.id)
+                return await self._capture_full_snapshot(session.id, asset_id)
             elif action_name == 'system_info':
-                return await self._capture_system_info(session.id)
+                return await self._capture_system_info(session.id, asset_id)
             elif action_name == 'security_audit':
-                return await self._security_audit_snapshot(session.id)
+                return await self._security_audit_snapshot(session.id, asset_id)
             else:
                 return {
                     'action': action_name,
                     'type': 'forensics',
+                    'asset': asset_id,
                     'status': 'failed',
                     'error': f'Unknown forensics action: {action_name}'
                 }
-                
+
         except Exception as e:
-            logger.error(f"System snapshot action {action_name} failed: {e}")
+            logger.error(f"System snapshot action {action_name} on {asset_id} failed: {e}")
             return {
                 'action': action_name,
                 'type': 'forensics',
+                'asset': asset_id,
                 'status': 'failed',
                 'error': str(e)
             }
@@ -73,7 +76,7 @@ class SystemSnapshot(BaseAction):
             'details': 'No rollback needed for snapshot actions'
         }
     
-    async def _dump_process_state(self, session_id) -> Dict[str, Any]:
+    async def _dump_process_state(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Dump complete process state"""
         try:
             process_data = {
@@ -150,7 +153,7 @@ class SystemSnapshot(BaseAction):
                 'error': str(e)
             }
     
-    async def _capture_network_state(self, session_id) -> Dict[str, Any]:
+    async def _capture_network_state(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Capture complete network state"""
         try:
             network_data = {
@@ -259,7 +262,7 @@ class SystemSnapshot(BaseAction):
                 'error': str(e)
             }
     
-    async def _hash_critical_files(self, session_id) -> Dict[str, Any]:
+    async def _hash_critical_files(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Hash critical system files for integrity checking"""
         try:
             critical_paths = self.config.get('critical_paths', [
@@ -334,7 +337,7 @@ class SystemSnapshot(BaseAction):
                 'error': str(e)
             }
     
-    async def _collect_system_logs(self, session_id) -> Dict[str, Any]:
+    async def _collect_system_logs(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Collect recent system logs"""
         try:
             log_data = {
@@ -412,7 +415,7 @@ class SystemSnapshot(BaseAction):
                 'error': str(e)
             }
     
-    async def _capture_full_snapshot(self, session_id) -> Dict[str, Any]:
+    async def _capture_full_snapshot(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Capture complete system snapshot"""
         try:
             results = []
@@ -453,7 +456,7 @@ class SystemSnapshot(BaseAction):
                 'error': str(e)
             }
     
-    async def _capture_system_info(self, session_id) -> Dict[str, Any]:
+    async def _capture_system_info(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Capture system information"""
         try:
             import platform
@@ -517,7 +520,7 @@ class SystemSnapshot(BaseAction):
                 'error': str(e)
             }
     
-    async def _security_audit_snapshot(self, session_id) -> Dict[str, Any]:
+    async def _security_audit_snapshot(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Capture security audit information"""
         try:
             audit_data = {

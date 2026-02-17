@@ -24,12 +24,17 @@
 //   - Keyboard navigation (arrow keys, Home/End)
 
 import { activate, deactivate } from './tab-loader.js';
+import { wsHandler } from './websocket-handler.js';
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const TAB_IDS = ['intelligence', 'charts', 'timeline', 'risk-metrics', 'assets', 'remote-shield'];
+const TAB_IDS = ['intelligence', 'charts', 'timeline', 'risk-metrics', 'assets', 'remote-shield', 'backup', 'performance', 'panic-room', 'vault'];
 
 const STORAGE_KEY = 'citadel_active_tab';
+const MODE_STORAGE_KEY = 'citadel_dashboard_mode';
+
+// Tabs visible in simplified mode (non-technical users)
+const SIMPLIFIED_TABS = ['intelligence', 'assets', 'remote-shield'];
 
 const TAB_CONFIG = {
     intelligence:    { label: 'Intelligence',  src: null },
@@ -38,6 +43,10 @@ const TAB_CONFIG = {
     'risk-metrics':  { label: 'Risk',          src: 'risk-metrics.html' },
     assets:          { label: 'Assets',        src: 'assets.html' },
     'remote-shield': { label: 'Remote Shield', src: 'remote-shield.html' },
+    backup:          { label: 'Backups',        src: 'backup.html' },
+    performance:     { label: 'Performance',   src: 'performance.html' },
+    'panic-room':    { label: 'Panic Room',    src: 'panic-room.html' },
+    vault:           { label: 'Vault',         src: 'vault.html' },
 };
 
 
@@ -45,6 +54,7 @@ const TAB_CONFIG = {
 
 let _activeTab = 'intelligence';
 let _initialised = false;
+let _currentMode = 'technical';
 
 
 // ── Tab persistence ────────────────────────────────────────────────
@@ -148,15 +158,15 @@ function updateConnectionBadge(connected) {
     if (!badge || !dot || !text) return;
 
     if (connected) {
-        badge.classList.remove('conn-offline');
+        badge.classList.remove('conn-offline', 'conn-connecting');
         badge.classList.add('conn-live');
         text.textContent = 'Live';
         badge.setAttribute('aria-label', 'WebSocket connection status: Live');
     } else {
-        badge.classList.remove('conn-live');
-        badge.classList.add('conn-simulated');
-        text.textContent = 'Simulated';
-        badge.setAttribute('aria-label', 'WebSocket connection status: Simulated data');
+        badge.classList.remove('conn-live', 'conn-connecting');
+        badge.classList.add('conn-offline');
+        text.textContent = 'Offline';
+        badge.setAttribute('aria-label', 'WebSocket connection status: Offline');
     }
 }
 
@@ -197,6 +207,37 @@ function escapeHtml(str) {
 }
 
 
+// ── Dashboard mode ────────────────────────────────────────────────
+
+function getVisibleTabs() {
+    if (_currentMode === 'simplified') return SIMPLIFIED_TABS;
+    return TAB_IDS;
+}
+
+function applyDashboardMode(mode) {
+    _currentMode = mode;
+
+    // Toggle body class for CSS overrides
+    document.body.classList.toggle('simplified-mode', mode === 'simplified');
+
+    // Show/hide tab buttons
+    TAB_IDS.forEach(id => {
+        const btn = document.getElementById(`tab-btn-${id}`);
+        if (!btn) return;
+        if (mode === 'simplified' && !SIMPLIFIED_TABS.includes(id)) {
+            btn.style.display = 'none';
+        } else {
+            btn.style.display = '';
+        }
+    });
+
+    // If current tab is now hidden, switch to intelligence
+    if (mode === 'simplified' && !SIMPLIFIED_TABS.includes(_activeTab)) {
+        switchTab('intelligence');
+    }
+}
+
+
 // ── Keyboard navigation ───────────────────────────────────────────
 
 function setupKeyboard() {
@@ -204,26 +245,27 @@ function setupKeyboard() {
     if (!tabBar) return;
 
     tabBar.addEventListener('keydown', (e) => {
-        const currentIdx = TAB_IDS.indexOf(_activeTab);
+        const visible = getVisibleTabs();
+        const currentIdx = visible.indexOf(_activeTab);
         let newIdx = -1;
 
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
             e.preventDefault();
-            newIdx = (currentIdx + 1) % TAB_IDS.length;
+            newIdx = (currentIdx + 1) % visible.length;
         } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
             e.preventDefault();
-            newIdx = (currentIdx - 1 + TAB_IDS.length) % TAB_IDS.length;
+            newIdx = (currentIdx - 1 + visible.length) % visible.length;
         } else if (e.key === 'Home') {
             e.preventDefault();
             newIdx = 0;
         } else if (e.key === 'End') {
             e.preventDefault();
-            newIdx = TAB_IDS.length - 1;
+            newIdx = visible.length - 1;
         }
 
         if (newIdx >= 0) {
-            switchTab(TAB_IDS[newIdx]);
-            const btn = document.getElementById(`tab-btn-${TAB_IDS[newIdx]}`);
+            switchTab(visible[newIdx]);
+            const btn = document.getElementById(`tab-btn-${visible[newIdx]}`);
             if (btn) btn.focus();
         }
     });
@@ -244,16 +286,53 @@ function initDashboardNav() {
         }
     });
 
+    // Vault shortcut button in header
+    const vaultBtn = document.getElementById('vault-shortcut-btn');
+    if (vaultBtn) {
+        vaultBtn.addEventListener('click', () => switchTab('vault'));
+    }
+
     // Keyboard navigation
     setupKeyboard();
+
+    // Apply saved dashboard mode (instant from localStorage)
+    const savedMode = localStorage.getItem(MODE_STORAGE_KEY) || 'technical';
+    applyDashboardMode(savedMode);
+
+    // Listen for mode-change events from settings.js
+    window.addEventListener('dashboard-mode-changed', (e) => {
+        const mode = e.detail?.mode || 'technical';
+        applyDashboardMode(mode);
+    });
 
     // Restore saved tab
     const saved = loadSavedTab();
     switchTab(saved);
 
-    // Listen for connection events from main.js / api.js
+    // Listen for connection events from wsHandler (websocket-handler.js)
     window.addEventListener('ws-connected', () => updateConnectionBadge(true));
     window.addEventListener('ws-disconnected', () => updateConnectionBadge(false));
+
+    // Poll connection status continuously (ws-connected event may have
+    // already fired before our listener was registered above, and this
+    // also catches later disconnects).
+    updateConnectionBadge(wsHandler.connected);
+    setInterval(() => updateConnectionBadge(wsHandler.connected), 2000);
+
+    // Desktop heartbeat — tells backend the window is still open
+    // If backend dies, close the window (desktop app behavior)
+    let _heartbeatFailures = 0;
+    setInterval(() => {
+        fetch('/api/heartbeat', { method: 'POST' })
+            .then(r => { if (r.ok) _heartbeatFailures = 0; })
+            .catch(() => {
+                _heartbeatFailures++;
+                if (_heartbeatFailures >= 3) {
+                    console.log('[nav] Backend unreachable — closing window');
+                    window.close();
+                }
+            });
+    }, 5000);
 
     console.log('[nav] Dashboard navigation initialised');
 }
@@ -272,6 +351,7 @@ export {
     TAB_IDS,
     TAB_CONFIG,
     STORAGE_KEY,
+    SIMPLIFIED_TABS,
     switchTab,
     loadSavedTab,
     saveTab,
@@ -279,5 +359,7 @@ export {
     updateTabButtons,
     updateConnectionBadge,
     showError,
+    applyDashboardMode,
+    getVisibleTabs,
     initDashboardNav,
 };

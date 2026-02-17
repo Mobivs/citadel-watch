@@ -1,0 +1,312 @@
+<div id="backup-page" style="padding: 1rem;">
+<style>
+    #backup-page {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    #backup-page .backup-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.25rem;
+    }
+    #backup-page .backup-header h2 {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #f0f0f0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    #backup-page .stats-bar {
+        display: flex;
+        gap: 1.5rem;
+        margin-bottom: 1.25rem;
+        padding: 0.75rem 1rem;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(0, 217, 255, 0.1);
+        border-radius: 10px;
+        font-size: 0.8rem;
+    }
+    #backup-page .stat-item .stat-label { color: #6b7280; }
+    #backup-page .stat-item .stat-value { color: #e0e0e0; font-weight: 600; }
+    #backup-page .backup-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+    }
+    #backup-page .backup-table th {
+        text-align: left;
+        padding: 0.5rem 0.75rem;
+        color: #6b7280;
+        font-weight: 600;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    #backup-page .backup-table td {
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+        color: #e0e0e0;
+    }
+    #backup-page .backup-table tr:hover td {
+        background: rgba(0, 217, 255, 0.03);
+    }
+    #backup-page .status-chip {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 10px;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+    #backup-page .status-complete {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+    }
+    #backup-page .status-deleted {
+        background: rgba(239, 68, 68, 0.15);
+        color: #ef4444;
+    }
+    #backup-page .status-corrupt {
+        background: rgba(234, 179, 8, 0.15);
+        color: #eab308;
+    }
+    #backup-page .action-btn {
+        background: none;
+        border: 1px solid rgba(0, 217, 255, 0.3);
+        color: #00D9FF;
+        padding: 0.25rem 0.6rem;
+        border-radius: 6px;
+        font-size: 0.7rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        margin-right: 0.35rem;
+    }
+    #backup-page .action-btn:hover {
+        background: rgba(0, 217, 255, 0.15);
+    }
+    #backup-page .action-btn.danger {
+        border-color: rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+    }
+    #backup-page .action-btn.danger:hover {
+        background: rgba(239, 68, 68, 0.15);
+    }
+    #backup-page .btn-create {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        border: none;
+        background: linear-gradient(135deg, #00D9FF 0%, #0099cc 100%);
+        color: #0a0e17;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    #backup-page .btn-create:hover {
+        filter: brightness(1.15);
+        transform: translateY(-1px);
+    }
+    #backup-page .empty-state {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: #6b7280;
+    }
+    #backup-page .empty-state svg {
+        margin-bottom: 1rem;
+        opacity: 0.4;
+    }
+    #backup-page .empty-state p {
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+    }
+    /* Modal */
+    #backup-page .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+    }
+    #backup-page .modal-overlay.active {
+        display: flex;
+    }
+    #backup-page .modal-card {
+        background: #0f172a;
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        border-radius: 12px;
+        padding: 1.5rem;
+        width: 420px;
+        max-width: 95vw;
+    }
+    #backup-page .modal-card h3 {
+        font-size: 1rem;
+        color: #f0f0f0;
+        margin-bottom: 1rem;
+    }
+    #backup-page .modal-label {
+        display: block;
+        font-size: 0.8rem;
+        color: #9ca3af;
+        margin-bottom: 0.25rem;
+        margin-top: 0.75rem;
+    }
+    #backup-page .modal-input {
+        width: 100%;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(0,0,0,0.3);
+        color: #e0e0e0;
+        font-size: 0.85rem;
+        outline: none;
+    }
+    #backup-page .modal-input:focus {
+        border-color: rgba(0, 217, 255, 0.4);
+    }
+    #backup-page .modal-hint {
+        font-size: 0.7rem;
+        color: #6b7280;
+        margin-top: 0.2rem;
+    }
+    #backup-page .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 1.25rem;
+    }
+    #backup-page .modal-btn {
+        padding: 0.45rem 1rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    #backup-page .modal-btn-cancel {
+        background: none;
+        border: 1px solid rgba(255,255,255,0.1);
+        color: #9ca3af;
+    }
+    #backup-page .modal-btn-primary {
+        background: linear-gradient(135deg, #00D9FF 0%, #0099cc 100%);
+        border: none;
+        color: #0a0e17;
+    }
+    #backup-page .modal-btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    #backup-page .modal-warning {
+        background: rgba(234, 179, 8, 0.1);
+        border: 1px solid rgba(234, 179, 8, 0.2);
+        border-radius: 8px;
+        padding: 0.6rem 0.75rem;
+        margin-top: 0.75rem;
+        font-size: 0.75rem;
+        color: #eab308;
+        line-height: 1.5;
+    }
+    #backup-page .spinner {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border: 2px solid rgba(0, 217, 255, 0.3);
+        border-top-color: #00D9FF;
+        border-radius: 50%;
+        animation: backup-spin 0.6s linear infinite;
+    }
+    @keyframes backup-spin { to { transform: rotate(360deg); } }
+</style>
+
+<!-- Header -->
+<div class="backup-header">
+    <h2>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00D9FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Backups
+    </h2>
+    <button class="btn-create" id="backup-create-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Create Backup
+    </button>
+</div>
+
+<!-- Stats Bar -->
+<div class="stats-bar">
+    <div class="stat-item">
+        <span class="stat-label">Total: </span>
+        <span class="stat-value" id="backup-stat-total">0</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Last Backup: </span>
+        <span class="stat-value" id="backup-stat-last">Never</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Total Size: </span>
+        <span class="stat-value" id="backup-stat-size">0 B</span>
+    </div>
+</div>
+
+<!-- Backup List -->
+<div id="backup-list-container">
+    <div id="backup-empty" class="empty-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <p>No backups yet. Create your first backup to protect your dashboard data.</p>
+    </div>
+    <table class="backup-table" id="backup-table" style="display:none;">
+        <thead>
+            <tr>
+                <th>Label</th>
+                <th>Created</th>
+                <th>Size</th>
+                <th>DBs</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="backup-table-body"></tbody>
+    </table>
+</div>
+
+<!-- Create Backup Modal -->
+<div class="modal-overlay" id="backup-create-modal">
+    <div class="modal-card">
+        <h3>Create Encrypted Backup</h3>
+        <label class="modal-label" for="backup-passphrase">Encryption Passphrase</label>
+        <input class="modal-input" id="backup-passphrase" type="password" placeholder="Min 12 characters" autocomplete="new-password" />
+        <div class="modal-hint">This passphrase encrypts all vault contents, credentials, and session keys. Choose something strong and memorable.</div>
+        <label class="modal-label" for="backup-label">Label (optional)</label>
+        <input class="modal-input" id="backup-label" type="text" placeholder="e.g. Before update" maxlength="100" />
+        <div id="backup-create-error" style="color:#ef4444;font-size:0.75rem;margin-top:0.5rem;display:none;"></div>
+        <div class="modal-actions">
+            <button class="modal-btn modal-btn-cancel" id="backup-create-cancel">Cancel</button>
+            <button class="modal-btn modal-btn-primary" id="backup-create-submit">Create Backup</button>
+        </div>
+    </div>
+</div>
+
+<!-- Restore Modal -->
+<div class="modal-overlay" id="backup-restore-modal">
+    <div class="modal-card">
+        <h3>Restore Backup</h3>
+        <div class="modal-warning">
+            This will replace all current dashboard data with the backup contents.
+            A pre-restore safety backup will be created automatically.
+        </div>
+        <label class="modal-label" for="backup-restore-passphrase">Decryption Passphrase</label>
+        <input class="modal-input" id="backup-restore-passphrase" type="password" placeholder="Enter backup passphrase" />
+        <div id="backup-restore-error" style="color:#ef4444;font-size:0.75rem;margin-top:0.5rem;display:none;"></div>
+        <input type="hidden" id="backup-restore-id" />
+        <div class="modal-actions">
+            <button class="modal-btn modal-btn-cancel" id="backup-restore-cancel">Cancel</button>
+            <button class="modal-btn modal-btn-primary" id="backup-restore-submit">Restore</button>
+        </div>
+    </div>
+</div>
+
+</div>

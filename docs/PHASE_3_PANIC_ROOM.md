@@ -1,7 +1,9 @@
 # Phase 3: Panic Room Implementation
 
 ## Overview
-The Panic Room is a comprehensive emergency response system for Citadel Watch, providing automated incident response through predefined playbooks.
+The Panic Room is a comprehensive emergency response system for Citadel Archer, providing automated incident response through predefined playbooks.
+
+> **Note (v0.2.5):** Asset scope selector, remote credential rotation, and per-asset rollback have been added to Phase 3 scope. See [ASSET_MANAGEMENT_ADDENDUM.md](ASSET_MANAGEMENT_ADDENDUM.md) for full specification of remote panic operations.
 
 ## Components
 
@@ -150,3 +152,10 @@ node frontend/tests/e2e-panic-room.test.js
 - Multi-factor authentication for panic mode
 - Integration with external SIEM systems
 - Custom playbook builder UI
+
+🔜 **Planned (v0.2.5 Addendum):**
+- Asset scope selector (choose which assets panic playbooks target)
+- Remote credential rotation via SSH Connection Manager
+- Per-asset rollback on failure
+- Recovery key per remote asset
+- See [ASSET_MANAGEMENT_ADDENDUM.md](ASSET_MANAGEMENT_ADDENDUM.md)

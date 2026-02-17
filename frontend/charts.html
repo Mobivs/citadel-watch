@@ -77,7 +77,7 @@
             border: 1px solid rgba(16, 185, 129, 0.3);
         }
 
-        .live-badge.simulated {
+        .live-badge.offline {
             background: rgba(230, 184, 0, 0.15);
             color: #e6b800;
             border: 1px solid rgba(230, 184, 0, 0.3);
@@ -91,7 +91,7 @@
         }
 
         .live-dot.connected { background: #10B981; }
-        .live-dot.simulated { background: #e6b800; }
+        .live-dot.offline { background: #e6b800; }
 
         /* Last update text */
         .last-update {
@@ -182,9 +182,9 @@
 
                 <div class="flex items-center space-x-4">
                     <!-- Live status badge -->
-                    <div id="live-badge" class="live-badge simulated">
-                        <span id="live-dot" class="live-dot simulated"></span>
-                        <span id="live-text">Simulated</span>
+                    <div id="live-badge" class="live-badge offline">
+                        <span id="live-dot" class="live-dot offline"></span>
+                        <span id="live-text">Connecting...</span>
                     </div>
 
                     <!-- Last update -->

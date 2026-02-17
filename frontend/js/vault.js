@@ -38,10 +38,18 @@ class VaultManager {
     }
 
     async init() {
-        await apiClient.initialize();
-        await this.checkStatus();
+        // Always set up components and event listeners first so the UI is
+        // interactive even if the backend isn't responding yet.
         this.setupComponents();
         this.setupEventListeners();
+
+        try {
+            await apiClient.initialize();
+            await this.checkStatus();
+            this.updateUI();
+        } catch (error) {
+            console.warn('[vault] Backend not available, UI ready in offline mode:', error.message);
+        }
     }
 
     async checkStatus() {
@@ -92,9 +100,7 @@ class VaultManager {
         // Unlock vault button
         const unlockBtn = document.getElementById('unlock-vault-btn');
         if (unlockBtn) {
-            unlockBtn.addEventListener('click', () => {
-                this.showUnlock();
-            });
+            unlockBtn.addEventListener('click', () => this.showUnlock());
         }
 
         // Lock vault button
@@ -154,7 +160,11 @@ class VaultManager {
     }
 
     showUnlock() {
-        if (this.unlockModal) {
+        // Re-query if not found during initial setup (custom element upgrade timing)
+        if (!this.unlockModal) {
+            this.unlockModal = document.querySelector('vault-unlock');
+        }
+        if (this.unlockModal && typeof this.unlockModal.show === 'function') {
             this.unlockModal.setMode(this.vaultExists ? 'unlock' : 'create');
             this.unlockModal.show();
         }
@@ -217,13 +227,7 @@ function destroy() {
     }
 }
 
-// ── Auto-init (standalone page use) ─────────────────────────────────
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
-}
+// NOTE: No auto-init here — tab-loader.js manages the init/destroy lifecycle.
 
 // ── Exports ─────────────────────────────────────────────────────────
 

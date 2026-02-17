@@ -322,7 +322,7 @@ class TestChartsHTML:
         path = FRONTEND_DIR / "charts.html"
         if not path.exists():
             pytest.skip("charts.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_chart_js_cdn(self, html_content):
         assert "chart.js" in html_content.lower() or "chart.umd" in html_content
@@ -389,7 +389,7 @@ class TestChartsJS:
         path = FRONTEND_DIR / "js" / "charts.js"
         if not path.exists():
             pytest.skip("charts.js not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_imports_api_client(self, js_content):
         assert "api-client" in js_content or "apiClient" in js_content
@@ -443,18 +443,18 @@ class TestIndexHTMLNavigation:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_charts_tab(self, index_content):
         assert 'id="tab-btn-charts"' in index_content
 
     def test_has_charts_panel(self, index_content):
-        assert 'id="tab-panel-charts"' in index_content
+        assert 'id="tab-panel-dynamic"' in index_content  # shared dynamic panel
 
-    def test_charts_tab_before_vault(self, index_content):
-        charts_pos = index_content.index('id="tab-btn-charts"')
-        vault_pos = index_content.index('href="vault.html"')
-        assert charts_pos < vault_pos
+    def test_charts_tab_and_vault_button_exist(self, index_content):
+        """Both the charts tab and vault shortcut button must exist in index.html."""
+        assert 'id="tab-btn-charts"' in index_content
+        assert 'id="vault-shortcut-btn"' in index_content
 
 
 # =====================================================================
@@ -469,7 +469,7 @@ class TestChartsRoutes:
         path = Path(__file__).parent.parent / "src" / "citadel_archer" / "api" / "main.py"
         if not path.exists():
             pytest.skip("main.py not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_charts_html_route(self, main_content):
         assert "/charts.html" in main_content

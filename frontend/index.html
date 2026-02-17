@@ -264,6 +264,245 @@
             background: rgba(245, 158, 11, 0.08);
             color: #FBBF24;
         }
+
+        /* ── SecureChat Sidebar ───────────────────────────────── */
+        .app-layout {
+            display: flex;
+            min-height: calc(100vh - 90px); /* below header + tab bar */
+        }
+
+        .app-main {
+            flex: 1;
+            min-width: 0;
+            overflow-y: auto;
+        }
+
+        #chat-sidebar {
+            width: 320px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            background: rgba(10, 14, 39, 0.95);
+            border-left: 1px solid rgba(0, 217, 255, 0.12);
+            transition: width 0.25s ease;
+            overflow: hidden;
+        }
+
+        #chat-sidebar.chat-collapsed {
+            width: 42px;
+        }
+
+        .chat-sidebar-hdr {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+            flex-shrink: 0;
+            min-height: 38px;
+        }
+
+        .chat-sidebar-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #00D9FF;
+            white-space: nowrap;
+        }
+
+        .chat-collapsed .chat-sidebar-title,
+        .chat-collapsed .chat-input-area {
+            display: none;
+        }
+
+        .chat-collapsed .chat-sidebar-hdr {
+            justify-content: center;
+            padding: 0.5rem 0;
+        }
+
+        #chat-toggle-btn {
+            background: none;
+            border: none;
+            color: #9CA3AF;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+            flex-shrink: 0;
+        }
+
+        #chat-toggle-btn:hover {
+            color: #00D9FF;
+        }
+
+        #chat-unread-badge {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 4px;
+            border-radius: 9px;
+            background: #ff3333;
+            color: white;
+            font-size: 0.6rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        #chat-message-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .chat-collapsed #chat-message-list {
+            display: none;
+        }
+
+        .chat-msg {
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        .chat-msg-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 2px;
+        }
+
+        .chat-msg-from {
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .chat-msg-time {
+            font-size: 0.6rem;
+            color: #6B7280;
+        }
+
+        .chat-msg-body {
+            font-size: 0.78rem;
+            color: #D1D5DB;
+            padding-left: 8px;
+            line-height: 1.4;
+            word-break: break-word;
+        }
+
+        .chat-msg-copy {
+            margin-top: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 6px 8px;
+        }
+
+        .chat-msg-code {
+            display: block;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.7rem;
+            color: #10B981;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin-bottom: 4px;
+        }
+
+        .chat-copy-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: rgba(0, 217, 255, 0.15);
+            border: none;
+            color: #00D9FF;
+            font-size: 0.65rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .chat-copy-btn:hover {
+            background: rgba(0, 217, 255, 0.25);
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 6px;
+            padding: 0.5rem;
+            border-top: 1px solid rgba(0, 217, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        #chat-input {
+            flex: 1;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(0, 217, 255, 0.15);
+            border-radius: 6px;
+            color: #E5E7EB;
+            font-size: 0.78rem;
+            padding: 6px 10px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #chat-input:focus {
+            border-color: rgba(0, 217, 255, 0.4);
+        }
+
+        #chat-input::placeholder {
+            color: #6B7280;
+        }
+
+        #chat-send-btn {
+            background: rgba(0, 217, 255, 0.2);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 6px;
+            color: #00D9FF;
+            padding: 6px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        #chat-send-btn:hover {
+            background: rgba(0, 217, 255, 0.3);
+        }
+
+        /* Chat sidebar scrollbar */
+        #chat-message-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        #chat-message-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #chat-message-list::-webkit-scrollbar-thumb {
+            background: rgba(0, 217, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        /* Chat empty state */
+        .chat-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #6B7280;
+            font-size: 0.78rem;
+            text-align: center;
+            padding: 2rem;
+            gap: 0.5rem;
+        }
+
+        .chat-empty svg {
+            opacity: 0.4;
+        }
     </style>
 </head>
 <body class="dark bg-dark-bg text-gray-100 font-sans antialiased">
@@ -294,16 +533,16 @@
                     </div>
 
                     <!-- Connection Status -->
-                    <div id="nav-conn-badge" class="conn-badge conn-simulated" aria-label="WebSocket connection status: Simulated data">
+                    <div id="nav-conn-badge" class="conn-badge conn-connecting" aria-label="WebSocket connection status: Connecting">
                         <span id="nav-conn-dot" class="conn-dot" aria-hidden="true"></span>
-                        <span id="nav-conn-text">Simulated</span>
+                        <span id="nav-conn-text">Connecting...</span>
                     </div>
 
-                    <!-- Vault Button (external page) -->
-                    <a href="vault.html" aria-label="Open Vault" class="px-3 py-1.5 rounded-md bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-1.5">
+                    <!-- Vault Button (routes through tab system) -->
+                    <button id="vault-shortcut-btn" aria-label="Open Vault" class="px-3 py-1.5 rounded-md bg-neon-blue/10 hover:bg-neon-blue/20 border border-neon-blue/30 transition-colors flex items-center space-x-1.5">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                         <span class="text-xs font-medium">Vault</span>
-                    </a>
+                    </button>
 
                     <!-- Settings Button -->
                     <button id="settings-btn" aria-label="Open Settings" class="px-3 py-1.5 rounded-md bg-gray-700/30 hover:bg-gray-700/50 border border-gray-600/30 transition-colors flex items-center space-x-1.5">
@@ -341,78 +580,123 @@
                     <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     <span>Remote Shield</span>
                 </button>
+                <button id="tab-btn-backup" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic">
+                    <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <span>Backups</span>
+                </button>
+                <button id="tab-btn-performance" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic">
+                    <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    <span>Performance</span>
+                </button>
+                <button id="tab-btn-panic-room" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic" style="color: #ff3333;">
+                    <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <span>Panic Room</span>
+                </button>
             </div>
         </nav>
 
-        <!-- Tab Panels -->
+        <!-- App Layout: Tab Content + Chat Sidebar -->
+        <div class="app-layout">
 
-        <!-- Intelligence Panel (inline Phase 1 Web Components) -->
-        <div id="tab-panel-intelligence" role="tabpanel" aria-labelledby="tab-btn-intelligence">
-            <main class="container mx-auto px-4 py-3">
+            <!-- Main content area (tabs) -->
+            <div class="app-main">
 
-                <!-- Top Stats Row -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                    <!-- Guardian Status Card -->
-                    <guardian-status role="region" aria-label="Guardian Status" aria-describedby="guardian-status-desc"></guardian-status>
-                    <div id="guardian-status-desc" style="display:none;">Shows system protection status: Active or Inactive. Displays current security level.</div>
+                <!-- Intelligence Panel (inline Phase 1 Web Components) -->
+                <div id="tab-panel-intelligence" role="tabpanel" aria-labelledby="tab-btn-intelligence">
+                    <main class="container mx-auto px-4 py-3">
 
-                    <!-- Threat Level Card -->
-                    <threat-level role="region" aria-label="Threat Level" aria-describedby="threat-level-desc"></threat-level>
-                    <div id="threat-level-desc" style="display:none;">Real-time threat level indicator showing All Clear, Investigating, or Active Threats. Displays number of threats blocked today.</div>
+                        <!-- Top Stats Row -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                            <guardian-status role="region" aria-label="Guardian Status" aria-describedby="guardian-status-desc"></guardian-status>
+                            <div id="guardian-status-desc" style="display:none;">Shows system protection status: Active or Inactive. Displays current security level.</div>
 
-                    <!-- Protected Systems Card -->
-                    <protected-systems role="region" aria-label="Protected Systems" aria-describedby="protected-systems-desc"></protected-systems>
-                    <div id="protected-systems-desc" style="display:none;">Shows the number of systems protected by Citadel Archer and their operating system information.</div>
+                            <threat-level role="region" aria-label="Threat Level" aria-describedby="threat-level-desc"></threat-level>
+                            <div id="threat-level-desc" style="display:none;">Real-time threat level indicator showing All Clear, Investigating, or Active Threats. Displays number of threats blocked today.</div>
+
+                            <protected-systems role="region" aria-label="Protected Systems" aria-describedby="protected-systems-desc"></protected-systems>
+                            <div id="protected-systems-desc" style="display:none;">Shows the number of systems protected by Citadel Archer and their operating system information.</div>
+                        </div>
+
+                        <!-- Main Grid -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
+
+                            <!-- Recent Events -->
+                            <div class="glass-card panel-card p-4 flex flex-col" style="height: 460px; max-height: 460px; overflow: hidden;">
+                                <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                                    <h2 class="text-sm font-bold">Recent Events</h2>
+                                    <button class="text-xs text-neon-blue hover:underline" onclick="document.getElementById('tab-btn-timeline').click()">View All</button>
+                                </div>
+                                <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
+                                    <event-log role="region" aria-label="Recent Events" aria-describedby="event-log-desc" aria-live="polite"></event-log>
+                                    <div id="event-log-desc" style="display:none;">List of recent security events with timestamps and severity indicators. New events appear at the top as they occur.</div>
+                                </div>
+                            </div>
+
+                            <!-- Running Processes -->
+                            <div class="glass-card panel-card p-4 flex flex-col" style="height: 460px; max-height: 460px; overflow: hidden;">
+                                <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                                    <h2 class="text-sm font-bold">Running Processes</h2>
+                                    <button class="text-xs text-neon-blue hover:underline" onclick="document.getElementById('tab-btn-assets').click()">View All</button>
+                                </div>
+                                <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
+                                    <process-list role="region" aria-label="Running Processes" aria-describedby="process-list-desc"></process-list>
+                                    <div id="process-list-desc" style="display:none;">List of running system processes showing CPU and RAM usage percentages for the top 8 most resource-intensive processes.</div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <!-- AI Insights Section -->
+                        <div class="mt-3">
+                            <ai-insights role="region" aria-label="AI Insights" aria-describedby="ai-insights-desc"></ai-insights>
+                            <div id="ai-insights-desc" style="display:none;">AI-generated security analysis and recommendations based on current system status and threat patterns.</div>
+                        </div>
+
+                    </main>
                 </div>
 
-                <!-- Main Grid -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
+                <!-- Dynamic Content Panel (shared by all non-intelligence tabs) -->
+                <div id="tab-panel-dynamic" role="tabpanel" aria-hidden="true" style="display:none;">
+                    <!-- Dynamically populated when a tab is activated -->
+                </div>
 
-                    <!-- Recent Events -->
-                    <div class="glass-card panel-card p-4 flex flex-col" style="height: 460px; max-height: 460px; overflow: hidden;">
-                        <div class="flex items-center justify-between mb-2 flex-shrink-0">
-                            <h2 class="text-sm font-bold">Recent Events</h2>
-                            <button class="text-xs text-neon-blue hover:underline" onclick="document.getElementById('tab-btn-timeline').click()">View All</button>
-                        </div>
-                        <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
-                            <event-log role="region" aria-label="Recent Events" aria-describedby="event-log-desc" aria-live="polite"></event-log>
-                            <div id="event-log-desc" style="display:none;">List of recent security events with timestamps and severity indicators. New events appear at the top as they occur.</div>
-                        </div>
+                <!-- Footer -->
+                <footer class="text-center py-3 text-gray-500 text-xs">
+                    <p>Protected by Citadel Archer AI &middot; Proactive Defense &middot; Built to protect the innocents</p>
+                </footer>
+
+            </div><!-- /.app-main -->
+
+            <!-- SecureChat Sidebar (always visible) -->
+            <aside id="chat-sidebar" aria-label="Secure Chat">
+                <div class="chat-sidebar-hdr" id="chat-sidebar-header">
+                    <span class="chat-sidebar-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline; vertical-align:-2px; margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        Secure Chat
+                    </span>
+                    <div style="display:flex; align-items:center; gap:4px;">
+                        <span id="chat-unread-badge"></span>
+                        <button id="chat-toggle-btn" aria-label="Toggle chat sidebar" title="Collapse/expand chat">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                        </button>
                     </div>
-
-                    <!-- Running Processes -->
-                    <div class="glass-card panel-card p-4 flex flex-col" style="height: 460px; max-height: 460px; overflow: hidden;">
-                        <div class="flex items-center justify-between mb-2 flex-shrink-0">
-                            <h2 class="text-sm font-bold">Running Processes</h2>
-                            <button class="text-xs text-neon-blue hover:underline" onclick="document.getElementById('tab-btn-assets').click()">View All</button>
-                        </div>
-                        <div class="flex-1 overflow-hidden min-h-0" style="min-height: 0; overflow: hidden;">
-                            <process-list role="region" aria-label="Running Processes" aria-describedby="process-list-desc"></process-list>
-                            <div id="process-list-desc" style="display:none;">List of running system processes showing CPU and RAM usage percentages for the top 8 most resource-intensive processes.</div>
-                        </div>
+                </div>
+                <div id="chat-message-list">
+                    <div class="chat-empty">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <span>No messages yet</span>
+                        <span style="font-size:0.7rem;">Type a command like <b style="color:#00D9FF;">add vps &lt;ip&gt;</b></span>
                     </div>
-
                 </div>
-
-                <!-- AI Insights Section -->
-                <div class="mt-3">
-                    <ai-insights role="region" aria-label="AI Insights" aria-describedby="ai-insights-desc"></ai-insights>
-                    <div id="ai-insights-desc" style="display:none;">AI-generated security analysis and recommendations based on current system status and threat patterns.</div>
+                <div class="chat-input-area">
+                    <input id="chat-input" type="text" placeholder="Type a message or command..." autocomplete="off" />
+                    <button id="chat-send-btn" aria-label="Send message">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
                 </div>
+            </aside>
 
-            </main>
-        </div>
-
-        <!-- Dynamic Content Panel (shared by all non-intelligence tabs) -->
-        <!-- Content is loaded on demand via tab-loader.js — no iframes -->
-        <div id="tab-panel-dynamic" role="tabpanel" aria-hidden="true" style="display:none;">
-            <!-- Dynamically populated when a tab is activated -->
-        </div>
-
-        <!-- Footer -->
-        <footer class="text-center py-3 text-gray-500 text-xs">
-            <p>Protected by Citadel Archer AI &middot; Proactive Defense &middot; Built to protect the innocents</p>
-        </footer>
+        </div><!-- /.app-layout -->
     </div>
 
     <!-- Load Web Components -->
@@ -423,6 +707,11 @@
     <script type="module" src="js/components/process-list.js"></script>
     <script type="module" src="js/components/ai-insights.js"></script>
 
+    <!-- Vault Web Components (used when vault tab is loaded) -->
+    <script type="module" src="js/components/vault-unlock.js"></script>
+    <script type="module" src="js/components/vault-password-list.js"></script>
+    <script type="module" src="js/components/vault-password-viewer.js"></script>
+
     <!-- Settings Modal -->
     <div id="settings-modal" class="settings-modal-overlay">
         <div class="settings-modal-content">
@@ -432,7 +721,8 @@
                     ×
                 </button>
             </div>
-            <ul class="settings-menu">
+            <!-- Settings Menu List -->
+            <ul class="settings-menu" id="settings-menu-list">
                 <li class="settings-menu-item">
                     <button class="settings-menu-btn" id="settings-general">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -467,6 +757,30 @@
                     </button>
                 </li>
             </ul>
+
+            <!-- General Settings Panel (hidden by default) -->
+            <div id="settings-general-panel" style="display: none; padding: 1.25rem;">
+                <button id="settings-general-back" style="background: none; border: none; color: #9CA3AF; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; margin-bottom: 1rem; padding: 0; transition: color 0.2s;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    Back to Settings
+                </button>
+                <h3 style="font-size: 1rem; font-weight: 600; color: #E5E7EB; margin-bottom: 1.25rem;">General Settings</h3>
+
+                <div style="margin-bottom: 1.5rem;">
+                    <label class="settings-section-label" style="display: block; font-size: 0.75rem; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">Dashboard Mode</label>
+                    <p style="font-size: 0.78rem; color: #6B7280; margin-bottom: 0.75rem;">Simplified mode hides technical tabs and shows plain-English alerts.</p>
+                    <div id="mode-toggle-group" style="display: flex; gap: 0.5rem;">
+                        <button id="mode-btn-technical" class="mode-toggle-btn mode-active" data-mode="technical" style="flex: 1; padding: 0.625rem 1rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid rgba(0, 217, 255, 0.3); background: rgba(0, 217, 255, 0.12); color: #00D9FF;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline; vertical-align: -2px; margin-right: 4px;"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                            Technical
+                        </button>
+                        <button id="mode-btn-simplified" class="mode-toggle-btn" data-mode="simplified" style="flex: 1; padding: 0.625rem 1rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid rgba(255, 255, 255, 0.1); background: transparent; color: #9CA3AF;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline; vertical-align: -2px; margin-right: 4px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            Simplified
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -495,6 +809,8 @@
     <!-- Main App Logic -->
     <script type="module" src="js/main.js"></script>
 
+    <!-- SecureChat Sidebar (independent of tab system) -->
+    <script type="module" src="js/chat-sidebar.js"></script>
 
 </body>
 </html>

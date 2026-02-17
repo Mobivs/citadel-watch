@@ -5,42 +5,105 @@ Emergency response endpoints for Citadel Commander
 
 import json
 import hashlib
+import hmac as hmac_mod
+import logging
+import re
+import secrets
 import time
 from datetime import datetime
 from typing import Optional, List, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
 
 from ..panic import PanicManager, TriggerSource
 from ..panic.panic_database import PanicDatabase, PanicSession
 from ..panic.playbooks import PlaybookLibrary, PlaybookValidator, PlaybookScheduler
+from ..panic.recovery_key import RecoveryKeyManager
+from ..chat.message import MessageType
 from ..core.auth import get_current_user
 from ..core.audit_log import AuditLogger, EventType, EventSeverity
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/panic", tags=["panic"])
 audit = AuditLogger()
 
-# Initialize panic manager (lazy singleton)
+# Singletons (initialized lazily, one per process)
 _panic_manager: Optional[PanicManager] = None
+_panic_db: Optional[PanicDatabase] = None
+import threading
+_init_lock = threading.RLock()  # RLock: get_panic_manager → _get_db re-enters
+
+
+def _get_db() -> PanicDatabase:
+    """Get or create the singleton PanicDatabase instance."""
+    global _panic_db
+    if _panic_db is None:
+        with _init_lock:
+            if _panic_db is None:
+                _panic_db = PanicDatabase()
+    return _panic_db
 
 
 def get_panic_manager() -> PanicManager:
     """Dependency to get or create panic manager instance"""
     global _panic_manager
     if _panic_manager is None:
-        db = PanicDatabase()
-        config = {
-            "confirmation_timeout": 30,
-            "max_concurrent_sessions": 1,
-            "default_playbooks": [],
-            "recovery_dir": "/var/lib/citadel/panic/recovery",
-            "backup_dir": "/var/lib/citadel/panic/backups",
-        }
-        _panic_manager = PanicManager(db, config)
+        with _init_lock:
+            if _panic_manager is None:
+                db = _get_db()
+                config = {
+                    "confirmation_timeout": 30,
+                    "max_concurrent_sessions": 1,
+                    "default_playbooks": [],
+                    "recovery_dir": "/var/lib/citadel/panic/recovery",
+                    "backup_dir": "/var/lib/citadel/panic/backups",
+                }
+                _panic_manager = PanicManager(db, config)
     return _panic_manager
+
+
+# ── HMAC-based confirmation tokens ─────────────────────────────────
+# Tokens use the server session secret as HMAC key and include a
+# 5-minute time window for built-in expiry.
+
+def _get_hmac_secret() -> str:
+    """Get HMAC secret (session token generated at startup)."""
+    from .security import get_session_token
+    try:
+        return get_session_token()
+    except RuntimeError:
+        return "dev-fallback-not-for-production"
+
+
+def _make_confirmation_token(action: str, user_id: str, session_id: str = "") -> str:
+    """Generate HMAC-based confirmation token with 5-minute window."""
+    secret = _get_hmac_secret()
+    window = int(time.time()) // 300
+    msg = f"{action}:{user_id}:{session_id}:{window}"
+    return hmac_mod.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def _verify_confirmation_token(
+    action: str, user_id: str, token: str, session_id: str = ""
+) -> bool:
+    """Verify confirmation token (checks current and previous 5-min window)."""
+    expected = _make_confirmation_token(action, user_id, session_id)
+    if secrets.compare_digest(token, expected):
+        return True
+    # Check previous window in case user is at boundary
+    secret = _get_hmac_secret()
+    prev_window = int(time.time()) // 300 - 1
+    msg = f"{action}:{user_id}:{session_id}:{prev_window}"
+    prev_token = hmac_mod.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:24]
+    return secrets.compare_digest(token, prev_token)
+
+
+# Regex for valid session IDs (alphanumeric, underscores, hyphens)
+_SESSION_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
 
 
 # Request/Response Models
@@ -76,6 +139,7 @@ class PanicStatusResponse(BaseModel):
 class RollbackRequest(BaseModel):
     """Request to rollback panic actions"""
     components: Optional[List[str]] = Field(None, description="Components to rollback (None = all)")
+    target_assets: Optional[List[str]] = Field(None, description="Asset IDs to rollback (None = all assets in session)")
     confirmation_token: str = Field(..., description="User confirmation token")
 
 
@@ -100,38 +164,44 @@ async def activate_panic(
     """
     try:
         manager = get_panic_manager()
-        
-        # Generate expected confirmation token
-        expected_token = hashlib.sha256(
-            f"panic_{current_user['id']}_{datetime.utcnow().date()}".encode()
-        ).hexdigest()[:16]
-        
-        # Validate confirmation token
-        if request.confirmation_token != expected_token:
-            # Log failed attempt
+
+        # Validate HMAC-based confirmation token
+        if not _verify_confirmation_token("panic", current_user['id'], request.confirmation_token):
             audit.log_event(
-                event_type="panic_activation_failed",
-                severity="warning",
-                details={
-                    "user_id": current_user['id'],
-                    "reason": "Invalid confirmation token"
-                }
+                event_type=EventType.USER_OVERRIDE,
+                severity=EventSeverity.ALERT,
+                message="Panic activation failed: invalid confirmation token",
+                details={"user_id": current_user['id']}
             )
             raise HTTPException(status_code=403, detail="Invalid confirmation token")
-        
+
         # Trigger panic mode
         session = await manager.trigger_panic(
             trigger_source=TriggerSource.MANUAL,
             playbook_ids=request.playbooks,
             reason=request.reason,
             user_id=current_user['id'],
-            confirmation_token=request.confirmation_token,
+            confirmation_token=hashlib.sha256(request.confirmation_token.encode()).hexdigest()[:16],
             metadata=request.metadata
         )
-        
+
+        # Escalate to AI via SecureChat (Trigger 2c)
+        try:
+            chat = manager._chat_manager
+            if chat:
+                summary = (
+                    f"[Panic Room] ACTIVATED — {request.reason}\n"
+                    f"Playbooks: {'; '.join(request.playbooks)}\n"
+                    f"Session: {session.id}\n"
+                    f"Critical/high-priority emergency response initiated."
+                )
+                await chat.send_system(summary, MessageType.EVENT)
+        except Exception:
+            pass  # Chat failure must never block panic activation
+
         # Calculate estimated duration based on playbooks
-        estimated_duration = len(request.playbooks) * 30  # 30 seconds per playbook estimate
-        
+        estimated_duration = len(request.playbooks) * 30
+
         return PanicActivateResponse(
             session_id=str(session.id),
             status=session.status,
@@ -139,17 +209,18 @@ async def activate_panic(
             estimated_duration=estimated_duration,
             websocket_channel=f"/ws/panic/{session.id}"
         )
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
+        _logger.error(f"Panic activation error: {e}", exc_info=True)
         audit.log_event(
-            event_type="panic_activation_error",
-            severity="error",
-            details={
-                "user_id": current_user['id'],
-                "error": str(e)
-            }
+            event_type=EventType.AI_ALERT,
+            severity=EventSeverity.CRITICAL,
+            message="Panic activation failed (internal error)",
+            details={"user_id": current_user['id']}
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Panic activation failed")
 
 
 @router.get("/status/{session_id}", response_model=PanicStatusResponse)
@@ -175,10 +246,13 @@ async def get_panic_status(
         
         return PanicStatusResponse(**status)
         
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session ID format")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _logger.exception("Failed to get panic status")
+        raise HTTPException(status_code=500, detail="Failed to retrieve session status")
 
 
 @router.post("/rollback/{session_id}")
@@ -193,54 +267,50 @@ async def rollback_panic(
     """
     try:
         manager = get_panic_manager()
-        
-        # Generate expected confirmation token
-        expected_token = hashlib.sha256(
-            f"panic_{current_user['id']}_{datetime.utcnow().date()}".encode()
-        ).hexdigest()[:16]
-        
-        # Validate confirmation
-        if request.confirmation_token != expected_token:
+
+        # Validate HMAC-based rollback token (distinct from panic token)
+        if not _verify_confirmation_token("rollback", current_user['id'], request.confirmation_token, session_id):
             audit.log_event(
-                event_type="panic_rollback_denied",
-                severity="warning",
-                details={
-                    "session_id": session_id,
-                    "user_id": current_user['id'],
-                    "reason": "Invalid confirmation token"
-                }
+                event_type=EventType.USER_OVERRIDE,
+                severity=EventSeverity.ALERT,
+                message="Panic rollback denied: invalid confirmation token",
+                details={"session_id": session_id, "user_id": current_user['id']}
             )
             raise HTTPException(status_code=403, detail="Invalid confirmation token")
-        
+
         # Convert string to UUID
         session_uuid = UUID(session_id)
-        
-        # Perform rollback
+
+        # Perform rollback (optionally scoped to specific components and/or assets)
         results = await manager.rollback_panic(
             session_id=session_uuid,
             components=request.components,
-            confirmation_token=request.confirmation_token,
+            target_assets=request.target_assets,
+            confirmation_token=hashlib.sha256(request.confirmation_token.encode()).hexdigest()[:16],
             user_id=current_user['id']
         )
-        
-        # Log rollback
+
         audit.log_event(
-            event_type="panic_rollback",
-            severity="info",
+            event_type=EventType.USER_OVERRIDE,
+            severity=EventSeverity.ALERT,
+            message=f"Panic rollback executed for session {session_id}",
             details={
                 "session_id": session_id,
                 "user_id": current_user['id'],
                 "components": request.components,
-                "results": results
+                "target_assets": request.target_assets,
             }
         )
-        
+
         return results
-        
+
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session ID format")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _logger.exception("Panic rollback failed")
+        raise HTTPException(status_code=500, detail="Rollback operation failed")
 
 
 # Draft /sessions route removed - superseded by /sessions/history and /sessions/active below
@@ -249,8 +319,88 @@ async def rollback_panic(
 # Draft /playbooks route removed - superseded by Phase 3 PlaybookLibrary route below
 
 
-# Draft whitelist/config routes removed - used asyncpg patterns incompatible with SQLite PanicDatabase
-# TODO: Re-implement whitelist/config using PanicDatabase when needed
+# ── Confirmation token endpoint ────────────────────────────────────
+
+class ConfirmationTokenRequest(BaseModel):
+    action: str = Field(..., pattern="^(panic|cancel|rollback)$")
+    session_id: Optional[str] = Field(None, description="Required for cancel/rollback")
+
+
+@router.post("/confirmation-token")
+async def get_confirmation_token(
+    request: ConfirmationTokenRequest,
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """
+    Get an HMAC-based confirmation token for the requested action.
+    The frontend echoes this token back to confirm intent.
+    Tokens expire after 5 minutes (time-window based).
+    """
+    user_id = current_user['id']
+
+    if request.action == "cancel":
+        if not request.session_id:
+            raise HTTPException(400, "session_id required for cancel action")
+        token = _make_confirmation_token("cancel", user_id, request.session_id)
+    elif request.action in ("panic", "rollback"):
+        session_id = request.session_id or ""
+        token = _make_confirmation_token(request.action, user_id, session_id)
+    else:
+        raise HTTPException(400, "Unknown action")
+
+    return {"token": token, "action": request.action, "expires_in": 300}
+
+
+# ── Configuration endpoints ───────────────────────────────────────
+
+class PanicConfigRequest(BaseModel):
+    ipWhitelist: List[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
+    processWhitelist: List[str] = Field(default_factory=lambda: ["ssh", "nginx", "mysql"])
+    isolationMode: str = "strict"
+
+
+@router.get("/config")
+async def get_panic_config(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Get panic room configuration."""
+    db = _get_db()
+    config = db.get_config()
+    # Return defaults if nothing saved yet
+    return {
+        "ipWhitelist": config.get("ipWhitelist", ["127.0.0.1", "::1"]),
+        "processWhitelist": config.get("processWhitelist", ["ssh", "nginx", "mysql"]),
+        "isolationMode": config.get("isolationMode", "strict"),
+    }
+
+
+@router.post("/config")
+async def save_panic_config(
+    request: PanicConfigRequest,
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Save panic room configuration."""
+    db = _get_db()
+    db.save_config({
+        "ipWhitelist": request.ipWhitelist,
+        "processWhitelist": request.processWhitelist,
+        "isolationMode": request.isolationMode,
+    })
+
+    try:
+        audit.log_event(
+            event_type=EventType.USER_OVERRIDE,
+            severity=EventSeverity.INFO,
+            message="Panic room configuration updated",
+            details={
+                "user_id": current_user['id'],
+                "config": request.model_dump(),
+            }
+        )
+    except Exception:
+        pass
+
+    return {"status": "saved"}
 
 
 # WebSocket endpoint for real-time updates
@@ -258,26 +408,39 @@ async def rollback_panic(
 @router.websocket("/ws/{session_id}")
 async def panic_websocket(
     websocket: WebSocket,
-    session_id: str
+    session_id: str,
+    token: Optional[str] = Query(None),
 ):
     """
-    WebSocket endpoint for real-time panic session updates
+    WebSocket endpoint for real-time panic session updates.
+    Requires session token as query param for authentication.
     """
+    # Validate session token before accepting
+    from .security import get_session_token
+    try:
+        expected = get_session_token()
+        if not token or not secrets.compare_digest(token, expected):
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
+    except RuntimeError:
+        pass  # Token not initialized yet — allow in dev
+
     await websocket.accept()
-    
+
+    session_uuid = None
     try:
         manager = get_panic_manager()
         session_uuid = UUID(session_id)
-        
+
         # Register websocket handler
         if session_uuid not in manager.websocket_handlers:
             manager.websocket_handlers[session_uuid] = []
         manager.websocket_handlers[session_uuid].append(websocket)
-        
+
         # Send initial status
         status = await manager.get_status(session_uuid)
         await websocket.send_json({"event": "status", "data": status})
-        
+
         # Keep connection alive
         try:
             while True:
@@ -287,20 +450,24 @@ async def panic_websocket(
                     await websocket.send_text("pong")
         except WebSocketDisconnect:
             pass
-            
+
     except Exception as e:
-        await websocket.send_json({"event": "error", "message": str(e)})
+        _logger.error(f"Panic WebSocket error: {e}")
+        try:
+            await websocket.send_json({"event": "error", "message": "Internal server error"})
+        except Exception:
+            pass
     finally:
-        # Unregister handler
-        if session_uuid in manager.websocket_handlers:
+        # Unregister handler (only if session_uuid was successfully parsed)
+        if session_uuid is not None and session_uuid in manager.websocket_handlers:
             manager.websocket_handlers[session_uuid].remove(websocket)
 
 
 # Initialize panic manager on module load
 def init_panic_manager(db_connection, config: dict):
     """Initialize the panic manager with database and config"""
-    global panic_manager
-    panic_manager = PanicManager(db_connection, config)
+    global _panic_manager
+    _panic_manager = PanicManager(db_connection, config)
 
 
 # Phase 3 Additional Routes
@@ -373,7 +540,7 @@ async def get_session_history(
     """
     Get panic session history
     """
-    db = PanicDatabase()
+    db = _get_db()
     history = db.get_session_history(limit=limit)
     return history
 
@@ -385,7 +552,7 @@ async def get_active_sessions(
     """
     Get all active panic sessions
     """
-    db = PanicDatabase()
+    db = _get_db()
     sessions = db.get_active_sessions()
     return sessions
 
@@ -398,7 +565,7 @@ async def get_session_logs(
     """
     Get detailed action logs for a panic session
     """
-    db = PanicDatabase()
+    db = _get_db()
     logs = db.get_action_logs(session_id)
     if not logs:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -413,29 +580,51 @@ async def get_recovery_snapshots(
     """
     Get recovery snapshots for a panic session
     """
-    db = PanicDatabase()
+    db = _get_db()
     snapshots = db.get_recovery_snapshots(session_id)
     return snapshots
+
+
+@router.get("/sessions/{session_id}/remote-status")
+async def get_remote_panic_status(
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> list:
+    """Return status of all panic commands queued for remote agents in this session."""
+    try:
+        pm = get_panic_manager()
+        dispatcher = getattr(pm, "_panic_dispatcher", None)
+        if dispatcher is None:
+            # Fallback: create ephemeral dispatcher if not wired
+            from .remote_shield_routes import get_shield_db
+            from ..remote.panic_dispatcher import RemotePanicDispatcher
+            shield_db = get_shield_db()
+            dispatcher = RemotePanicDispatcher(shield_db)
+        return dispatcher.get_remote_status(session_id)
+    except Exception:
+        _logger.debug("remote-status lookup failed for session %s", session_id, exc_info=True)
+        return []
+
+
+class CancelSessionRequest(BaseModel):
+    """Request body for cancelling a panic session."""
+    confirmation_token: str = Field(..., description="Cancel confirmation token")
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=dict)
 async def cancel_panic_session(
     session_id: str,
-    confirmation_token: str,
+    request: CancelSessionRequest,
     current_user: dict = Depends(get_current_user)
 ) -> dict:
     """
-    Cancel an active panic session
+    Cancel an active panic session.
+    Token is passed in request body (not query params) to avoid access log exposure.
     """
-    # Generate expected confirmation token
-    expected_token = hashlib.sha256(
-        f"cancel_{current_user['id']}_{session_id}".encode()
-    ).hexdigest()[:16]
-    
-    if confirmation_token != expected_token:
+    if not _verify_confirmation_token("cancel", current_user['id'], request.confirmation_token, session_id):
         raise HTTPException(status_code=403, detail="Invalid confirmation token")
-    
-    db = PanicDatabase()
+
+    db = _get_db()
     success = db.update_session(session_id, {
         "status": "cancelled",
         "completed_at": datetime.utcnow().isoformat(),
@@ -466,6 +655,10 @@ class PanicActivateV2Request(BaseModel):
     playbooks: List[str]
     reason: str
     confirmation_token: str
+    target_assets: List[str] = Field(
+        default=["local"],
+        description="Asset IDs to target. 'local' = this machine. Omit for backward compat."
+    )
     config: Optional[Dict] = None
 
 
@@ -478,12 +671,8 @@ async def activate_panic_v2(
     """
     Enhanced panic activation with Phase 3 features
     """
-    # Generate expected confirmation token
-    expected_token = hashlib.sha256(
-        f"panic_{current_user['id']}_{datetime.utcnow().date()}".encode()
-    ).hexdigest()[:16]
-    
-    if request.confirmation_token != expected_token:
+    # Validate HMAC-based confirmation token
+    if not _verify_confirmation_token("panic", current_user['id'], request.confirmation_token):
         raise HTTPException(status_code=403, detail="Invalid confirmation token")
 
     # Create execution plan
@@ -497,6 +686,9 @@ async def activate_panic_v2(
             "blocked_playbooks": blocked_playbooks
         }
 
+    # Resolve target assets (default to local-only for backward compat)
+    target_assets = request.target_assets or ["local"]
+
     # Create panic session
     session_id = f"panic_{int(time.time() * 1000)}"
     session = PanicSession(
@@ -506,15 +698,31 @@ async def activate_panic_v2(
         started_at=datetime.utcnow(),
         trigger_source="manual",
         user_id=current_user['id'],
-        confirmation_token=request.confirmation_token,
+        confirmation_token=hashlib.sha256(request.confirmation_token.encode()).hexdigest()[:16],
         reason=request.reason,
-        metadata=request.config or {}
+        metadata={**(request.config or {}), "target_assets": target_assets}
     )
     
     # Store in database
-    db = PanicDatabase()
+    db = _get_db()
     db.create_session(session)
-    
+
+    # Escalate to AI via SecureChat (Trigger 2c)
+    try:
+        pm = get_panic_manager()
+        chat = pm._chat_manager
+        if chat:
+            summary = (
+                f"[Panic Room] ACTIVATED — {request.reason}\n"
+                f"Playbooks: {'; '.join(request.playbooks)}\n"
+                f"Target assets: {'; '.join(target_assets)}\n"
+                f"Session: {session_id}\n"
+                f"Critical/high-priority emergency response initiated."
+            )
+            await chat.send_system(summary, MessageType.EVENT)
+    except Exception:
+        pass  # Chat failure must never block panic activation
+
     # Log activation
     try:
         audit.log_event(
@@ -525,6 +733,7 @@ async def activate_panic_v2(
                 "session_id": session_id,
                 "user_id": current_user['id'],
                 "playbooks": request.playbooks,
+                "target_assets": target_assets,
                 "reason": request.reason
             }
         )
@@ -537,7 +746,129 @@ async def activate_panic_v2(
     return {
         "status": "activated",
         "session_id": session_id,
+        "target_assets": target_assets,
         "execution_plan": plan,
         "estimated_duration": total_duration,
         "websocket_channel": f"/api/panic/ws/{session_id}"
     }
+
+
+# ── Recovery Key Endpoints ─────────────────────────────────────────
+
+def _get_recovery_manager() -> RecoveryKeyManager:
+    """Get or create a RecoveryKeyManager instance."""
+    return RecoveryKeyManager(_get_db())
+
+
+def _make_rotation_token(user_id: str) -> str:
+    """Generate an HMAC-based rotation confirmation token."""
+    return _make_confirmation_token("rotate_recovery", user_id)
+
+
+@router.get("/recovery-key")
+async def get_recovery_key_status(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Get recovery key status (exists, fingerprint, age).
+
+    Includes a ``rotation_token`` when a key exists so the frontend
+    can echo it back to the rotate endpoint.
+    """
+    mgr = _get_recovery_manager()
+    status = await mgr.get_status()
+    if status.get("exists"):
+        status["rotation_token"] = _make_rotation_token(current_user["id"])
+    return status
+
+
+@router.post("/recovery-key/generate")
+async def generate_recovery_key(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Generate a new recovery key. Returns the private key ONCE.
+
+    The private key is the user's break-glass escape hatch —
+    it must be saved immediately as it will never be shown again.
+    """
+    mgr = _get_recovery_manager()
+
+    try:
+        result = await mgr.generate_recovery_key()
+
+        try:
+            audit.log_event(
+                event_type=EventType.AI_ALERT,
+                severity=EventSeverity.ALERT,
+                message="Recovery key generated",
+                details={
+                    "user_id": current_user['id'],
+                    "key_id": result["key_id"],
+                    "fingerprint": result["fingerprint"],
+                }
+            )
+        except Exception:
+            pass  # Audit should never block
+
+        return result
+
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception:
+        _logger.exception("Recovery key generation failed")
+        raise HTTPException(status_code=500, detail="Recovery key generation failed")
+
+
+class RotateRecoveryKeyRequest(BaseModel):
+    confirmation_token: str = Field(..., description="User confirmation token")
+
+
+@router.post("/recovery-key/rotate")
+async def rotate_recovery_key(
+    request: RotateRecoveryKeyRequest,
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Rotate the recovery key. Returns the new private key ONCE.
+
+    Atomic: new key is added before old key is removed.
+    Requires confirmation token.
+    """
+    # Validate confirmation token
+    if not _verify_confirmation_token("rotate_recovery", current_user["id"], request.confirmation_token):
+        raise HTTPException(status_code=403, detail="Invalid confirmation token")
+
+    mgr = _get_recovery_manager()
+
+    try:
+        result = await mgr.rotate_recovery_key()
+
+        try:
+            audit.log_event(
+                event_type=EventType.AI_ALERT,
+                severity=EventSeverity.CRITICAL,
+                message="Recovery key rotated",
+                details={
+                    "user_id": current_user['id'],
+                    "new_key_id": result["key_id"],
+                    "replaced_key_id": result["replaced_key_id"],
+                    "fingerprint": result["fingerprint"],
+                }
+            )
+        except Exception:
+            pass
+
+        return result
+
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception:
+        _logger.exception("Recovery key rotation failed")
+        raise HTTPException(status_code=500, detail="Recovery key rotation failed")
+
+
+@router.post("/recovery-key/verify")
+async def verify_recovery_key(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Verify the recovery key is valid and present in authorized_keys."""
+    mgr = _get_recovery_manager()
+    return await mgr.verify_recovery_key()

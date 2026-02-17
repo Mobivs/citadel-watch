@@ -63,3 +63,9 @@ wmi==1.5.1; sys_platform == 'win32'    # Windows Management Instrumentation
 # Phase 3 Panic Room - Additional Dependencies
 dataclasses-json==0.6.3  # Serializable dataclasses
 requests==2.31.0         # HTTP client for credential rotation APIs
+
+# Phase 2 - Remote Operations
+asyncssh==2.14.2         # Async SSH client (ed25519, RSA, ECDSA)
+
+# AI Brain - LLM Integration (optional; AI Bridge degrades gracefully without it)
+anthropic>=0.39.0        # Claude API SDK for AI assistant in SecureChat

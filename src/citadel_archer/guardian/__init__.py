@@ -7,10 +7,12 @@
 
 from .file_monitor import FileMonitor, SuspiciousFilePatterns
 from .process_monitor import ProcessMonitor, SuspiciousProcessPatterns
+from .extension_scanner import ExtensionScanner
 
 __all__ = [
     "FileMonitor",
     "SuspiciousFilePatterns",
     "ProcessMonitor",
     "SuspiciousProcessPatterns",
+    "ExtensionScanner",
 ]

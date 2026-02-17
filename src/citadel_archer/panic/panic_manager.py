@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any
 from uuid import UUID, uuid4
 from enum import Enum
 
+from ..chat.message import MessageType
 from ..core.audit_log import AuditLogger
 from ..secrets import SecretsStore
 from .playbook_engine import PlaybookEngine
@@ -56,7 +57,18 @@ class PanicManager:
         self.secrets_manager = SecretsStore()
         self.active_sessions: Dict[UUID, PanicSession] = {}
         self.websocket_handlers: Dict[UUID, List] = {}
-        
+        self._chat_manager = None
+        self._panic_dispatcher = None
+
+    def set_chat_manager(self, chat_manager):
+        """Wire ChatManager for AI escalation (Trigger 2c)."""
+        self._chat_manager = chat_manager
+
+    def set_panic_dispatcher(self, dispatcher):
+        """Wire RemotePanicDispatcher for agent-backed panic execution."""
+        self._panic_dispatcher = dispatcher
+        self.playbook_engine.set_panic_dispatcher(dispatcher)
+
     async def trigger_panic(
         self,
         trigger_source: TriggerSource,
@@ -255,11 +267,17 @@ class PanicManager:
                 status="executing"
             )
             
+            # Extract target_assets from session metadata (default: local only)
+            target_assets = None
+            if hasattr(session, 'metadata') and isinstance(session.metadata, dict):
+                target_assets = session.metadata.get("target_assets")
+
             # Execute the playbook
             results = await self.playbook_engine.execute_playbook(
                 playbook=playbook,
                 session=session,
-                state_callback=lambda state: self._save_recovery_state(session.id, state)
+                state_callback=lambda state: self._save_recovery_state(session.id, state),
+                target_assets=target_assets,
             )
             
             # Log results
@@ -301,77 +319,90 @@ class PanicManager:
             raise
     
     async def _save_recovery_state(self, session_id: UUID, state: Dict):
-        """Save recovery state for potential rollback"""
+        """Save recovery state for potential rollback (per-asset)."""
+        asset_id = state.get('asset', 'local')
         async with self.db.acquire() as conn:
             await conn.execute("""
                 INSERT INTO recovery_states
-                (session_id, component, component_id, pre_panic_state, current_state)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (session_id, component, component_id)
-                DO UPDATE SET current_state = $5
+                (session_id, component, component_id, asset_id, pre_panic_state, current_state)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (session_id, component, component_id, asset_id)
+                DO UPDATE SET current_state = excluded.current_state
             """, session_id, state['component'], state['component_id'],
-                json.dumps(state['pre_state']), json.dumps(state.get('current_state')))
+                asset_id,
+                json.dumps(state['pre_state']), json.dumps(state.get('current_state') or {}))
     
     async def rollback_panic(
         self,
         session_id: UUID,
         components: Optional[List[str]] = None,
+        target_assets: Optional[List[str]] = None,
         confirmation_token: Optional[str] = None,
         user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Rollback panic actions for specified components
-        
+        Rollback panic actions, optionally scoped to specific components and/or assets.
+
         Args:
             session_id: Panic session to rollback
             components: Specific components to rollback (None = all)
+            target_assets: Specific asset IDs to rollback (None = all assets in session)
             confirmation_token: User confirmation token
             user_id: User requesting rollback
-            
+
         Returns:
-            Dict with rollback results per component
+            Dict with rollback results keyed by ``component:asset_id``
         """
         # Validate confirmation
         if not await self._validate_confirmation(confirmation_token, user_id):
             raise ConfirmationTimeout("Rollback requires user confirmation")
-        
-        # Get recovery states
-        states = await self._get_recovery_states(session_id, components)
-        
+
+        # Get recovery states (filtered by component + asset)
+        states = await self._get_recovery_states(session_id, components, target_assets)
+
         if not states:
             return {"error": "No recovery states found for rollback"}
-        
+
         results = {}
-        
-        # Execute rollback for each component
+
+        # Execute rollback for each component+asset pair
         for state in states:
             component = state['component']
+            asset_id = state.get('asset_id', 'local')
+            result_key = f"{component}:{asset_id}"
+
             try:
-                # Get the appropriate rollback handler
+                # Inject 'asset' alias so action handlers can read it
+                state['asset'] = asset_id
+
                 rollback_result = await self.playbook_engine.rollback_component(
                     component=component,
                     recovery_state=state
                 )
-                
-                results[component] = {
+
+                results[result_key] = {
                     "status": "success",
+                    "asset_id": asset_id,
+                    "component": component,
                     "details": rollback_result
                 }
-                
+
                 # Mark as rolled back in database
                 await self._mark_rolled_back(state['id'])
-                
+
             except Exception as e:
-                logger.error(f"Rollback failed for {component}: {e}")
-                results[component] = {
+                logger.error(f"Rollback failed for {component} on {asset_id}: {e}")
+                results[result_key] = {
                     "status": "failed",
+                    "asset_id": asset_id,
+                    "component": component,
                     "error": str(e)
                 }
-        
-        # Update session status if all components rolled back
+
+        # Update session status if all states rolled back
         if all(r['status'] == 'success' for r in results.values()):
             await self._update_session_status(session_id, PanicStatus.ROLLED_BACK)
-        
+
         return results
     
     async def get_status(self, session_id: UUID) -> Dict[str, Any]:
@@ -459,14 +490,29 @@ class PanicManager:
         result: Optional[Dict] = None,
         error_message: Optional[str] = None
     ):
-        """Log a panic action to the database"""
+        """Log a panic action to the database.
+
+        Redacts sensitive fields (private keys, passwords) from the result
+        before persisting so they never end up in the logs table.
+        """
+        safe_result = dict(result or {})
+        # Walk one level into 'result' sub-dict too
+        _REDACT_KEYS = {'new_private_key', 'private_key', 'password', 'secret'}
+        for key in _REDACT_KEYS:
+            if key in safe_result:
+                safe_result[key] = '[REDACTED]'
+        if isinstance(safe_result.get('result'), dict):
+            for key in _REDACT_KEYS:
+                if key in safe_result['result']:
+                    safe_result['result'][key] = '[REDACTED]'
+
         async with self.db.acquire() as conn:
             await conn.execute("""
                 INSERT INTO panic_logs
                 (session_id, playbook_id, playbook_name, action_name, action_type, status, result, error_message)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """, session_id, playbook_id, playbook_name, action_name, action_type,
-                status, json.dumps(result or {}), error_message)
+                status, json.dumps(safe_result), error_message)
         
         # Notify via WebSocket
         await self._notify_websocket(session_id, {
@@ -479,22 +525,35 @@ class PanicManager:
     async def _get_recovery_states(
         self,
         session_id: UUID,
-        components: Optional[List[str]]
+        components: Optional[List[str]] = None,
+        target_assets: Optional[List[str]] = None,
     ) -> List[Dict]:
-        """Get recovery states for rollback"""
+        """Get recovery states for rollback, optionally filtered by component and asset."""
         async with self.db.acquire() as conn:
-            if components:
+            if components and target_assets:
+                rows = await conn.fetch("""
+                    SELECT * FROM recovery_states
+                    WHERE session_id = $1 AND component = ANY($2)
+                    AND asset_id = ANY($3) AND rollback_available = true
+                """, session_id, components, target_assets)
+            elif components:
                 rows = await conn.fetch("""
                     SELECT * FROM recovery_states
                     WHERE session_id = $1 AND component = ANY($2)
                     AND rollback_available = true
                 """, session_id, components)
+            elif target_assets:
+                rows = await conn.fetch("""
+                    SELECT * FROM recovery_states
+                    WHERE session_id = $1 AND asset_id = ANY($2)
+                    AND rollback_available = true
+                """, session_id, target_assets)
             else:
                 rows = await conn.fetch("""
                     SELECT * FROM recovery_states
                     WHERE session_id = $1 AND rollback_available = true
                 """, session_id)
-        
+
         return [dict(row) for row in rows]
     
     async def _mark_rolled_back(self, state_id: UUID):
@@ -504,6 +563,7 @@ class PanicManager:
                 UPDATE recovery_states
                 SET rollback_attempted = true,
                     rollback_succeeded = true,
+                    rollback_available = false,
                     rollback_at = CURRENT_TIMESTAMP
                 WHERE id = $1
             """, state_id)
@@ -529,14 +589,35 @@ class PanicManager:
                     logger.warning(f"Failed to send WebSocket message: {e}")
     
     async def _notify_completion(self, session: PanicSession):
-        """Send notifications when panic session completes"""
-        # Implement your notification logic (email, SMS, etc.)
+        """Send completion notification to AI via SecureChat (Trigger 2c)."""
         logger.info(f"Panic session {session.id} completed successfully")
+        chat = self._chat_manager
+        if chat:
+            try:
+                summary = (
+                    f"[Panic Room] Session COMPLETED — {session.trigger_reason}\n"
+                    f"Session: {session.id} | Source: {session.trigger_source}\n"
+                    f"All critical/high-priority playbooks executed successfully."
+                )
+                await chat.send_system(summary, MessageType.EVENT)
+            except Exception:
+                logger.warning("Failed to send panic completion to chat")
     
     async def _notify_failure(self, session: PanicSession, error: str):
-        """Send notifications when panic session fails"""
-        # Implement your notification logic
-        logger.error(f"Panic session {session.id} failed: {error}")
+        """Send failure notification to AI via SecureChat (Trigger 2c)."""
+        error_str = str(error) if error is not None else "Unknown error"
+        logger.error(f"Panic session {session.id} failed: {error_str}")
+        chat = self._chat_manager
+        if chat:
+            try:
+                summary = (
+                    f"[Panic Room] Session FAILED — {session.trigger_reason}\n"
+                    f"Session: {session.id} | Error: {error_str[:200]}\n"
+                    f"Critical/high-priority action failed. Manual intervention may be needed."
+                )
+                await chat.send_system(summary, MessageType.EVENT)
+            except Exception:
+                logger.warning("Failed to send panic failure to chat")
     
     async def _log_playbook_error(self, session: PanicSession, playbook: 'Playbook', error: Exception):
         """Log playbook execution error"""

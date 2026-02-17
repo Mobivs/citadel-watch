@@ -1,0 +1,349 @@
+<div id="performance-page" style="padding: 1rem;">
+<style>
+    #performance-page {
+        max-width: 1000px;
+        margin: 0 auto;
+    }
+    #performance-page .perf-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.25rem;
+    }
+    #performance-page .perf-header h2 {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #f0f0f0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    #performance-page .perf-header-right {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        font-size: 0.75rem;
+        color: #6b7280;
+    }
+    #performance-page .live-badge {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    #performance-page .live-dot {
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: #00cc66;
+    }
+    #performance-page .live-dot.disconnected { background: #6b7280; }
+
+    /* Fleet summary strip */
+    #performance-page .fleet-strip {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 1.25rem;
+    }
+    #performance-page .fleet-card {
+        padding: 0.75rem 1rem;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(0, 217, 255, 0.1);
+        border-radius: 10px;
+        text-align: center;
+    }
+    #performance-page .fleet-card .fleet-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    #performance-page .fleet-card .fleet-label {
+        font-size: 0.7rem;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    #performance-page .fleet-card.fc-total .fleet-value { color: #e0e0e0; }
+    #performance-page .fleet-card.fc-healthy .fleet-value { color: #00cc66; }
+    #performance-page .fleet-card.fc-watch .fleet-value { color: #e6b800; }
+    #performance-page .fleet-card.fc-critical .fleet-value { color: #ff3333; }
+
+    /* Fleet health bar */
+    #performance-page .fleet-bar-section {
+        margin-bottom: 1.25rem;
+        padding: 0.75rem 1rem;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(0, 217, 255, 0.1);
+        border-radius: 10px;
+    }
+    #performance-page .fleet-bar-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+    #performance-page .fleet-bar-header .score-text {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #e0e0e0;
+    }
+    #performance-page .fleet-bar-header .category-text {
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    #performance-page .fleet-health-bar {
+        display: flex;
+        width: 100%;
+        height: 8px;
+        border-radius: 4px;
+        overflow: hidden;
+        background: rgba(255,255,255,0.06);
+    }
+    #performance-page .bar-seg {
+        height: 100%;
+        transition: width 0.4s ease;
+    }
+    #performance-page .bar-seg-healthy { background: #00cc66; }
+    #performance-page .bar-seg-watch { background: #e6b800; }
+    #performance-page .bar-seg-attention { background: #ff9900; }
+    #performance-page .bar-seg-critical { background: #ff3333; }
+
+    /* Controls */
+    #performance-page .controls-row {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+        align-items: center;
+    }
+    #performance-page .control-group {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.75rem;
+        color: #9ca3af;
+    }
+    #performance-page .control-select {
+        padding: 0.3rem 0.5rem;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(0,0,0,0.3);
+        color: #e0e0e0;
+        font-size: 0.75rem;
+        outline: none;
+    }
+    #performance-page .control-select:focus {
+        border-color: rgba(0, 217, 255, 0.4);
+    }
+
+    /* Asset cards */
+    #performance-page .asset-attention-card {
+        position: relative;
+        overflow: hidden;
+        border-left: 4px solid transparent;
+        margin-bottom: 0.75rem;
+        padding: 0.875rem 1rem;
+        background: rgba(15, 23, 42, 0.6);
+        border-top: 1px solid rgba(255,255,255,0.04);
+        border-right: 1px solid rgba(255,255,255,0.04);
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+        border-radius: 10px;
+    }
+    #performance-page .asset-attention-card.cat-critical { border-left-color: #ff3333; }
+    #performance-page .asset-attention-card.cat-attention { border-left-color: #ff9900; }
+    #performance-page .asset-attention-card.cat-watch { border-left-color: #e6b800; }
+    #performance-page .asset-attention-card.cat-healthy { border-left-color: #00cc66; }
+
+    #performance-page .card-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 0.5rem;
+    }
+    #performance-page .card-name {
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #e0e0e0;
+    }
+    #performance-page .card-meta {
+        font-size: 0.7rem;
+        color: #6b7280;
+        margin-top: 0.15rem;
+    }
+    #performance-page .card-score {
+        text-align: right;
+    }
+    #performance-page .score-number {
+        font-size: 1.25rem;
+        font-weight: 700;
+        font-family: monospace;
+    }
+    #performance-page .score-max {
+        font-size: 0.65rem;
+        color: #6b7280;
+    }
+    #performance-page .category-badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.6rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.25rem;
+    }
+
+    /* Score bar */
+    #performance-page .score-bar-track {
+        width: 100%;
+        height: 6px;
+        background: rgba(255,255,255,0.08);
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 0.5rem;
+    }
+    #performance-page .score-bar-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.4s ease;
+    }
+
+    /* Sub-score grid */
+    #performance-page .sub-score-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0.25rem;
+        margin-bottom: 0.5rem;
+    }
+    #performance-page .sub-score-item {
+        text-align: center;
+    }
+    #performance-page .sub-score-label {
+        font-size: 0.6rem;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+    #performance-page .sub-score-value {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #e5e7eb;
+    }
+
+    /* Reason chips */
+    #performance-page .reason-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+    #performance-page .reason-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.15rem 0.5rem;
+        border-radius: 9999px;
+        font-size: 0.65rem;
+        font-weight: 600;
+        background: rgba(255,255,255,0.08);
+        color: #9ca3af;
+    }
+    #performance-page .chip-critical {
+        background: rgba(255,51,51,0.15);
+        color: #ff3333;
+    }
+    #performance-page .chip-warning {
+        background: rgba(255,153,0,0.15);
+        color: #ff9900;
+    }
+    #performance-page .chip-info {
+        background: rgba(0,217,255,0.10);
+        color: #00D9FF;
+    }
+
+    /* Empty state */
+    #performance-page .empty-state {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: #6b7280;
+    }
+    #performance-page .empty-state svg {
+        margin: 0 auto 1rem;
+        opacity: 0.4;
+    }
+    #performance-page .empty-state p {
+        font-size: 0.85rem;
+    }
+</style>
+
+<!-- Header -->
+<div class="perf-header">
+    <h2>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00D9FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Performance Analytics
+    </h2>
+    <div class="perf-header-right">
+        <div class="live-badge" id="perf-live-badge">
+            <div class="live-dot" id="perf-live-dot"></div>
+            <span id="perf-live-text">Live</span>
+        </div>
+        <span id="perf-last-updated"></span>
+    </div>
+</div>
+
+<!-- Fleet Summary Strip -->
+<div class="fleet-strip">
+    <div class="fleet-card fc-total">
+        <div class="fleet-value" id="fleet-total">0</div>
+        <div class="fleet-label">Total Systems</div>
+    </div>
+    <div class="fleet-card fc-healthy">
+        <div class="fleet-value" id="fleet-healthy">0</div>
+        <div class="fleet-label">Healthy</div>
+    </div>
+    <div class="fleet-card fc-watch">
+        <div class="fleet-value" id="fleet-watch">0</div>
+        <div class="fleet-label">Watch / Attn</div>
+    </div>
+    <div class="fleet-card fc-critical">
+        <div class="fleet-value" id="fleet-critical">0</div>
+        <div class="fleet-label">Critical</div>
+    </div>
+</div>
+
+<!-- Fleet Health Bar -->
+<div class="fleet-bar-section">
+    <div class="fleet-bar-header">
+        <span class="score-text">Fleet Score: <strong id="fleet-score-value">0</strong> / 100</span>
+        <span class="category-text" id="fleet-score-label">Healthy</span>
+    </div>
+    <div class="fleet-health-bar" id="fleet-health-bar"></div>
+</div>
+
+<!-- Sort / Filter Controls -->
+<div class="controls-row">
+    <div class="control-group">
+        <label for="perf-sort-select">Sort:</label>
+        <select class="control-select" id="perf-sort-select">
+            <option value="attention">Attention Score</option>
+            <option value="name">Name</option>
+            <option value="status">Status</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label for="perf-filter-select">Filter:</label>
+        <select class="control-select" id="perf-filter-select">
+            <option value="all">All</option>
+            <option value="critical">Critical</option>
+            <option value="attention">Attention</option>
+            <option value="watch">Watch</option>
+            <option value="healthy">Healthy</option>
+        </select>
+    </div>
+</div>
+
+<!-- Asset Cards Container -->
+<div id="asset-cards-container">
+    <div class="empty-state" id="perf-empty">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <p>No systems registered. Add assets to see performance analytics.</p>
+    </div>
+</div>
+
+</div>

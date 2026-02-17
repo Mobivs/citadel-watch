@@ -296,13 +296,13 @@ a:focus-visible {
     background: var(--sev-critical);
 }
 
-.conn-simulated {
+.conn-connecting {
     background: rgba(var(--sev-medium-rgb), 0.15);
     color: var(--sev-medium);
     border: 1px solid rgba(var(--sev-medium-rgb), 0.3);
 }
 
-.conn-simulated .conn-dot {
+.conn-connecting .conn-dot {
     background: var(--sev-medium);
 }
 
@@ -625,4 +625,22 @@ process-list {
     height: min(460px, 60vh);
     max-height: min(460px, 60vh);
     overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Simplified Mode Overrides (v0.3.25)
+   Hide technical controls when body.simplified-mode is set
+   ═══════════════════════════════════════════════════════════════════ */
+
+body.simplified-mode #add-asset-btn,
+body.simplified-mode #filter-threat,
+body.simplified-mode #filter-status,
+body.simplified-mode #clear-filters-btn,
+body.simplified-mode .page-size-select,
+body.simplified-mode #page-size-select {
+    display: none !important;
+}
+
+body.simplified-mode .process-list {
+    display: none;
 }

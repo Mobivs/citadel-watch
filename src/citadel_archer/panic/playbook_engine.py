@@ -52,16 +52,28 @@ class PlaybookEngine:
     Engine for executing panic playbooks
     Handles action orchestration, state management, and rollback
     """
-    
-    def __init__(self, db_connection, config: Dict[str, Any]):
+
+    def __init__(self, db_connection, config: Dict[str, Any], ssh_manager=None):
         self.db = db_connection
         self.config = config
+        self._ssh_manager = ssh_manager
+        self._panic_dispatcher = None
         self.action_handlers = self._initialize_action_handlers()
         self.check_handlers = self._initialize_check_handlers()
+
+    def set_ssh_manager(self, ssh_manager) -> None:
+        """Inject or update SSH Manager for remote execution."""
+        self._ssh_manager = ssh_manager
+        for handler in self.action_handlers.values():
+            handler.set_ssh_manager(ssh_manager)
+
+    def set_panic_dispatcher(self, dispatcher) -> None:
+        """Inject RemotePanicDispatcher for agent-backed asset execution."""
+        self._panic_dispatcher = dispatcher
         
     def _initialize_action_handlers(self) -> Dict[str, BaseAction]:
         """Initialize all available action handlers"""
-        return {
+        handlers = {
             'network': NetworkIsolation(self.db, self.config),
             'firewall': NetworkIsolation(self.db, self.config),
             'credentials': CredentialRotation(self.db, self.config),
@@ -74,6 +86,11 @@ class PlaybookEngine:
             'backup': SecureBackup(self.db, self.config),
             'data': SecureBackup(self.db, self.config),
         }
+        # Inject SSH manager into all handlers if available
+        if self._ssh_manager is not None:
+            for handler in handlers.values():
+                handler.set_ssh_manager(self._ssh_manager)
+        return handlers
     
     def _initialize_check_handlers(self) -> Dict[str, Callable]:
         """Initialize pre-flight check handlers"""
@@ -132,95 +149,136 @@ class PlaybookEngine:
         self,
         playbook: Playbook,
         session: 'PanicSession',
-        state_callback: Optional[Callable] = None
+        state_callback: Optional[Callable] = None,
+        target_assets: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Execute all actions in a playbook
-        
+        Execute all actions in a playbook across target assets.
+
         Args:
             playbook: Playbook to execute
             session: Current panic session
             state_callback: Callback for saving recovery state
-            
+            target_assets: List of asset IDs to target. ``["local"]``
+                          (the default) executes on this machine only.
+                          If one asset fails, execution continues on others.
+
         Returns:
-            List of action results
+            List of action results (one per action per asset)
         """
+        if target_assets is None:
+            target_assets = ["local"]
+
         results = []
-        
-        for action in playbook.actions:
-            try:
-                # Get the appropriate handler
-                handler = self.action_handlers.get(action.type)
-                
-                if not handler:
-                    logger.error(f"No handler for action type: {action.type}")
+
+        for asset_id in target_assets:
+            logger.info(f"Executing playbook '{playbook.id}' on asset '{asset_id}'")
+
+            for action in playbook.actions:
+                # Inject target_asset into action params for the handler
+                action.params["target_asset"] = asset_id
+
+                try:
+                    # Check if this asset is backed by a Remote Shield agent
+                    if self._panic_dispatcher and asset_id != "local":
+                        agent_id = self._panic_dispatcher.resolve_agent_id(asset_id)
+                        if agent_id:
+                            dispatch_result = self._panic_dispatcher.dispatch(
+                                agent_id=agent_id,
+                                action_type=action.type,
+                                payload=action.params,
+                                session_id=str(session.id),
+                            )
+                            results.append({
+                                "action": action.name,
+                                "type": action.type,
+                                "asset": asset_id,
+                                "status": "queued",
+                                "command_id": dispatch_result["command_id"],
+                                "agent_id": agent_id,
+                            })
+                            continue
+
+                    # Get the appropriate handler
+                    handler = self.action_handlers.get(action.type)
+
+                    if not handler:
+                        logger.error(f"No handler for action type: {action.type}")
+                        results.append({
+                            'action': action.name,
+                            'type': action.type,
+                            'asset': asset_id,
+                            'status': 'failed',
+                            'error': f"No handler for action type {action.type}"
+                        })
+                        continue
+
+                    # Save pre-action state for rollback
+                    pre_state = None
+                    if state_callback:
+                        pre_state = await handler.capture_state(action)
+                        await state_callback({
+                            'component': action.type,
+                            'component_id': action.name,
+                            'asset': asset_id,
+                            'pre_state': pre_state,
+                            'current_state': None
+                        })
+
+                    # Execute the action with timeout
+                    result = await asyncio.wait_for(
+                        handler.execute(action, session),
+                        timeout=action.timeout
+                    )
+
+                    # Tag result with asset context
+                    result.setdefault('asset', asset_id)
+
+                    # Save post-action state
+                    if state_callback and result.get('status') == 'success':
+                        post_state = await handler.capture_state(action)
+                        await state_callback({
+                            'component': action.type,
+                            'component_id': action.name,
+                            'asset': asset_id,
+                            'pre_state': pre_state,
+                            'current_state': post_state
+                        })
+
+                    results.append(result)
+
+                except asyncio.TimeoutError:
+                    logger.error(f"Action {action.name} on {asset_id} timed out after {action.timeout}s")
                     results.append({
                         'action': action.name,
                         'type': action.type,
+                        'asset': asset_id,
                         'status': 'failed',
-                        'error': f"No handler for action type {action.type}"
+                        'error': f"Timeout after {action.timeout} seconds"
                     })
-                    continue
-                
-                # Save pre-action state for rollback
-                if state_callback:
-                    pre_state = await handler.capture_state(action)
-                    await state_callback({
-                        'component': action.type,
-                        'component_id': action.name,
-                        'pre_state': pre_state,
-                        'current_state': None
+
+                    # For required actions, break THIS asset's loop (continue to next asset)
+                    if action.required:
+                        break
+
+                except Exception as e:
+                    logger.error(f"Action {action.name} on {asset_id} failed: {e}")
+                    results.append({
+                        'action': action.name,
+                        'type': action.type,
+                        'asset': asset_id,
+                        'status': 'failed',
+                        'error': str(e)
                     })
-                
-                # Execute the action with timeout
-                result = await asyncio.wait_for(
-                    handler.execute(action, session),
-                    timeout=action.timeout
-                )
-                
-                # Save post-action state
-                if state_callback and result.get('status') == 'success':
-                    post_state = await handler.capture_state(action)
-                    await state_callback({
-                        'component': action.type,
-                        'component_id': action.name,
-                        'pre_state': pre_state,
-                        'current_state': post_state
-                    })
-                
-                results.append(result)
-                
-            except asyncio.TimeoutError:
-                logger.error(f"Action {action.name} timed out after {action.timeout}s")
-                results.append({
-                    'action': action.name,
-                    'type': action.type,
-                    'status': 'failed',
-                    'error': f"Timeout after {action.timeout} seconds"
-                })
-                
-                # Continue with next action if this one isn't required
-                if action.required:
-                    break
-                    
-            except Exception as e:
-                logger.error(f"Action {action.name} failed: {e}")
-                results.append({
-                    'action': action.name,
-                    'type': action.type,
-                    'status': 'failed',
-                    'error': str(e)
-                })
-                
-                # Retry if configured
-                if action.retry_count > 0:
-                    logger.info(f"Retrying action {action.name} ({action.retry_count} retries left)")
-                    action.retry_count -= 1
-                    # Add back to queue for retry
-                    playbook.actions.insert(playbook.actions.index(action) + 1, action)
-                elif action.required:
-                    break
-        
+
+                    # Retry if configured
+                    if action.retry_count > 0:
+                        logger.info(f"Retrying action {action.name} ({action.retry_count} retries left)")
+                        action.retry_count -= 1
+                        playbook.actions.insert(playbook.actions.index(action) + 1, action)
+                    elif action.required:
+                        break
+
         return results
     
     async def run_check(self, check: Dict[str, Any]) -> Dict[str, Any]:

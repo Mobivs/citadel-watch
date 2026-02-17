@@ -161,39 +161,38 @@ class CitadelDesktopApp:
         print("❌ Backend failed to start within timeout")
         return False
 
-    def _start_ws_watchdog(self):
+    def _start_heartbeat_watchdog(self):
         """
-        Monitor WebSocket connections to detect window close.
+        Monitor frontend heartbeat to detect window close.
 
-        After the first client connects, if ALL clients disconnect
-        for 30+ seconds, assume the user closed the app window and
-        trigger shutdown. Handles page refreshes gracefully (brief
-        disconnect followed by reconnect).
+        The frontend POSTs to /api/heartbeat every 5 seconds.
+        If no heartbeat is received for 15 seconds after the first one,
+        assume the user closed the window and trigger shutdown.
         """
-        from .api.main import manager  # Import here to avoid circular at module level
+        from .api.main import get_last_heartbeat
 
         def watchdog():
-            # Wait for at least one client to connect
+            # Wait for first heartbeat (window opened and loaded)
             while not self.is_shutting_down:
-                if len(manager.active_connections) > 0:
+                if get_last_heartbeat() is not None:
                     break
                 time.sleep(1)
 
-            # Now watch for all-disconnected state
-            disconnected_since = None
-            grace_period = 30  # seconds
+            print("  Heartbeat watchdog active")
+
+            # Monitor for heartbeat timeout
+            grace_period = 15  # seconds
 
             while not self.is_shutting_down:
-                if len(manager.active_connections) == 0:
-                    if disconnected_since is None:
-                        disconnected_since = time.time()
-                    elif time.time() - disconnected_since > grace_period:
-                        print(f"\n🪟 No connected clients for {grace_period}s — window likely closed.")
+                last = get_last_heartbeat()
+                if last is not None:
+                    from datetime import datetime, timezone
+                    elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+                    if elapsed > grace_period:
+                        print(f"\n  No heartbeat for {elapsed:.0f}s — window closed.")
                         self.cleanup()
-                        break
-                else:
-                    disconnected_since = None  # Reset on reconnect
-                time.sleep(2)
+                        sys.exit(0)
+                time.sleep(3)
 
         t = threading.Thread(target=watchdog, daemon=True)
         t.start()
@@ -218,7 +217,9 @@ class CitadelDesktopApp:
                 f"--app={url}",
                 "--window-size=1280,800",
                 "--disable-features=TranslateUI",
-                "--no-first-run"
+                "--no-first-run",
+                "--disk-cache-size=0",
+                "--aggressive-cache-discard",
             ])
             print("✅ Desktop window opened!")
             return True
@@ -294,7 +295,7 @@ class CitadelDesktopApp:
         #   - Ctrl+C / SIGINT (signal handler triggers cleanup)
         #   - WebSocket disconnect watchdog (all clients gone for 30s)
         #   - Port cleanup on next startup (catches any ghost)
-        self._start_ws_watchdog()
+        self._start_heartbeat_watchdog()
 
         try:
             while not self.is_shutting_down:

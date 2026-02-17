@@ -82,6 +82,19 @@ class APIClient {
     }
 
     /**
+     * PUT request with authentication
+     */
+    async put(url, data) {
+        return this.request(url, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+    }
+
+    /**
      * DELETE request with authentication
      */
     async delete(url) {

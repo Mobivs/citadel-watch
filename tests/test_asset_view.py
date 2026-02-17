@@ -88,7 +88,7 @@ def _make_asset(
 
 @pytest.fixture
 def inventory():
-    inv = AssetInventory()
+    inv = AssetInventory(db_path=None)
     inv.register(_make_asset("srv-1", "Server 1", AssetStatus.ONLINE))
     inv.register(_make_asset("srv-2", "Server 2", AssetStatus.PROTECTED))
     inv.register(_make_asset("ws-1", "Workstation 1", AssetStatus.OFFLINE))

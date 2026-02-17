@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Citadel Archer - Install Agent</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0e17; color: #e0e0e0; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 2rem 1rem;
+  }
+  .brand {
+    text-align: center; margin-bottom: 2rem;
+  }
+  .brand h1 {
+    font-size: 1.8rem; color: #00D9FF; font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .brand p { color: #6b7280; font-size: 0.85rem; margin-top: 0.25rem; }
+  .card {
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid rgba(0, 217, 255, 0.15);
+    border-radius: 12px; padding: 2rem; max-width: 600px; width: 100%;
+  }
+  .card h2 {
+    font-size: 1.2rem; color: #f0f0f0; margin-bottom: 0.5rem;
+  }
+  .card .subtitle {
+    color: #9ca3af; font-size: 0.9rem; margin-bottom: 1.5rem;
+  }
+  .info-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .info-row .label { color: #6b7280; font-size: 0.85rem; }
+  .info-row .value { color: #e0e0e0; font-size: 0.85rem; font-weight: 500; }
+  .countdown {
+    color: #00D9FF; font-weight: 600;
+  }
+  .countdown.expired { color: #ff3333; }
+  .section { margin-top: 1.5rem; }
+  .section h3 {
+    font-size: 1rem; color: #00D9FF; margin-bottom: 0.75rem;
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  .code-box {
+    background: #1a1f2e; border: 1px solid rgba(0, 217, 255, 0.2);
+    border-radius: 8px; padding: 0.75rem 1rem;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.8rem; color: #00D9FF;
+    word-break: break-all; position: relative;
+    cursor: pointer; transition: border-color 0.2s;
+  }
+  .code-box:hover { border-color: rgba(0, 217, 255, 0.5); }
+  .code-box .copy-hint {
+    position: absolute; top: 0.5rem; right: 0.5rem;
+    font-size: 0.7rem; color: #6b7280; font-family: inherit;
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.625rem 1.25rem; border-radius: 8px; border: none;
+    font-size: 0.875rem; font-weight: 600; cursor: pointer;
+    transition: all 0.2s; text-decoration: none;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #00D9FF 0%, #0099cc 100%);
+    color: #0a0e17;
+  }
+  .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  .btn-secondary {
+    background: rgba(0, 217, 255, 0.1); color: #00D9FF;
+    border: 1px solid rgba(0, 217, 255, 0.3);
+  }
+  .btn-secondary:hover { background: rgba(0, 217, 255, 0.2); }
+  .btn-group { display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
+  .details-toggle {
+    color: #6b7280; font-size: 0.8rem; cursor: pointer;
+    margin-top: 1rem; text-decoration: underline;
+  }
+  .details-toggle:hover { color: #9ca3af; }
+  .manual-steps {
+    display: none; margin-top: 0.75rem;
+    background: rgba(0,0,0,0.2); border-radius: 8px; padding: 1rem;
+  }
+  .manual-steps.visible { display: block; }
+  .manual-steps ol {
+    padding-left: 1.5rem; color: #9ca3af; font-size: 0.85rem;
+    line-height: 1.8;
+  }
+  .manual-steps code {
+    background: #1a1f2e; padding: 0.15rem 0.4rem; border-radius: 4px;
+    font-size: 0.8rem; color: #00D9FF;
+  }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.35rem 0.75rem; border-radius: 20px;
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .status-waiting {
+    background: rgba(234, 179, 8, 0.15); color: #eab308;
+    border: 1px solid rgba(234, 179, 8, 0.3);
+  }
+  .status-success {
+    background: rgba(34, 197, 94, 0.15); color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+  .status-expired {
+    background: rgba(239, 68, 68, 0.15); color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+  .toast {
+    position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
+    background: #22c55e; color: #0a0e17; padding: 0.5rem 1.25rem;
+    border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show { opacity: 1; }
+  .platform-section { display: none; }
+  .platform-section.active { display: block; }
+  .shield-icon { display: inline-block; width: 28px; height: 28px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<div class="brand">
+  <h1>
+    <svg class="shield-icon" viewBox="0 0 24 24" fill="none" stroke="#00D9FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    Citadel Archer
+  </h1>
+  <p>Home Network Security</p>
+</div>
+
+<div class="card">
+  <h2 id="heading">Install Security Agent</h2>
+  <p class="subtitle" id="subtitle">You've been invited to join the protected network</p>
+
+  <div class="info-row">
+    <span class="label">Agent Name</span>
+    <span class="value" id="agentName">—</span>
+  </div>
+  <div class="info-row">
+    <span class="label">Type</span>
+    <span class="value" id="agentType">—</span>
+  </div>
+  <div class="info-row">
+    <span class="label">Expires</span>
+    <span class="value"><span class="countdown" id="countdown">—</span></span>
+  </div>
+  <div class="info-row">
+    <span class="label">Status</span>
+    <span id="statusBadge" class="status-badge status-waiting">Waiting for install...</span>
+  </div>
+
+  <!-- Windows Section -->
+  <div id="windowsSection" class="platform-section section">
+    <h3>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="#00D9FF"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+      Windows — One-Click Install
+    </h3>
+    <p style="color: #9ca3af; font-size: 0.85rem; margin-bottom: 0.75rem;">
+      Open <strong>PowerShell</strong> and paste this command:
+    </p>
+    <div class="code-box" id="ps1Command" onclick="copyPS1()">
+      <span class="copy-hint">click to copy</span>
+      <span id="ps1Text">Loading...</span>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="copyPS1()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        Copy Install Command
+      </button>
+      <a class="btn btn-secondary" id="downloadLink" href="#">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Download Agent
+      </a>
+    </div>
+    <div class="details-toggle" onclick="toggleManual()">Manual setup instructions</div>
+    <div class="manual-steps" id="manualSteps">
+      <ol>
+        <li>Ensure <a href="https://python.org" target="_blank" style="color:#00D9FF;">Python 3.8+</a> is installed</li>
+        <li>Download <code>citadel_shield.py</code> using the button above</li>
+        <li>Open PowerShell in the download folder</li>
+        <li>Run: <code id="manualEnroll">python citadel_shield.py enroll ...</code></li>
+        <li>Run: <code>python citadel_shield.py install</code> (auto-start at logon)</li>
+        <li>Run: <code>python citadel_shield.py daemon</code> (start monitoring)</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- Other Platform Section -->
+  <div id="otherSection" class="platform-section section">
+    <h3>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00D9FF" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      Install on this computer
+    </h3>
+    <p style="color: #9ca3af; font-size: 0.85rem; margin-bottom: 0.75rem;">
+      Copy the invitation string and use it with the Citadel Shield agent:
+    </p>
+    <div class="code-box" id="compactString" onclick="copyCompact()">
+      <span class="copy-hint">click to copy</span>
+      <span id="compactText">Loading...</span>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="copyCompact()">Copy Invitation String</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Copied to clipboard!</div>
+
+<script>
+(function() {
+  const data = window.ENROLL_DATA || {};
+  const secret = new URLSearchParams(window.location.search).get('s') || '';
+  const invId = data.invitation_id || '';
+  const serverUrl = data.server_url || window.location.origin;
+  const compactString = 'CITADEL-1:' + invId + ':' + secret;
+
+  // Populate UI
+  const nameEl = document.getElementById('agentName');
+  const typeEl = document.getElementById('agentType');
+  if (nameEl) nameEl.textContent = data.agent_name || '—';
+  if (typeEl) typeEl.textContent = (data.agent_type || '—').replace('workstation', 'Windows PC');
+
+  // Build URLs
+  const ps1Url = serverUrl + '/enroll/' + invId + '/install.ps1?s=' + encodeURIComponent(secret);
+  const downloadUrl = serverUrl + '/enroll/' + invId + '/download/windows_shield.py?s=' + encodeURIComponent(secret);
+  const statusUrl = serverUrl + '/enroll/' + invId + '/status?s=' + encodeURIComponent(secret);
+
+  const ps1Text = document.getElementById('ps1Text');
+  if (ps1Text) ps1Text.textContent = 'irm ' + ps1Url + ' | iex';
+
+  const dlLink = document.getElementById('downloadLink');
+  if (dlLink) dlLink.href = downloadUrl;
+
+  const compactText = document.getElementById('compactText');
+  if (compactText) compactText.textContent = compactString;
+
+  const manualEl = document.getElementById('manualEnroll');
+  if (manualEl) manualEl.textContent = 'python citadel_shield.py enroll ' + serverUrl + ' ' + compactString;
+
+  // Platform detection
+  const isWindows = navigator.userAgent.indexOf('Windows') !== -1;
+  const winSection = document.getElementById('windowsSection');
+  const otherSection = document.getElementById('otherSection');
+  if (isWindows) {
+    if (winSection) winSection.classList.add('active');
+    if (otherSection) otherSection.classList.remove('active');
+  } else {
+    if (otherSection) otherSection.classList.add('active');
+    if (winSection) winSection.classList.remove('active');
+  }
+
+  // Countdown timer
+  const countdownEl = document.getElementById('countdown');
+  const expiresAt = data.expires_at ? new Date(data.expires_at + (data.expires_at.endsWith('Z') ? '' : 'Z')) : null;
+
+  let countdownInterval = null;
+  function updateCountdown() {
+    if (!expiresAt || !countdownEl) return;
+    const now = new Date();
+    const diff = expiresAt - now;
+    if (diff <= 0) {
+      countdownEl.textContent = 'Expired';
+      countdownEl.classList.add('expired');
+      if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+      return;
+    }
+    const mins = Math.floor(diff / 60000);
+    const secs = Math.floor((diff % 60000) / 1000);
+    countdownEl.textContent = mins + 'm ' + secs + 's remaining';
+  }
+  updateCountdown();
+  countdownInterval = setInterval(updateCountdown, 1000);
+
+  // Status polling
+  let statusInterval = setInterval(async function() {
+    try {
+      const resp = await fetch(statusUrl);
+      if (!resp.ok) return;
+      const result = await resp.json();
+      const badge = document.getElementById('statusBadge');
+      if (!badge) return;
+      if (result.status === 'redeemed') {
+        badge.className = 'status-badge status-success';
+        badge.textContent = 'Installed!';
+        clearInterval(statusInterval);
+        const heading = document.getElementById('heading');
+        if (heading) heading.textContent = 'Agent Installed Successfully!';
+        const subtitle = document.getElementById('subtitle');
+        if (subtitle) subtitle.textContent = 'The security agent is now protecting this computer.';
+      } else if (result.status === 'expired') {
+        badge.className = 'status-badge status-expired';
+        badge.textContent = 'Expired';
+        clearInterval(statusInterval);
+      }
+    } catch (e) { /* best-effort */ }
+  }, 5000);
+
+  // Clipboard helpers
+  window.copyPS1 = function() {
+    const text = 'irm ' + ps1Url + ' | iex';
+    copyText(text);
+  };
+  window.copyCompact = function() {
+    copyText(compactString);
+  };
+  window.toggleManual = function() {
+    var el = document.getElementById('manualSteps');
+    if (el) el.classList.toggle('visible');
+  };
+
+  function copyText(text) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(showToast).catch(fallbackCopy.bind(null, text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    showToast();
+  }
+  function showToast() {
+    var t = document.getElementById('toast');
+    if (!t) return;
+    t.classList.add('show');
+    setTimeout(function() { t.classList.remove('show'); }, 2000);
+  }
+})();
+</script>
+</body>
+</html>

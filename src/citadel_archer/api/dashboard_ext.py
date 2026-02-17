@@ -2,10 +2,11 @@
 # Reference: PHASE_2_SPEC.md
 #
 # Extends the Phase 1 FastAPI dashboard with:
-#   /api/charts       - Threat trend data for charting
-#   /api/timeline     - Alert history timeline
-#   /api/threat-score - Risk metric summary from ThreatScorer
-#   /api/assets       - Multi-asset inventory view
+#   /api/charts            - Threat trend data for charting
+#   /api/timeline          - Alert history timeline (local only)
+#   /api/timeline/unified  - Unified timeline (local + remote-shield + correlations)
+#   /api/threat-score      - Risk metric summary from ThreatScorer
+#   /api/asset-view        - Multi-asset inventory view (enriched with event counts)
 #
 # Also provides a dedicated /ws/events WebSocket for real-time
 # event streaming and a 5-minute TTL cache for expensive queries.
@@ -114,6 +115,48 @@ class TimelineResponse(BaseModel):
     generated_at: str
 
 
+class UnifiedTimelineEntry(BaseModel):
+    event_id: str
+    event_type: str
+    severity: str  # normalized: info|investigate|alert|critical
+    message: str
+    asset_id: str
+    timestamp: str
+    category: str
+    source: str  # local | remote-shield | correlation
+    source_detail: Optional[dict] = None
+
+
+class UnifiedTimelineResponse(BaseModel):
+    entries: List[UnifiedTimelineEntry]
+    total: int
+    stats: dict
+    generated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Severity normalization helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_remote_severity(score: int) -> str:
+    """Map remote shield 1-10 integer severity to 4-level string."""
+    if score >= 8:
+        return "critical"
+    if score >= 6:
+        return "alert"
+    if score >= 4:
+        return "investigate"
+    return "info"
+
+
+_CORRELATION_SEV_MAP = {"low": "info", "medium": "investigate", "high": "alert", "critical": "critical"}
+
+
+def _normalize_correlation_severity(level: str) -> str:
+    """Map correlation severity string to 4-level string."""
+    return _CORRELATION_SEV_MAP.get(level.lower(), "investigate")
+
+
 class ThreatScoreResponse(BaseModel):
     total_scored: int
     by_risk_level: Dict[str, int]
@@ -160,6 +203,19 @@ class DashboardServices:
         self.asset_inventory = None    # AssetInventory
         self.anomaly_detector = None   # AnomalyDetector
         self.guardian_updater = None   # GuardianUpdater
+        self.ssh_manager = None        # SSHConnectionManager
+        self.shield_db = None          # RemoteShieldDatabase
+        self.vault = None              # VaultManager
+        self.chat_manager = None       # ChatManager
+        self._correlator = None        # CrossAssetCorrelator
+        self._extension_scanner = None # ExtensionScanner
+        self._extension_watcher = None # ExtensionWatcher
+        self._extension_intel = None   # ExtensionIntelDatabase
+        self._ai_bridge = None         # AIBridge
+
+    def get(self, key: str, default=None):
+        """Dict-like access for service lookup by route modules."""
+        return getattr(self, key, default)
 
     # -- Charts (threat trends) -------------------------------------------
 
@@ -180,9 +236,9 @@ class DashboardServices:
         else:
             events = []
 
-        # Bucket events by hour
+        # Bucket events by hour (include current hour)
         buckets: Dict[str, Dict[str, int]] = {}
-        for i in range(0, hours, bucket_hours):
+        for i in range(0, hours + bucket_hours, bucket_hours):
             bucket_start = now - timedelta(hours=hours - i)
             key = bucket_start.strftime("%Y-%m-%dT%H:00:00")
             buckets[key] = {"low": 0, "medium": 0, "high": 0, "critical": 0, "total": 0}
@@ -261,6 +317,138 @@ class DashboardServices:
             generated_at=datetime.utcnow().isoformat(),
         )
         cache.set(cache_key, result)
+        return result
+
+    # -- Unified timeline (all sources) -----------------------------------
+
+    def get_unified_timeline(
+        self,
+        limit: int = 100,
+        severity: Optional[str] = None,
+        asset_id: Optional[str] = None,
+        source: Optional[str] = None,
+        time_from: Optional[str] = None,
+        time_to: Optional[str] = None,
+    ) -> UnifiedTimelineResponse:
+        # Normalize empty strings to None for consistent cache keys
+        severity = severity or None
+        asset_id = asset_id or None
+        source = source or None
+        time_from = time_from or None
+        time_to = time_to or None
+
+        cache_key = f"unified:{limit}:{severity}:{asset_id}:{source}:{time_from}:{time_to}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        merged: List[UnifiedTimelineEntry] = []
+
+        # 1. Local events from EventAggregator
+        if self.event_aggregator is not None and source in (None, "", "local"):
+            for evt in self.event_aggregator.recent(limit=limit * 2):
+                merged.append(UnifiedTimelineEntry(
+                    event_id=evt.event_id,
+                    event_type=evt.event_type,
+                    severity=evt.severity,
+                    message=evt.message,
+                    asset_id=evt.asset_id or "",
+                    timestamp=evt.timestamp,
+                    category=evt.category.value,
+                    source="local",
+                ))
+
+        # 2. Remote Shield threats
+        if self.shield_db is not None and source in (None, "", "remote-shield"):
+            threats = self.shield_db.list_threats(limit=limit)
+            for t in threats:
+                norm_sev = _normalize_remote_severity(t.get("severity", 5))
+                merged.append(UnifiedTimelineEntry(
+                    event_id=t["id"],
+                    event_type=t.get("type", "unknown"),
+                    severity=norm_sev,
+                    message=t.get("title", ""),
+                    asset_id=t.get("agent_id", ""),
+                    timestamp=t.get("detected_at") or t.get("reported_at") or t.get("created_at", ""),
+                    category="remote",
+                    source="remote-shield",
+                    source_detail={
+                        "original_severity": t.get("severity"),
+                        "agent_id": t.get("agent_id"),
+                        "hostname": t.get("hostname"),
+                        "status": t.get("status"),
+                    },
+                ))
+
+        # 3. Cross-asset correlations
+        if self._correlator is not None and source in (None, "", "correlation"):
+            try:
+                corrs = self._correlator.recent_correlations(limit=limit)
+            except Exception:
+                corrs = []
+            for c in corrs:
+                norm_sev = _normalize_correlation_severity(c.get("severity", "medium"))
+                merged.append(UnifiedTimelineEntry(
+                    event_id=c.get("correlation_id", ""),
+                    event_type=c.get("correlation_type", "correlation"),
+                    severity=norm_sev,
+                    message=c.get("description", "Cross-system correlation detected"),
+                    asset_id=",".join(c.get("affected_assets", [])),
+                    timestamp=c.get("last_seen") or c.get("first_seen", ""),
+                    category="correlation",
+                    source="correlation",
+                    source_detail={
+                        "original_severity": c.get("severity"),
+                        "correlation_type": c.get("correlation_type"),
+                        "affected_assets": c.get("affected_assets", []),
+                        "indicator": c.get("indicator", ""),
+                        "event_count": c.get("event_count", 0),
+                    },
+                ))
+
+        # Apply filters
+        if severity:
+            merged = [e for e in merged if e.severity.lower() == severity.lower()]
+        if asset_id:
+            # Substring match supports correlation entries with comma-joined asset IDs
+            merged = [e for e in merged if asset_id in e.asset_id.split(",")]
+
+        def _norm_ts(ts: str) -> str:
+            """Strip timezone suffixes for safe string comparison."""
+            return ts.replace("Z", "").split("+")[0]
+
+        if time_from:
+            nf = _norm_ts(time_from)
+            merged = [e for e in merged if _norm_ts(e.timestamp) >= nf]
+        if time_to:
+            nt = _norm_ts(time_to)
+            merged = [e for e in merged if _norm_ts(e.timestamp) <= nt]
+
+        # Sort by timestamp descending (normalise for consistent ordering)
+        merged.sort(key=lambda e: _norm_ts(e.timestamp), reverse=True)
+
+        # Compute stats before slicing
+        sev_counts = {"info": 0, "investigate": 0, "alert": 0, "critical": 0}
+        source_counts = {"local": 0, "remote-shield": 0, "correlation": 0}
+        for e in merged:
+            sev_counts[e.severity] = sev_counts.get(e.severity, 0) + 1
+            source_counts[e.source] = source_counts.get(e.source, 0) + 1
+
+        # Slice to limit
+        entries = merged[:limit]
+
+        result = UnifiedTimelineResponse(
+            entries=entries,
+            total=len(merged),
+            stats={
+                "local_count": source_counts.get("local", 0),
+                "remote_count": source_counts.get("remote-shield", 0),
+                "correlation_count": source_counts.get("correlation", 0),
+                "by_severity": sev_counts,
+            },
+            generated_at=datetime.utcnow().isoformat(),
+        )
+        cache.set(cache_key, result, ttl=30.0)  # shorter TTL for real-time feel
         return result
 
     # -- Threat score (risk metrics) --------------------------------------
@@ -444,6 +632,27 @@ async def get_timeline(
     return services.get_timeline(limit=limit, severity=severity, asset_id=asset_id)
 
 
+@router.get("/timeline/unified", response_model=UnifiedTimelineResponse)
+async def get_unified_timeline(
+    limit: int = Query(100, ge=1, le=1000),
+    severity: Optional[str] = Query(None),
+    asset_id: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    time_from: Optional[str] = Query(None),
+    time_to: Optional[str] = Query(None),
+    _token: str = Depends(verify_session_token),
+):
+    """Unified threat timeline merging local, remote-shield, and correlation events."""
+    return services.get_unified_timeline(
+        limit=limit,
+        severity=severity,
+        asset_id=asset_id,
+        source=source,
+        time_from=time_from,
+        time_to=time_to,
+    )
+
+
 @router.get("/threat-score", response_model=ThreatScoreResponse)
 async def get_threat_score(
     _token: str = Depends(verify_session_token),
@@ -452,13 +661,16 @@ async def get_threat_score(
     return services.get_threat_score()
 
 
-@router.get("/assets", response_model=AssetsResponse)
-async def get_assets(
+@router.get("/asset-view", response_model=AssetsResponse)
+async def get_asset_view(
     status: Optional[str] = Query(None),
     platform: Optional[str] = Query(None),
     _token: str = Depends(verify_session_token),
 ):
-    """Multi-asset inventory view with event counts."""
+    """Multi-asset inventory view enriched with event counts.
+
+    Note: For CRUD operations, use /api/assets (asset_routes).
+    """
     return services.get_assets(status_filter=status, platform_filter=platform)
 
 
@@ -477,3 +689,189 @@ async def clear_cache(
     """Invalidate all cached responses."""
     n = cache.clear()
     return {"cleared": n}
+
+
+@router.get("/correlations")
+async def get_correlations(
+    limit: int = Query(20, ge=1, le=100),
+    _token: str = Depends(verify_session_token),
+):
+    """Return recent cross-asset threat correlations."""
+    try:
+        correlator = services._correlator
+        if correlator is None:
+            return {"correlations": [], "stats": {}, "total": 0}
+        correlations = correlator.recent_correlations(limit=limit)
+        return {
+            "correlations": correlations,
+            "stats": correlator.stats(),
+            "total": len(correlations),
+        }
+    except Exception:
+        return {"correlations": [], "stats": {}, "total": 0}
+
+
+@router.get("/correlation-stats")
+async def get_correlation_stats(
+    _token: str = Depends(verify_session_token),
+):
+    """Return cross-asset correlation engine statistics."""
+    correlator = getattr(services, "_correlator", None)
+    if correlator is None:
+        return {"running": False, "indicator_count": 0, "tracked_assets": 0}
+    return correlator.stats()
+
+
+@router.get("/extensions")
+async def get_extensions(
+    _token: str = Depends(verify_session_token),
+):
+    """Return the most recent browser extension scan results."""
+    scanner = services._extension_scanner
+    if scanner is None:
+        return {"extensions": [], "total": 0, "flagged": 0, "by_risk": {}, "by_browser": {}}
+    result = scanner.last_scan
+    if result is None:
+        return {"extensions": [], "total": 0, "flagged": 0, "by_risk": {}, "by_browser": {}}
+    return result.to_dict()
+
+
+@router.post("/extensions/scan")
+async def trigger_extension_scan(
+    _token: str = Depends(verify_session_token),
+):
+    """Trigger a fresh browser extension scan."""
+    import asyncio
+    scanner = services._extension_scanner
+    if scanner is None:
+        return {"error": "Extension scanner not initialized", "total": 0}
+    result = await asyncio.to_thread(scanner.scan_all)
+
+    # Update watcher's known set after rescan
+    watcher = services._extension_watcher
+    if watcher:
+        watcher.set_known_extensions(
+            {e.extension_id for e in result.extensions}
+        )
+
+    return result.to_dict()
+
+
+@router.get("/extensions/intel")
+async def get_extension_intel_stats(
+    _token: str = Depends(verify_session_token),
+):
+    """Return extension threat intelligence database stats."""
+    intel = services._extension_intel
+    if intel is None:
+        return {"known_malicious_count": 0, "custom_blocklist_count": 0}
+    return intel.stats()
+
+
+@router.get("/extensions/watcher")
+async def get_extension_watcher_status(
+    _token: str = Depends(verify_session_token),
+):
+    """Return extension watcher status."""
+    watcher = services._extension_watcher
+    if watcher is None:
+        return {"running": False, "detected_count": 0}
+    return {
+        "running": watcher.running,
+        "detected_count": watcher.detected_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# User Preferences endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/preferences")
+async def get_all_preferences(
+    _token: str = Depends(verify_session_token),
+):
+    """Return all user preferences as a dict."""
+    from ..core.user_preferences import get_user_preferences
+
+    prefs = get_user_preferences()
+    return prefs.get_all()
+
+
+@router.get("/preferences/{key}")
+async def get_preference(
+    key: str,
+    _token: str = Depends(verify_session_token),
+):
+    """Return a single preference value."""
+    from ..core.user_preferences import get_user_preferences
+
+    prefs = get_user_preferences()
+    value = prefs.get(key)
+    return {"key": key, "value": value}
+
+
+class PreferenceUpdate(BaseModel):
+    value: str
+
+
+@router.put("/preferences/{key}")
+async def set_preference(
+    key: str,
+    body: PreferenceUpdate,
+    _token: str = Depends(verify_session_token),
+):
+    """Set a user preference (upsert)."""
+    from ..core.user_preferences import get_user_preferences
+
+    prefs = get_user_preferences()
+    prefs.set(key, body.value)
+    return {"key": key, "value": body.value}
+
+
+# ---------------------------------------------------------------------------
+# AI / Ollama endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/ai/status")
+async def get_ai_status(
+    _token: str = Depends(verify_session_token),
+):
+    """Return AI backend status: active backend, Ollama availability, models."""
+    bridge = services._ai_bridge
+    if bridge is None:
+        return {
+            "enabled": False,
+            "active_backend": "none",
+            "ollama": {"available": False},
+        }
+    ollama = await bridge.ollama_status()
+    return {
+        "enabled": bridge.enabled,
+        "active_backend": bridge.active_backend,
+        "ollama": ollama,
+    }
+
+
+@router.get("/ai/ollama/models")
+async def get_ollama_models(
+    _token: str = Depends(verify_session_token),
+):
+    """List locally available Ollama models."""
+    bridge = services._ai_bridge
+    if bridge is None:
+        return {"models": [], "current": None}
+    return await bridge.list_ollama_models()
+
+
+@router.post("/ai/ollama/model")
+async def set_ollama_model(
+    _token: str = Depends(verify_session_token),
+    model: str = Query(..., min_length=1, description="Ollama model name"),
+):
+    """Switch the active Ollama model."""
+    bridge = services._ai_bridge
+    if bridge is None:
+        return {"error": "AI Bridge not initialized"}
+    return await bridge.set_ollama_model(model)

@@ -432,7 +432,7 @@ class TestTimelineHTML:
         path = FRONTEND_DIR / "timeline.html"
         if not path.exists():
             pytest.skip("timeline.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_d3_cdn(self, html_content):
         assert "d3" in html_content.lower()
@@ -509,7 +509,7 @@ class TestTimelineJS:
         path = FRONTEND_DIR / "js" / "timeline.js"
         if not path.exists():
             pytest.skip("timeline.js not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_imports_api_client(self, js_content):
         assert "api-client" in js_content
@@ -564,13 +564,13 @@ class TestTimelineNavigation:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_timeline_tab(self, index_content):
         assert 'id="tab-btn-timeline"' in index_content
 
     def test_has_timeline_panel(self, index_content):
-        assert 'id="tab-panel-timeline"' in index_content
+        assert 'id="tab-panel-dynamic"' in index_content  # shared dynamic panel
 
     def test_timeline_tab_after_charts(self, index_content):
         charts_pos = index_content.index('id="tab-btn-charts"')
@@ -586,7 +586,7 @@ class TestTimelineRoutes:
         path = Path(__file__).parent.parent / "src" / "citadel_archer" / "api" / "main.py"
         if not path.exists():
             pytest.skip("main.py not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_timeline_html_route(self, main_content):
         assert "/timeline.html" in main_content

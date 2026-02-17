@@ -32,8 +32,9 @@ class IntelStore:
         self.db_path = db_path
         self._lock = threading.RLock()
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        from ..core.db import connect as db_connect
+
+        self._conn = db_connect(db_path, check_same_thread=False, row_factory=True)
         self._create_tables()
 
     def _create_tables(self) -> None:
@@ -68,6 +69,8 @@ class IntelStore:
                 );
                 """
             )
+            # Re-assert foreign_keys after executescript (defensive)
+            self._conn.execute("PRAGMA foreign_keys=ON")
             # Ensure version row exists
             row = self._conn.execute(
                 "SELECT version FROM schema_version LIMIT 1"

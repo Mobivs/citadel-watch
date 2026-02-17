@@ -7,6 +7,7 @@
 # - Configuration
 # - Encryption utilities
 
+from .db import connect as db_connect
 from .audit_log import (
     AuditLogger,
     EventSeverity,
@@ -22,6 +23,8 @@ from .security_levels import (
 )
 
 __all__ = [
+    # Database
+    "db_connect",
     # Security Levels
     "SecurityLevel",
     "SecurityLevelManager",

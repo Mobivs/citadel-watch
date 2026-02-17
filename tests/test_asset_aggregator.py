@@ -78,6 +78,7 @@ class TestAssetStatus:
             AssetStatus.OFFLINE,
             AssetStatus.PROTECTED,
             AssetStatus.COMPROMISED,
+            AssetStatus.UNKNOWN,
         }
 
     def test_is_healthy(self):
@@ -95,7 +96,7 @@ class TestAsset:
     def test_defaults(self):
         a = Asset()
         assert a.asset_id  # auto-generated UUID
-        assert a.status == AssetStatus.ONLINE
+        assert a.status == AssetStatus.UNKNOWN
         assert a.platform == AssetPlatform.LOCAL
         assert a.guardian_active is False
 
@@ -108,7 +109,7 @@ class TestAsset:
         a = _make_asset()
         d = a.to_dict()
         assert d["platform"] == "local"
-        assert d["status"] == "online"
+        assert d["status"] == "unknown"
         assert d["hostname"] == "dev-box.local"
 
     def test_touch_updates_last_seen(self):
@@ -135,24 +136,24 @@ class TestAsset:
 
 class TestAssetInventory:
     def test_register_and_get(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset()
         aid = inv.register(a)
         assert inv.get(aid) is a
 
     def test_get_nonexistent(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         assert inv.get("no-such-id") is None
 
     def test_count(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         assert inv.count == 0
         inv.register(_make_asset(name="a"))
         inv.register(_make_asset(name="b"))
         assert inv.count == 2
 
     def test_remove(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset()
         inv.register(a)
         assert inv.remove(a.asset_id) is True
@@ -160,11 +161,11 @@ class TestAssetInventory:
         assert inv.count == 0
 
     def test_remove_nonexistent(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         assert inv.remove("no-such") is False
 
     def test_all(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a1 = _make_asset(name="a")
         a2 = _make_asset(name="b")
         inv.register(a1)
@@ -175,18 +176,18 @@ class TestAssetInventory:
 
 class TestAssetStatusManagement:
     def test_set_status(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset()
         inv.register(a)
         assert inv.set_status(a.asset_id, AssetStatus.PROTECTED) is True
         assert inv.get(a.asset_id).status == AssetStatus.PROTECTED
 
     def test_set_status_nonexistent(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         assert inv.set_status("no-such", AssetStatus.OFFLINE) is False
 
     def test_mark_helpers(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset()
         inv.register(a)
 
@@ -203,7 +204,7 @@ class TestAssetStatusManagement:
         assert a.status == AssetStatus.COMPROMISED
 
     def test_status_updates_last_seen(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset()
         inv.register(a)
         old_ts = a.last_seen
@@ -214,7 +215,7 @@ class TestAssetStatusManagement:
 
 class TestAssetQueries:
     def test_by_platform(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         inv.register(_make_asset(name="a", platform=AssetPlatform.VPS))
         inv.register(_make_asset(name="b", platform=AssetPlatform.LOCAL))
         inv.register(_make_asset(name="c", platform=AssetPlatform.VPS))
@@ -223,18 +224,19 @@ class TestAssetQueries:
         assert all(a.platform == AssetPlatform.VPS for a in vps)
 
     def test_by_status(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset(name="a")
         b = _make_asset(name="b")
         inv.register(a)
         inv.register(b)
+        inv.mark_online(a.asset_id)
         inv.mark_offline(b.asset_id)
         online = inv.by_status(AssetStatus.ONLINE)
         assert len(online) == 1
         assert online[0].name == "a"
 
     def test_healthy(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset(name="a")
         b = _make_asset(name="b")
         c = _make_asset(name="c")
@@ -249,18 +251,18 @@ class TestAssetQueries:
         assert h[0].name == "a"
 
     def test_find_by_hostname(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         a = _make_asset(hostname="MyServer.local")
         inv.register(a)
         found = inv.find_by_hostname("myserver.local")  # case-insensitive
         assert found is a
 
     def test_find_by_hostname_not_found(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         assert inv.find_by_hostname("nope.local") is None
 
     def test_stats(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         inv.register(_make_asset(platform=AssetPlatform.VPS))
         inv.register(_make_asset(platform=AssetPlatform.VPS))
         inv.register(_make_asset(platform=AssetPlatform.LOCAL))
@@ -566,7 +568,7 @@ class TestThreadSafety:
         assert agg.stats()["total_received"] == 400
 
     def test_concurrent_inventory_ops(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         errors = []
 
         def worker(idx):
@@ -595,7 +597,7 @@ class TestThreadSafety:
 
 class TestAssetEventIntegration:
     def test_events_attributed_to_asset(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         agg = EventAggregator()
 
         vps = _make_asset(name="prod-vps", platform=AssetPlatform.VPS)
@@ -620,7 +622,7 @@ class TestAssetEventIntegration:
 
     def test_auto_compromise_on_critical_event(self):
         """Demonstrate marking asset compromised based on aggregated events."""
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         agg = EventAggregator()
 
         workstation = _make_asset(name="dev-ws", platform=AssetPlatform.WINDOWS)
@@ -643,7 +645,7 @@ class TestAssetEventIntegration:
         assert inv.get(workstation.asset_id).status == AssetStatus.COMPROMISED
 
     def test_multi_asset_event_separation(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         agg = EventAggregator()
 
         a1 = _make_asset(name="vps-1", platform=AssetPlatform.VPS)

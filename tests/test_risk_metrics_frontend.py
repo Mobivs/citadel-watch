@@ -61,8 +61,6 @@ def _make_scored(
     return ScoredThreat(
         event_id="evt-1",
         event_type=event_type,
-        severity="info",
-        message="test",
         timestamp=timestamp,
         asset_id=asset_id,
         risk_level=risk_level,
@@ -316,7 +314,7 @@ class TestRiskMetricsHTML:
         path = FRONTEND_DIR / "risk-metrics.html"
         if not path.exists():
             pytest.skip("risk-metrics.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_tailwind_cdn(self, html_content):
         assert "cdn.tailwindcss.com" in html_content
@@ -381,7 +379,7 @@ class TestRiskMetricsJS:
         path = FRONTEND_DIR / "js" / "risk-metrics.js"
         if not path.exists():
             pytest.skip("risk-metrics.js not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_imports_api_client(self, js_content):
         assert "api-client" in js_content
@@ -433,13 +431,13 @@ class TestRiskMetricsNavigation:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_risk_metrics_tab(self, index_content):
         assert 'id="tab-btn-risk-metrics"' in index_content
 
     def test_has_risk_metrics_panel(self, index_content):
-        assert 'id="tab-panel-risk-metrics"' in index_content
+        assert 'id="tab-panel-dynamic"' in index_content  # shared dynamic panel
 
     def test_risk_tab_after_timeline(self, index_content):
         timeline_pos = index_content.index('id="tab-btn-timeline"')
@@ -455,7 +453,7 @@ class TestRiskMetricsRoutes:
         path = Path(__file__).parent.parent / "src" / "citadel_archer" / "api" / "main.py"
         if not path.exists():
             pytest.skip("main.py not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_risk_metrics_html_route(self, main_content):
         assert "/risk-metrics.html" in main_content

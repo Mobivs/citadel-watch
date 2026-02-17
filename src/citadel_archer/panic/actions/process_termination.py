@@ -24,33 +24,36 @@ class ProcessTermination(BaseAction):
         """Execute process termination based on action parameters"""
         action_name = action.name
         params = action.params
-        
+        asset_id = params.get('target_asset', 'local')
+
         try:
             if action_name == 'identify_threats':
-                return await self._identify_threat_processes(session.id)
+                return await self._identify_threat_processes(session.id, asset_id)
             elif action_name == 'capture_memory':
-                return await self._capture_process_memory(session.id)
+                return await self._capture_process_memory(session.id, asset_id)
             elif action_name == 'terminate_processes':
-                return await self._terminate_suspicious_processes(session.id)
+                return await self._terminate_suspicious_processes(session.id, asset_id)
             elif action_name == 'kill_by_signature':
-                return await self._kill_by_signature(params.get('signatures', []))
+                return await self._kill_by_signature(params.get('signatures', []), asset_id)
             elif action_name == 'kill_unauthorized_network':
-                return await self._kill_unauthorized_network_processes()
+                return await self._kill_unauthorized_network_processes(asset_id)
             elif action_name == 'restart_services':
-                return await self._restart_critical_services()
+                return await self._restart_critical_services(asset_id)
             else:
                 return {
                     'action': action_name,
                     'type': 'processes',
+                    'asset': asset_id,
                     'status': 'failed',
                     'error': f'Unknown process action: {action_name}'
                 }
-                
+
         except Exception as e:
-            logger.error(f"Process termination action {action_name} failed: {e}")
+            logger.error(f"Process termination action {action_name} on {asset_id} failed: {e}")
             return {
                 'action': action_name,
                 'type': 'processes',
+                'asset': asset_id,
                 'status': 'failed',
                 'error': str(e)
             }
@@ -96,7 +99,7 @@ class ProcessTermination(BaseAction):
                 'error': str(e)
             }
     
-    async def _identify_threat_processes(self, session_id) -> Dict[str, Any]:
+    async def _identify_threat_processes(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Identify processes that match threat signatures"""
         try:
             suspicious_processes = []
@@ -158,7 +161,7 @@ class ProcessTermination(BaseAction):
                 'error': str(e)
             }
     
-    async def _capture_process_memory(self, session_id) -> Dict[str, Any]:
+    async def _capture_process_memory(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Capture memory dump of suspicious processes"""
         try:
             captured_count = 0
@@ -218,7 +221,7 @@ class ProcessTermination(BaseAction):
                 'error': str(e)
             }
     
-    async def _terminate_suspicious_processes(self, session_id) -> Dict[str, Any]:
+    async def _terminate_suspicious_processes(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Terminate processes identified as threats"""
         try:
             terminated = []
@@ -295,7 +298,7 @@ class ProcessTermination(BaseAction):
                 'error': str(e)
             }
     
-    async def _kill_by_signature(self, signatures: List[str]) -> Dict[str, Any]:
+    async def _kill_by_signature(self, signatures: List[str], asset_id: str = "local") -> Dict[str, Any]:
         """Kill processes matching specific signatures"""
         try:
             killed = []
@@ -334,7 +337,7 @@ class ProcessTermination(BaseAction):
                 'error': str(e)
             }
     
-    async def _kill_unauthorized_network_processes(self) -> Dict[str, Any]:
+    async def _kill_unauthorized_network_processes(self, asset_id: str = "local") -> Dict[str, Any]:
         """Kill processes with unauthorized network connections"""
         try:
             killed = []
@@ -378,45 +381,49 @@ class ProcessTermination(BaseAction):
                 'error': str(e)
             }
     
-    async def _restart_critical_services(self) -> Dict[str, Any]:
+    async def _restart_critical_services(self, asset_id: str = "local") -> Dict[str, Any]:
         """Restart critical services after cleanup"""
         try:
             restarted = []
             critical_services = self.config.get('critical_services', [
                 'postgresql', 'nginx', 'ssh'
             ])
-            
+
             for service in critical_services:
                 try:
                     # Check if service is running
-                    result = subprocess.run(
+                    result = await self._run_command(
                         ['systemctl', 'is-active', service],
-                        capture_output=True,
-                        text=True
+                        asset_id=asset_id,
                     )
-                    
+
                     if result.stdout.strip() != 'active':
                         # Restart the service
-                        subprocess.run(
+                        r2 = await self._run_command(
                             ['systemctl', 'restart', service],
-                            check=True
+                            asset_id=asset_id,
                         )
-                        restarted.append(service)
-                        
-                except subprocess.CalledProcessError as e:
+                        if r2.returncode == 0:
+                            restarted.append(service)
+                        else:
+                            logger.error(f"Failed to restart {service}: {r2.stderr}")
+
+                except Exception as e:
                     logger.error(f"Failed to restart service {service}: {e}")
-            
+
             return {
                 'action': 'restart_services',
                 'type': 'processes',
+                'asset': asset_id,
                 'status': 'success',
                 'result': {'restarted': restarted}
             }
-            
+
         except Exception as e:
             return {
                 'action': 'restart_services',
                 'type': 'processes',
+                'asset': asset_id,
                 'status': 'failed',
                 'error': str(e)
             }
@@ -528,42 +535,39 @@ class ProcessTermination(BaseAction):
         
         return connections
     
-    async def _get_service_status(self) -> Dict[str, str]:
+    async def _get_service_status(self, asset_id: str = "local") -> Dict[str, str]:
         """Get status of critical services"""
         services = {}
         critical_services = self.config.get('critical_services', [
             'postgresql', 'nginx', 'ssh', 'citadel_commander'
         ])
-        
+
         for service in critical_services:
             try:
-                result = subprocess.run(
+                result = await self._run_command(
                     ['systemctl', 'is-active', service],
-                    capture_output=True,
-                    text=True
+                    asset_id=asset_id,
                 )
                 services[service] = result.stdout.strip()
-            except:
+            except Exception:
                 services[service] = 'unknown'
-        
+
         return services
-    
-    async def _restart_stopped_services(self, services: Dict[str, str]):
+
+    async def _restart_stopped_services(self, services: Dict[str, str], asset_id: str = "local"):
         """Restart services that were running before panic"""
         for service, status in services.items():
             if status == 'active':
                 try:
-                    # Check current status
-                    result = subprocess.run(
+                    result = await self._run_command(
                         ['systemctl', 'is-active', service],
-                        capture_output=True,
-                        text=True
+                        asset_id=asset_id,
                     )
-                    
+
                     if result.stdout.strip() != 'active':
-                        subprocess.run(
+                        await self._run_command(
                             ['systemctl', 'start', service],
-                            check=True
+                            asset_id=asset_id,
                         )
                         logger.info(f"Restarted service: {service}")
                 except Exception as e:

@@ -72,10 +72,105 @@ class SettingsManager {
         if (this.settingsModal) {
             this.settingsModal.classList.remove('open');
         }
+        // Reset to menu view for next open
+        this.closeGeneralSettings();
     }
 
     openGeneralSettings() {
-        alert('General Settings coming in Phase 3!');
+        // Show general settings panel, hide menu list
+        const menuList = document.getElementById('settings-menu-list');
+        const panel = document.getElementById('settings-general-panel');
+        if (menuList) menuList.style.display = 'none';
+        if (panel) panel.style.display = '';
+
+        // Wire back button
+        const backBtn = document.getElementById('settings-general-back');
+        if (backBtn && !backBtn._wired) {
+            backBtn._wired = true;
+            backBtn.addEventListener('click', () => this.closeGeneralSettings());
+        }
+
+        // Wire mode toggle buttons
+        const techBtn = document.getElementById('mode-btn-technical');
+        const simpBtn = document.getElementById('mode-btn-simplified');
+        if (techBtn && !techBtn._wired) {
+            techBtn._wired = true;
+            techBtn.addEventListener('click', () => this.saveMode('technical'));
+        }
+        if (simpBtn && !simpBtn._wired) {
+            simpBtn._wired = true;
+            simpBtn.addEventListener('click', () => this.saveMode('simplified'));
+        }
+
+        // Load current mode and highlight correct button
+        this.loadCurrentMode();
+    }
+
+    closeGeneralSettings() {
+        const menuList = document.getElementById('settings-menu-list');
+        const panel = document.getElementById('settings-general-panel');
+        if (panel) panel.style.display = 'none';
+        if (menuList) menuList.style.display = '';
+    }
+
+    async loadCurrentMode() {
+        // Instant: read from localStorage
+        const cached = localStorage.getItem('citadel_dashboard_mode') || 'technical';
+        this.highlightModeButton(cached);
+
+        // Authoritative: fetch from API
+        try {
+            const resp = await window.apiClient?.get('/api/preferences/dashboard_mode');
+            if (resp && resp.ok) {
+                const data = await resp.json();
+                const mode = data.value || 'technical';
+                this.highlightModeButton(mode);
+                localStorage.setItem('citadel_dashboard_mode', mode);
+            }
+        } catch (_) {
+            // API unavailable — localStorage value stands
+        }
+    }
+
+    async saveMode(mode) {
+        this.highlightModeButton(mode);
+        localStorage.setItem('citadel_dashboard_mode', mode);
+
+        // Persist to API
+        try {
+            await window.apiClient?.put('/api/preferences/dashboard_mode', { value: mode });
+        } catch (_) {
+            // Best-effort persistence
+        }
+
+        // Broadcast to all listeners (dashboard-nav, remote-shield, assets)
+        window.dispatchEvent(new CustomEvent('dashboard-mode-changed', { detail: { mode } }));
+    }
+
+    highlightModeButton(mode) {
+        const techBtn = document.getElementById('mode-btn-technical');
+        const simpBtn = document.getElementById('mode-btn-simplified');
+        if (!techBtn || !simpBtn) return;
+
+        if (mode === 'simplified') {
+            simpBtn.classList.add('mode-active');
+            simpBtn.style.border = '1px solid rgba(0, 217, 255, 0.3)';
+            simpBtn.style.background = 'rgba(0, 217, 255, 0.12)';
+            simpBtn.style.color = '#00D9FF';
+            techBtn.classList.remove('mode-active');
+            techBtn.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+            techBtn.style.background = 'transparent';
+            techBtn.style.color = '#9CA3AF';
+        } else {
+            techBtn.classList.add('mode-active');
+            techBtn.style.border = '1px solid rgba(0, 217, 255, 0.3)';
+            techBtn.style.background = 'rgba(0, 217, 255, 0.12)';
+            techBtn.style.color = '#00D9FF';
+            simpBtn.classList.remove('mode-active');
+            simpBtn.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+            simpBtn.style.background = 'transparent';
+            simpBtn.style.color = '#9CA3AF';
+        }
     }
 
     openNotifications() {

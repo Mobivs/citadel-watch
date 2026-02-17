@@ -18,6 +18,10 @@ const CDN_DEPS = {
     'risk-metrics':  ['https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js'],
     assets:          [],
     'remote-shield': [],
+    'panic-room':    [],
+    vault:           [],
+    backup:          [],
+    performance:     [],
 };
 
 const MODULE_PATHS = {
@@ -26,6 +30,10 @@ const MODULE_PATHS = {
     'risk-metrics':  './risk-metrics.js',
     assets:          './assets.js',
     'remote-shield': './remote-shield.js',
+    'panic-room':    './panic-room.js',
+    vault:           './vault.js',
+    backup:          './backups.js',
+    performance:     './performance.js',
 };
 
 const PAGE_SOURCES = {
@@ -34,6 +42,10 @@ const PAGE_SOURCES = {
     'risk-metrics':  'risk-metrics.html',
     assets:          'assets.html',
     'remote-shield': 'remote-shield.html',
+    'panic-room':    'panic-room.html',
+    vault:           'vault.html',
+    backup:          'backup.html',
+    performance:     'performance.html',
 };
 
 
@@ -162,13 +174,11 @@ async function activate(tabId) {
 
     try {
         if (!_modules[tabId]) {
-            // First import — module auto-inits via readyState check
             _modules[tabId] = await import(modulePath);
-        } else {
-            // Re-activation — call init explicitly
-            if (typeof _modules[tabId].init === 'function') {
-                await _modules[tabId].init();
-            }
+        }
+        // Always call init (first load + re-activation)
+        if (typeof _modules[tabId].init === 'function') {
+            await _modules[tabId].init();
         }
     } catch (err) {
         console.error(`[tab-loader] Module error for ${tabId}:`, err);

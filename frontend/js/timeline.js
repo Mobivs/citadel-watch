@@ -19,6 +19,12 @@ const SEV_COLOURS = {
 
 const SEV_RANK = { info: 1, investigate: 2, alert: 3, critical: 4 };
 
+const SOURCE_COLOURS = {
+    local:           { label: 'Local',       cls: 'source-local',       stroke: '#00cc66' },
+    'remote-shield': { label: 'Remote',      cls: 'source-remote',      stroke: '#00D9FF' },
+    correlation:     { label: 'Correlation', cls: 'source-correlation', stroke: '#A855F7' },
+};
+
 const CATEGORY_COLOURS = {
     file:    '#3B82F6',
     process: '#A855F7',
@@ -48,7 +54,11 @@ let _onWsDisconnected = null;
 
 async function fetchTimeline(limit) {
     try {
-        const resp = await apiClient.get(`/api/timeline?limit=${limit}`);
+        const f = getFilters();
+        let url = `/api/timeline/unified?limit=${limit}`;
+        if (f.severity) url += `&severity=${encodeURIComponent(f.severity)}`;
+        if (f.source) url += `&source=${encodeURIComponent(f.source)}`;
+        const resp = await apiClient.get(url);
         if (!resp.ok) {
             console.error('Timeline API error:', resp.status);
             return null;
@@ -67,12 +77,13 @@ function getFilters() {
         severity: document.getElementById('filter-severity')?.value || '',
         asset:    document.getElementById('filter-asset')?.value || '',
         eventType: document.getElementById('filter-event-type')?.value || '',
+        source:   document.getElementById('filter-source')?.value || '',
         search:   document.getElementById('search-input')?.value || '',
     };
 }
 
 function applyFilters(entries) {
-    const { severity, asset, eventType, search } = getFilters();
+    const { severity, asset, eventType, source, search } = getFilters();
     let result = entries;
 
     if (severity) {
@@ -83,6 +94,9 @@ function applyFilters(entries) {
     }
     if (eventType) {
         result = result.filter(e => e.event_type === eventType);
+    }
+    if (source) {
+        result = result.filter(e => e.source === source);
     }
     if (search) {
         const q = search.toLowerCase();
@@ -98,7 +112,7 @@ function applyFilters(entries) {
 
 function hasActiveFilters() {
     const f = getFilters();
-    return !!(f.severity || f.asset || f.eventType || f.search);
+    return !!(f.severity || f.asset || f.eventType || f.source || f.search);
 }
 
 // ── Sorting ─────────────────────────────────────────────────────────
@@ -128,6 +142,10 @@ function sortEntries(entries, field, order) {
             case 'category':
                 va = a.category.toLowerCase();
                 vb = b.category.toLowerCase();
+                break;
+            case 'source':
+                va = (a.source || '').toLowerCase();
+                vb = (b.source || '').toLowerCase();
                 break;
             default:
                 va = a.timestamp;
@@ -170,7 +188,7 @@ function renderTable() {
     if (pg.items.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="6" class="text-center text-gray-500 py-12">
+                <td colspan="7" class="text-center text-gray-500 py-12">
                     ${allEntries.length === 0 ? 'No events loaded' : 'No events match filters'}
                 </td>
             </tr>`;
@@ -180,6 +198,7 @@ function renderTable() {
             const sevStyle = SEV_COLOURS[sev] || SEV_COLOURS.info;
             const ts = formatTimestamp(entry.timestamp);
             const selected = entry.event_id === selectedEventId ? ' selected' : '';
+            const src = SOURCE_COLOURS[entry.source] || SOURCE_COLOURS.local;
 
             return `<tr data-event-id="${escapeHtml(entry.event_id)}" class="${selected}">
                 <td data-label="Timestamp" title="${escapeHtml(entry.timestamp)}">${ts}</td>
@@ -187,6 +206,7 @@ function renderTable() {
                 <td data-label="Asset" title="${escapeHtml(entry.asset_id)}">${escapeHtml(entry.asset_id || '—')}</td>
                 <td data-label="Event Type">${escapeHtml(entry.event_type)}</td>
                 <td data-label="Category"><span class="cat-tag">${escapeHtml(entry.category)}</span></td>
+                <td data-label="Source"><span class="source-badge ${src.cls}">${src.label}</span></td>
                 <td data-label="Description" title="${escapeHtml(entry.message)}">${escapeHtml(truncate(entry.message, 80))}</td>
             </tr>`;
         }).join('');
@@ -230,6 +250,19 @@ function updateStats() {
     setTextContent('stat-critical-count', critCount);
     setTextContent('stat-high-count', highCount);
     setTextContent('stat-total-count', totalCount);
+
+    // Source breakdown pills — show only if we have multi-source data
+    const localCount = allEntries.filter(e => e.source === 'local').length;
+    const remoteCount = allEntries.filter(e => e.source === 'remote-shield').length;
+    const corrCount = allEntries.filter(e => e.source === 'correlation').length;
+    const hasMultiple = (localCount > 0) + (remoteCount > 0) + (corrCount > 0) > 1;
+
+    const lPill = document.getElementById('stat-local-pill');
+    const rPill = document.getElementById('stat-remote-pill');
+    const cPill = document.getElementById('stat-correlation-pill');
+    if (lPill) { lPill.style.display = hasMultiple && localCount ? 'inline-flex' : 'none'; setTextContent('stat-local-count', localCount); }
+    if (rPill) { rPill.style.display = hasMultiple && remoteCount ? 'inline-flex' : 'none'; setTextContent('stat-remote-count', remoteCount); }
+    if (cPill) { cPill.style.display = hasMultiple && corrCount ? 'inline-flex' : 'none'; setTextContent('stat-correlation-count', corrCount); }
 }
 
 function populateFilterDropdowns() {
@@ -322,6 +355,8 @@ function renderD3Timeline() {
             const sev = d.severity.toLowerCase();
             return SEV_COLOURS[sev]?.fg || '#6B7280';
         })
+        .attr('stroke', d => SOURCE_COLOURS[d.source]?.stroke || '#6B7280')
+        .attr('stroke-width', d => d.source === 'local' ? 0 : 1.5)
         .attr('opacity', 0.7)
         .on('click', (event, d) => {
             openDetail(d.event_id);
@@ -329,6 +364,58 @@ function renderD3Timeline() {
 }
 
 // ── Drill-down Detail Panel ─────────────────────────────────────────
+
+function renderSourceDetail(entry) {
+    const d = entry.source_detail || {};
+    if (entry.source === 'remote-shield') {
+        return `<div class="border-t border-white/5 pt-4 mb-4">
+            <h4 class="text-sm font-semibold text-gray-400 mb-3">Remote Shield Detail</h4>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Agent ID</p>
+                    <p class="text-sm text-gray-300 font-mono">${escapeHtml(d.agent_id || '—')}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Hostname</p>
+                    <p class="text-sm text-gray-300">${escapeHtml(d.hostname || '—')}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Original Severity</p>
+                    <p class="text-sm text-gray-300">${d.original_severity != null ? d.original_severity + '/10' : '—'}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Status</p>
+                    <p class="text-sm text-gray-300">${escapeHtml(d.status || '—')}</p>
+                </div>
+            </div>
+        </div>`;
+    }
+    if (entry.source === 'correlation') {
+        const assets = Array.isArray(d.affected_assets) ? d.affected_assets.join(', ') : (d.affected_assets || '—');
+        return `<div class="border-t border-white/5 pt-4 mb-4">
+            <h4 class="text-sm font-semibold text-gray-400 mb-3">Correlation Detail</h4>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Correlation Type</p>
+                    <p class="text-sm text-gray-300">${escapeHtml(d.correlation_type || '—')}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Indicator</p>
+                    <p class="text-sm text-gray-300 font-mono">${escapeHtml(d.indicator || '—')}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Affected Assets</p>
+                    <p class="text-sm text-gray-300">${escapeHtml(assets)}</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 mb-1">Event Count</p>
+                    <p class="text-sm text-gray-300">${d.event_count || 0}</p>
+                </div>
+            </div>
+        </div>`;
+    }
+    return '';
+}
 
 function openDetail(eventId) {
     const entry = allEntries.find(e => e.event_id === eventId);
@@ -382,10 +469,16 @@ function openDetail(eventId) {
                 <p class="text-sm text-gray-300"><span class="cat-tag">${escapeHtml(entry.category)}</span></p>
             </div>
             <div>
+                <p class="text-xs text-gray-500 mb-1">Source</p>
+                <p class="text-sm text-gray-300"><span class="source-badge ${(SOURCE_COLOURS[entry.source] || SOURCE_COLOURS.local).cls}">${(SOURCE_COLOURS[entry.source] || SOURCE_COLOURS.local).label}</span></p>
+            </div>
+            <div>
                 <p class="text-xs text-gray-500 mb-1">Full Timestamp</p>
                 <p class="text-sm text-gray-300 font-mono">${escapeHtml(entry.timestamp)}</p>
             </div>
         </div>
+
+        ${entry.source_detail ? renderSourceDetail(entry) : ''}
 
         <!-- Related events -->
         <div class="border-t border-white/5 pt-4">
@@ -435,17 +528,25 @@ function connectWebSocket() {
     _wsUnsubs.push(wsHandler.subscribe('event', handleWebSocketMessage));
     _wsUnsubs.push(wsHandler.subscribe('threat_detected', handleWebSocketMessage));
     _wsUnsubs.push(wsHandler.subscribe('alert_created', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('threat:remote-shield', handleWebSocketMessage));
+    _wsUnsubs.push(wsHandler.subscribe('threat:correlation', handleWebSocketMessage));
 
     _onWsConnected = () => setLiveStatus(true);
     _onWsDisconnected = () => setLiveStatus(false);
     window.addEventListener('ws-connected', _onWsConnected);
     window.addEventListener('ws-disconnected', _onWsDisconnected);
 
-    wsHandler.connect();
+    // Poll connection status continuously (handles race where ws-connected
+    // event fired before our listener was registered, and catches later
+    // disconnects if the ws-disconnected event is missed).
+    setLiveStatus(wsHandler.connected);
+    const poll = setInterval(() => setLiveStatus(wsHandler.connected), 2000);
+    _wsUnsubs.push(() => clearInterval(poll));
 }
 
 function handleWebSocketMessage(msg) {
-    if (msg.type === 'event' || msg.type === 'threat_detected') {
+    if (msg.type === 'event' || msg.type === 'threat_detected' ||
+        msg.type === 'threat:remote-shield' || msg.type === 'threat:correlation') {
         refreshData();
     }
 }
@@ -467,7 +568,7 @@ function setLiveStatus(connected) {
         badge.style.color = '#e6b800';
         badge.style.borderColor = 'rgba(230,184,0,0.3)';
         if (dot) dot.style.background = '#e6b800';
-        if (text) text.textContent = 'Simulated';
+        if (text) text.textContent = 'Offline';
     }
 }
 
@@ -536,7 +637,7 @@ function setupSortHeaders() {
 }
 
 function setupFilters() {
-    const filterIds = ['filter-severity', 'filter-asset', 'filter-event-type'];
+    const filterIds = ['filter-severity', 'filter-asset', 'filter-event-type', 'filter-source'];
     filterIds.forEach(id => {
         document.getElementById(id)?.addEventListener('change', () => {
             currentPage = 1;
@@ -561,6 +662,7 @@ function setupFilters() {
         document.getElementById('filter-severity').value = '';
         document.getElementById('filter-asset').value = '';
         document.getElementById('filter-event-type').value = '';
+        document.getElementById('filter-source').value = '';
         document.getElementById('search-input').value = '';
         currentPage = 1;
         renderTable();
@@ -656,12 +758,7 @@ async function init() {
     refreshInterval = setInterval(refreshData, 30000);
 }
 
-// Start when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
-}
+// NOTE: No auto-init here — tab-loader.js manages the init/destroy lifecycle.
 
 // ── Exports for testing ─────────────────────────────────────────────
 
@@ -670,6 +767,7 @@ export {
     destroy,
     SEV_COLOURS,
     SEV_RANK,
+    SOURCE_COLOURS,
     CATEGORY_COLOURS,
     PAGE_SIZE,
     fetchTimeline,
@@ -684,4 +782,5 @@ export {
     openDetail,
     closeDetail,
     renderD3Timeline,
+    renderSourceDetail,
 };

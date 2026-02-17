@@ -29,35 +29,38 @@ class SecureBackup(BaseAction):
         """Execute secure backup based on action parameters"""
         action_name = action.name
         params = action.params
-        
+        asset_id = params.get('target_asset', 'local')
+
         try:
             if action_name == 'identify_critical_data':
-                return await self._identify_critical_data(session.id)
+                return await self._identify_critical_data(session.id, asset_id)
             elif action_name == 'encrypt_data':
-                return await self._encrypt_backup_data(session.id)
+                return await self._encrypt_backup_data(session.id, asset_id)
             elif action_name == 'transfer_backup':
-                return await self._transfer_to_safe_location(session.id)
+                return await self._transfer_to_safe_location(session.id, asset_id)
             elif action_name == 'verify_integrity':
-                return await self._verify_backup_integrity(session.id)
+                return await self._verify_backup_integrity(session.id, asset_id)
             elif action_name == 'create_archive':
-                return await self._create_backup_archive(session.id, params)
+                return await self._create_backup_archive(session.id, params, asset_id)
             elif action_name == 'backup_vault':
-                return await self._backup_vault_data(session.id)
+                return await self._backup_vault_data(session.id, asset_id)
             elif action_name == 'backup_configs':
-                return await self._backup_configurations(session.id)
+                return await self._backup_configurations(session.id, asset_id)
             else:
                 return {
                     'action': action_name,
                     'type': 'backup',
+                    'asset': asset_id,
                     'status': 'failed',
                     'error': f'Unknown backup action: {action_name}'
                 }
-                
+
         except Exception as e:
-            logger.error(f"Secure backup action {action_name} failed: {e}")
+            logger.error(f"Secure backup action {action_name} on {asset_id} failed: {e}")
             return {
                 'action': action_name,
                 'type': 'backup',
+                'asset': asset_id,
                 'status': 'failed',
                 'error': str(e)
             }
@@ -96,7 +99,7 @@ class SecureBackup(BaseAction):
                 'error': str(e)
             }
     
-    async def _identify_critical_data(self, session_id) -> Dict[str, Any]:
+    async def _identify_critical_data(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Identify critical data that needs backup"""
         try:
             critical_data = {
@@ -185,7 +188,7 @@ class SecureBackup(BaseAction):
                 'error': str(e)
             }
     
-    async def _create_backup_archive(self, session_id, params: Dict) -> Dict[str, Any]:
+    async def _create_backup_archive(self, session_id, params: Dict, asset_id: str = "local") -> Dict[str, Any]:
         """Create compressed archive of critical data"""
         try:
             backup_dir = f"/var/backups/panic/archives/{session_id}"
@@ -266,7 +269,7 @@ class SecureBackup(BaseAction):
                 'error': str(e)
             }
     
-    async def _encrypt_backup_data(self, session_id) -> Dict[str, Any]:
+    async def _encrypt_backup_data(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Encrypt backup archives"""
         try:
             # Get unencrypted archives
@@ -349,7 +352,7 @@ class SecureBackup(BaseAction):
                 'error': str(e)
             }
     
-    async def _transfer_to_safe_location(self, session_id) -> Dict[str, Any]:
+    async def _transfer_to_safe_location(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Transfer encrypted backups to safe location"""
         try:
             transferred = []
@@ -427,7 +430,7 @@ class SecureBackup(BaseAction):
                 'error': str(e)
             }
     
-    async def _verify_backup_integrity(self, session_id) -> Dict[str, Any]:
+    async def _verify_backup_integrity(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Verify integrity of backups"""
         try:
             verified = []
@@ -491,7 +494,7 @@ class SecureBackup(BaseAction):
                 'error': str(e)
             }
     
-    async def _backup_vault_data(self, session_id) -> Dict[str, Any]:
+    async def _backup_vault_data(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Backup vault/secrets data"""
         try:
             # Export vault data (would integrate with actual vault)
@@ -540,7 +543,7 @@ class SecureBackup(BaseAction):
                 'error': str(e)
             }
     
-    async def _backup_configurations(self, session_id) -> Dict[str, Any]:
+    async def _backup_configurations(self, session_id, asset_id: str = "local") -> Dict[str, Any]:
         """Backup system configurations"""
         try:
             config_backup_dir = f"/var/backups/panic/configs/{session_id}"

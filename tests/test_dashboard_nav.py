@@ -33,7 +33,7 @@ class TestTabBarHTML:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_tab_bar_container(self, html_content):
         assert 'id="dashboard-tab-bar"' in html_content
@@ -69,7 +69,7 @@ class TestTabBarHTML:
         assert 'tab-active' in tag
 
     def test_tab_buttons_have_role_tab(self, html_content):
-        assert html_content.count('role="tab"') == 5
+        assert html_content.count('role="tab"') == 9  # 9 tabs: intelligence, charts, timeline, risk-metrics, assets, remote-shield, backup, performance, panic-room
 
 
 # =====================================================================
@@ -84,34 +84,26 @@ class TestTabPanels:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_intelligence_panel(self, html_content):
         assert 'id="tab-panel-intelligence"' in html_content
 
-    def test_has_charts_panel(self, html_content):
-        assert 'id="tab-panel-charts"' in html_content
-
-    def test_has_timeline_panel(self, html_content):
-        assert 'id="tab-panel-timeline"' in html_content
-
-    def test_has_risk_metrics_panel(self, html_content):
-        assert 'id="tab-panel-risk-metrics"' in html_content
-
-    def test_has_assets_panel(self, html_content):
-        assert 'id="tab-panel-assets"' in html_content
+    def test_has_dynamic_panel(self, html_content):
+        """Non-intelligence tabs share a single dynamic content panel."""
+        assert 'id="tab-panel-dynamic"' in html_content
 
     def test_panels_have_tabpanel_role(self, html_content):
-        assert html_content.count('role="tabpanel"') == 5
+        # 2 panels: intelligence (always) + dynamic (shared)
+        assert html_content.count('role="tabpanel"') == 2
 
-    def test_non_intelligence_panels_hidden(self, html_content):
-        # Charts, Timeline, Risk Metrics, Assets should have aria-hidden="true"
-        for panel_id in ['charts', 'timeline', 'risk-metrics', 'assets']:
-            idx = html_content.index(f'id="tab-panel-{panel_id}"')
-            tag_start = html_content.rfind('<div', 0, idx)
-            tag_end = html_content.index('>', idx)
-            tag = html_content[tag_start:tag_end + 1]
-            assert 'aria-hidden="true"' in tag, f"Panel {panel_id} should be hidden"
+    def test_dynamic_panel_hidden_by_default(self, html_content):
+        """Dynamic panel should be hidden until a tab is selected."""
+        idx = html_content.index('id="tab-panel-dynamic"')
+        tag_start = html_content.rfind('<div', 0, idx)
+        tag_end = html_content.index('>', idx)
+        tag = html_content[tag_start:tag_end + 1]
+        assert 'display:none' in tag or 'display: none' in tag or 'aria-hidden="true"' in tag
 
     def test_intelligence_panel_not_hidden(self, html_content):
         idx = html_content.index('id="tab-panel-intelligence"')
@@ -125,45 +117,28 @@ class TestTabPanels:
 # Section 3: Iframes
 # =====================================================================
 
-class TestIframes:
-    """Validate iframe elements for tabbed content."""
+class TestDynamicContentPanel:
+    """Validate dynamic content loading (tab-loader architecture, no iframes)."""
 
     @pytest.fixture
     def html_content(self):
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
-    def test_has_charts_iframe(self, html_content):
-        assert 'id="tab-iframe-charts"' in html_content
+    def test_has_dynamic_content_panel(self, html_content):
+        assert 'id="tab-panel-dynamic"' in html_content
 
-    def test_has_timeline_iframe(self, html_content):
-        assert 'id="tab-iframe-timeline"' in html_content
-
-    def test_has_risk_metrics_iframe(self, html_content):
-        assert 'id="tab-iframe-risk-metrics"' in html_content
-
-    def test_has_assets_iframe(self, html_content):
-        assert 'id="tab-iframe-assets"' in html_content
-
-    def test_iframes_have_title(self, html_content):
-        assert 'title="Charts"' in html_content
-        assert 'title="Timeline"' in html_content
-        assert 'title="Risk Metrics"' in html_content
-        assert 'title="Assets"' in html_content
-
-    def test_iframes_no_initial_src(self, html_content):
-        # Iframes should not have src set (lazy-loaded by JS)
-        for iframe_id in ['charts', 'timeline', 'risk-metrics', 'assets']:
-            idx = html_content.index(f'id="tab-iframe-{iframe_id}"')
-            tag_start = html_content.rfind('<iframe', 0, idx)
-            tag_end = html_content.index('>', idx)
-            tag = html_content[tag_start:tag_end + 1]
-            assert 'src="charts.html"' not in tag or iframe_id != 'charts'
+    def test_no_iframes(self, html_content):
+        assert '<iframe' not in html_content
 
     def test_no_intelligence_iframe(self, html_content):
         assert 'id="tab-iframe-intelligence"' not in html_content
+
+    def test_uses_tab_loader(self, html_content):
+        """dashboard-nav.js should be loaded (it imports tab-loader)."""
+        assert 'dashboard-nav.js' in html_content
 
 
 # =====================================================================
@@ -178,7 +153,7 @@ class TestTabOrdering:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_intelligence_first(self, html_content):
         positions = []
@@ -212,7 +187,7 @@ class TestConnectionBadge:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_connection_badge(self, html_content):
         assert 'id="nav-conn-badge"' in html_content
@@ -223,11 +198,11 @@ class TestConnectionBadge:
     def test_has_connection_text(self, html_content):
         assert 'id="nav-conn-text"' in html_content
 
-    def test_default_offline(self, html_content):
-        # Should show Offline by default
+    def test_default_connecting(self, html_content):
+        # Should show "Connecting..." by default (before WS connects)
         idx = html_content.index('id="nav-conn-text"')
         nearby = html_content[idx:idx + 100]
-        assert 'Offline' in nearby
+        assert 'Connecting...' in nearby
 
 
 # =====================================================================
@@ -242,46 +217,46 @@ class TestIntelligencePanel:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_guardian_status(self, html_content):
-        assert '<guardian-status>' in html_content
+        assert '<guardian-status' in html_content
 
     def test_has_threat_level(self, html_content):
-        assert '<threat-level>' in html_content
+        assert '<threat-level' in html_content
 
     def test_has_protected_systems(self, html_content):
-        assert '<protected-systems>' in html_content
+        assert '<protected-systems' in html_content
 
     def test_has_event_log(self, html_content):
-        assert '<event-log>' in html_content
+        assert '<event-log' in html_content
 
     def test_has_process_list(self, html_content):
-        assert '<process-list>' in html_content
+        assert '<process-list' in html_content
 
     def test_has_ai_insights(self, html_content):
-        assert '<ai-insights>' in html_content
+        assert '<ai-insights' in html_content
 
 
 # =====================================================================
 # Section 7: External Links Preserved
 # =====================================================================
 
-class TestExternalLinks:
-    """Vault remains as external link."""
+class TestVaultIntegration:
+    """Vault is integrated as a tab via header shortcut button."""
 
     @pytest.fixture
     def html_content(self):
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
-    def test_vault_link_preserved(self, html_content):
-        assert 'href="vault.html"' in html_content
+    def test_vault_shortcut_button_exists(self, html_content):
+        assert 'id="vault-shortcut-btn"' in html_content
 
-    def test_no_vault_tab(self, html_content):
-        assert 'id="tab-btn-vault"' not in html_content
+    def test_no_vault_external_link(self, html_content):
+        assert 'href="vault.html"' not in html_content
 
 
 # =====================================================================
@@ -296,7 +271,7 @@ class TestStyles:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_tab_btn_class(self, html_content):
         assert '.tab-btn' in html_content
@@ -331,7 +306,7 @@ class TestDashboardNavJS:
         path = FRONTEND_DIR / "js" / "dashboard-nav.js"
         if not path.exists():
             pytest.skip("dashboard-nav.js not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_tab_ids_constant(self, js_content):
         assert 'TAB_IDS' in js_content
@@ -363,8 +338,8 @@ class TestDashboardNavJS:
     def test_has_update_tab_buttons(self, js_content):
         assert 'updateTabButtons' in js_content
 
-    def test_has_load_iframe(self, js_content):
-        assert 'loadIframe' in js_content
+    def test_has_tab_loader_import(self, js_content):
+        assert 'activate' in js_content  # imports activate from tab-loader.js
 
     def test_has_connection_badge_update(self, js_content):
         assert 'updateConnectionBadge' in js_content
@@ -412,7 +387,7 @@ class TestScriptLoading:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_loads_dashboard_nav_js(self, html_content):
         assert 'src="js/dashboard-nav.js"' in html_content
@@ -446,15 +421,16 @@ class TestARIA:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_tab_buttons_have_aria_controls(self, html_content):
-        for tab_id in ['intelligence', 'charts', 'timeline', 'risk-metrics', 'assets']:
-            assert f'aria-controls="tab-panel-{tab_id}"' in html_content
+        # Intelligence has its own panel
+        assert 'aria-controls="tab-panel-intelligence"' in html_content
+        # All other tabs control the shared dynamic panel
+        assert 'aria-controls="tab-panel-dynamic"' in html_content
 
-    def test_panels_have_aria_labelledby(self, html_content):
-        for tab_id in ['intelligence', 'charts', 'timeline', 'risk-metrics', 'assets']:
-            assert f'aria-labelledby="tab-btn-{tab_id}"' in html_content
+    def test_intelligence_panel_has_aria_labelledby(self, html_content):
+        assert 'aria-labelledby="tab-btn-intelligence"' in html_content
 
     def test_intelligence_selected_by_default(self, html_content):
         idx = html_content.index('id="tab-btn-intelligence"')
@@ -464,7 +440,7 @@ class TestARIA:
         assert 'aria-selected="true"' in tag
 
     def test_other_tabs_not_selected(self, html_content):
-        for tab_id in ['charts', 'timeline', 'risk-metrics', 'assets']:
+        for tab_id in ['charts', 'timeline', 'risk-metrics', 'assets', 'remote-shield', 'panic-room']:
             idx = html_content.index(f'id="tab-btn-{tab_id}"')
             tag_start = html_content.rfind('<button', 0, idx)
             tag_end = html_content.index('>', idx)

@@ -8,6 +8,8 @@
 
 Phase 2 adds threat intelligence, anomaly detection, and a monitoring dashboard to Citadel Archer. The system ingests external threat feeds, correlates them with local security events, scores threats, auto-generates Guardian rules, and displays everything on a real-time dashboard.
 
+> **Note (v0.2.5):** Asset management persistence, CRUD API, Remote Shield database persistence, Vault SSH credentials, and the SSH Connection Manager have been added to Phase 2 scope. See [ASSET_MANAGEMENT_ADDENDUM.md](ASSET_MANAGEMENT_ADDENDUM.md) for full specification.
+
 ---
 
 ## Module Inventory

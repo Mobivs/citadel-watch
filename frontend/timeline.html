@@ -170,6 +170,22 @@
         .sev-alert       { background: rgba(255,153,0,0.15);  color: #ff9900; border: 1px solid rgba(255,153,0,0.3); }
         .sev-critical    { background: rgba(255,51,51,0.15);   color: #ff3333; border: 1px solid rgba(255,51,51,0.3); }
 
+        /* Source badges */
+        .source-badge {
+            display: inline-block;
+            font-size: 0.6rem;
+            font-weight: 600;
+            padding: 0.15rem 0.4rem;
+            border-radius: 9999px;
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .source-local      { background: rgba(0,204,102,0.12);  color: #00cc66; border: 1px solid rgba(0,204,102,0.3); }
+        .source-remote     { background: rgba(0,217,255,0.12);  color: #00D9FF; border: 1px solid rgba(0,217,255,0.3); }
+        .source-correlation { background: rgba(168,85,247,0.12); color: #A855F7; border: 1px solid rgba(168,85,247,0.3); }
+
         /* Category tag */
         .cat-tag {
             display: inline-block;
@@ -431,6 +447,16 @@
                     <span class="stat-pill" style="background:rgba(0,204,102,0.12); color:#00cc66;">
                         <span id="stat-total-count">0</span> Total
                     </span>
+                    <!-- Source breakdown pills -->
+                    <span class="stat-pill source-local" id="stat-local-pill" style="display:none;">
+                        <span id="stat-local-count">0</span> Local
+                    </span>
+                    <span class="stat-pill source-remote" id="stat-remote-pill" style="display:none;">
+                        <span id="stat-remote-count">0</span> Remote
+                    </span>
+                    <span class="stat-pill source-correlation" id="stat-correlation-pill" style="display:none;">
+                        <span id="stat-correlation-count">0</span> Correl.
+                    </span>
                 </div>
             </div>
 
@@ -470,6 +496,14 @@
                     <!-- Dynamically populated -->
                 </select>
 
+                <!-- Source filter -->
+                <select id="filter-source" class="filter-select">
+                    <option value="">All Sources</option>
+                    <option value="local">Local</option>
+                    <option value="remote-shield">Remote Shield</option>
+                    <option value="correlation">Correlations</option>
+                </select>
+
                 <!-- Clear filters -->
                 <button id="clear-filters-btn" class="text-xs text-gray-500 hover:text-neon-blue transition-colors px-2 py-1" style="display:none;">
                     Clear filters
@@ -478,9 +512,9 @@
                 <div class="flex-1"></div>
 
                 <!-- Live indicator -->
-                <div id="live-badge" class="live-badge simulated" style="display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.625rem;border-radius:9999px;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;background:rgba(230,184,0,0.15);color:#e6b800;border:1px solid rgba(230,184,0,0.3);">
+                <div id="live-badge" class="live-badge offline" style="display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.625rem;border-radius:9999px;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;background:rgba(230,184,0,0.15);color:#e6b800;border:1px solid rgba(230,184,0,0.3);">
                     <span id="live-dot" style="width:6px;height:6px;border-radius:50%;background:#e6b800;animation:pulse 2s infinite;"></span>
-                    <span id="live-text">Simulated</span>
+                    <span id="live-text">Connecting...</span>
                 </div>
             </div>
 
@@ -504,6 +538,9 @@
                                 </th>
                                 <th data-sort="category" aria-sort="none">
                                     Category <span class="sort-arrow" aria-hidden="true">▼</span>
+                                </th>
+                                <th data-sort="source" aria-sort="none">
+                                    Source <span class="sort-arrow" aria-hidden="true">▼</span>
                                 </th>
                                 <th aria-sort="none">Description</th>
                             </tr>

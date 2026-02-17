@@ -37,6 +37,16 @@ class AddPasswordRequest(BaseModel):
     category: str = "general"
 
 
+class AddSSHCredentialRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    auth_type: str = Field("key", pattern="^(key|password)$")
+    private_key: Optional[str] = None
+    key_passphrase: str = ""
+    password: Optional[str] = None
+    default_username: str = "root"
+    default_port: int = Field(22, ge=1, le=65535)
+
+
 class VaultStatusResponse(BaseModel):
     is_unlocked: bool
     vault_exists: bool
@@ -251,3 +261,73 @@ async def delete_password(
         )
 
     return {"success": True, "message": message}
+
+
+# ── SSH Credential Endpoints ─────────────────────────────────────────
+
+@router.post("/ssh-credentials")
+async def add_ssh_credential(
+    request: AddSSHCredentialRequest,
+    token: str = Depends(verify_session_token),
+):
+    """Add an SSH credential to the vault.
+
+    Validates key format and stores structured SSH metadata.
+    Requires vault to be unlocked.
+    """
+    if not vault_manager.is_unlocked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vault is locked. Unlock vault first.",
+        )
+
+    success, result = vault_manager.add_ssh_credential(
+        title=request.title,
+        auth_type=request.auth_type,
+        private_key=request.private_key,
+        key_passphrase=request.key_passphrase,
+        password=request.password,
+        default_username=request.default_username,
+        default_port=request.default_port,
+    )
+
+    if not success:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result)
+
+    return {"success": True, "credential_id": result}
+
+
+@router.get("/ssh-credentials")
+async def list_ssh_credentials(
+    token: str = Depends(verify_session_token),
+):
+    """List all SSH credentials (metadata only, no keys/passwords)."""
+    if not vault_manager.is_unlocked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vault is locked",
+        )
+
+    return {"credentials": vault_manager.list_passwords(category="ssh")}
+
+
+@router.get("/ssh-credentials/{credential_id}")
+async def get_ssh_credential(
+    credential_id: str,
+    token: str = Depends(verify_session_token),
+):
+    """Get a parsed SSH credential with auth details."""
+    if not vault_manager.is_unlocked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vault is locked",
+        )
+
+    cred = vault_manager.get_ssh_credential(credential_id)
+    if cred is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="SSH credential not found",
+        )
+
+    return cred

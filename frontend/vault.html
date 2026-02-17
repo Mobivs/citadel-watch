@@ -125,7 +125,12 @@
     <script type="module" src="js/components/vault-unlock.js"></script>
     <script type="module" src="js/components/vault-password-list.js"></script>
     <script type="module" src="js/components/vault-password-viewer.js"></script>
-    <script type="module" src="js/vault.js"></script>
+    <!-- Standalone init — tab-loader strips all <script> tags, so this only
+         runs when vault.html is opened directly (not through the tab system) -->
+    <script type="module">
+        import { init } from './js/vault.js';
+        init();
+    </script>
 
 </body>
 </html>

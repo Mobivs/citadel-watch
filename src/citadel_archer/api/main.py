@@ -4,8 +4,9 @@
 # FastAPI REST API + WebSocket server for Dashboard communication.
 # PRD: "FastAPI REST API setup, WebSocket endpoint for real-time updates"
 
+import logging
 from typing import List, Optional, Dict
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +16,7 @@ import uvicorn
 import json
 import uuid
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ..core import (
     SecurityLevel,
@@ -26,10 +27,27 @@ from ..core import (
 )
 from ..guardian import FileMonitor, ProcessMonitor
 from .vault_routes import router as vault_router
-from .dashboard_ext import router as dashboard_ext_router
+from .dashboard_ext import router as dashboard_ext_router, services as dashboard_services
 from .remote_shield_routes import router as remote_shield_router
 from .panic_routes import router as panic_router
+from .asset_routes import router as asset_router
+from .chat_routes import router as chat_router
+from .agent_api_routes import router as agent_api_router
+from .ai_audit_routes import router as ai_audit_router
+from .scs_quota_routes import router as scs_quota_router
+from .ssh_hardening_routes import router as hardening_router
+from .firewall_routes import router as firewall_router
+from .onboarding_routes import router as onboarding_router
+from .contact_routes import router as contact_router
+from .file_routes import router as file_router
+from .group_policy_routes import router as group_policy_router
+from .enrollment_routes import router as enrollment_router
+from .backup_routes import router as backup_router
+from .performance_routes import router as performance_router
+from .mesh_routes import router as mesh_router
 from .security import initialize_session_token, get_session_token
+
+logger = logging.getLogger(__name__)
 
 # FastAPI app
 app = FastAPI(
@@ -39,19 +57,85 @@ app = FastAPI(
 )
 
 # CORS configuration (local only for security)
+_allowed_origins = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8000", "http://127.0.0.1:8000", "http://187.77.15.247:8000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# No-cache for ALL frontend assets (prevents Edge from serving stale HTML/JS/CSS).
+# Uses pure ASGI middleware (NOT BaseHTTPMiddleware) to avoid interfering with
+# WebSocket upgrade requests — BaseHTTPMiddleware has known issues with WS.
+class NoCacheStaticMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            # Pass WebSocket and other non-HTTP connections straight through
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        needs_no_cache = (
+            path.startswith(("/js/", "/css/", "/assets/"))
+            or path.endswith(".html")
+            or path == "/"
+        )
+
+        if not needs_no_cache:
+            await self.app(scope, receive, send)
+            return
+
+        # Wrap send to inject no-cache headers on HTTP responses
+        async def send_with_no_cache(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                for name, value in [
+                    (b"cache-control", b"no-cache, no-store, must-revalidate"),
+                    (b"pragma", b"no-cache"),
+                    (b"expires", b"0"),
+                ]:
+                    headers.append((name, value))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_cache)
+
+
+app.add_middleware(NoCacheStaticMiddleware)
 
 # Register routers
 app.include_router(vault_router)
 app.include_router(dashboard_ext_router)
 app.include_router(remote_shield_router)
 app.include_router(panic_router)
+app.include_router(asset_router)
+app.include_router(chat_router)
+app.include_router(agent_api_router)
+app.include_router(ai_audit_router)
+app.include_router(scs_quota_router)
+app.include_router(hardening_router)
+app.include_router(firewall_router)
+app.include_router(onboarding_router)
+app.include_router(contact_router)
+app.include_router(file_router)
+app.include_router(group_policy_router)
+app.include_router(enrollment_router)
+app.include_router(backup_router)
+app.include_router(performance_router)
+app.include_router(mesh_router)
+
+# No-cache headers for HTML responses — prevents Edge --app from serving stale pages
+_NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
 
 # Serve frontend static files for desktop app
 FRONTEND_DIR = Path(__file__).parent.parent.parent.parent / "frontend"
@@ -65,24 +149,7 @@ if FRONTEND_DIR.exists():
 file_monitor: Optional[FileMonitor] = None
 process_monitor: Optional[ProcessMonitor] = None
 websocket_clients: List[WebSocket] = []
-
-
-# Startup: Initialize security
-@app.on_event("startup")
-async def startup_event():
-    """
-    Initialize security on backend startup.
-
-    Security: Generates a random session token that must be included
-    in all sensitive API requests. This prevents unauthorized access.
-    """
-    session_token = initialize_session_token()
-    logger = get_audit_logger()
-    logger.log_event(
-        event_type=EventType.SYSTEM_START,
-        severity=EventSeverity.INFO,
-        message="API session initialized with authentication token"
-    )
+_server_start_time: Optional[datetime] = None
 
 
 # Pydantic models
@@ -170,13 +237,47 @@ manager = ConnectionManager()
 # Startup/shutdown events
 @app.on_event("startup")
 async def startup_event():
-    """Initialize Guardian agents on startup."""
-    global file_monitor, process_monitor
+    """Initialize security, session token, and Guardian agents on startup."""
+    global file_monitor, process_monitor, _server_start_time
 
-    get_audit_logger().log_event(
+    # Initialize session token for API authentication
+    _server_start_time = datetime.now(timezone.utc)
+    initialize_session_token()
+
+    # Wire up EventAggregator for charts/timeline data
+    from ..intel.event_aggregator import EventAggregator
+    aggregator = EventAggregator(max_history=10_000)
+    dashboard_services.event_aggregator = aggregator
+
+    # Share the AssetInventory singleton with DashboardServices so
+    # /api/asset-view returns the same data as /api/assets (CRUD).
+    from .asset_routes import get_inventory
+    dashboard_services.asset_inventory = get_inventory()
+
+    # Back-fill aggregator with recent audit log events so charts
+    # aren't empty on first load.
+    audit_logger = get_audit_logger()
+    try:
+        recent_events = audit_logger.query_events(limit=500)
+        for evt in reversed(recent_events):  # oldest first
+            aggregator.ingest(
+                event_type=evt.get("event_type", "system.start"),
+                severity=evt.get("severity", "info"),
+                asset_id=evt.get("details", {}).get("asset_id"),
+                message=evt.get("message", ""),
+                details=evt.get("details", {}),
+                timestamp=evt.get("timestamp"),
+            )
+    except Exception:
+        pass  # best-effort back-fill
+
+    # Forward all future audit events into the aggregator
+    audit_logger.on_event(aggregator.ingest_bus_event)
+
+    audit_logger.log_event(
         event_type=EventType.SYSTEM_START,
         severity=EventSeverity.INFO,
-        message="Citadel Archer API server starting"
+        message="Citadel Archer API server starting (session token initialized)"
     )
 
     # Initialize monitors (don't start yet - wait for user)
@@ -187,6 +288,414 @@ async def startup_event():
     file_monitor.start()
     process_monitor.start()
 
+    # Initialize SecureChat manager and wire to WebSocket broadcast
+    from ..chat import ChatManager, ChatStore
+    from .chat_routes import set_chat_manager
+    chat_mgr = ChatManager(ChatStore())
+    chat_mgr.set_ws_broadcast(manager.broadcast)
+    set_chat_manager(chat_mgr)
+    dashboard_services.chat_manager = chat_mgr
+
+    # Register chat commands (Milestone 2: Quick Add VPS)
+    from ..chat.commands.add_vps import register_commands
+    register_commands(chat_mgr)
+
+    # Register deploy command
+    from ..chat.commands.deploy_agent import register_commands as register_deploy
+    register_deploy(chat_mgr)
+
+    # Initialize AI Bridge (connects SecureChat to Claude API)
+    # Gracefully degrades if no ANTHROPIC_API_KEY is set
+    from ..chat.ai_bridge import AIBridge
+    ai_bridge = AIBridge(chat_manager=chat_mgr)
+    ai_bridge.register()
+    app.state.ai_bridge = ai_bridge
+    dashboard_services._ai_bridge = ai_bridge
+
+    # Send a welcome message so the sidebar isn't empty on first run
+    if ai_bridge.enabled:
+        backend = ai_bridge.active_backend
+        backend_msg = f"AI assistant active (backend: {backend})."
+        await chat_mgr.send_system(
+            f"Citadel Archer online. {backend_msg} "
+            "Type 'add vps <ip>' to protect a server, or ask me anything."
+        )
+    else:
+        await chat_mgr.send_system(
+            "Citadel Archer online. Type 'add vps <ip>' to protect a server. "
+            "(Set ANTHROPIC_API_KEY or install Ollama to enable AI assistant.)"
+        )
+
+    # Start agent poller as background task (Milestone 4)
+    try:
+        from .asset_routes import get_ssh_manager
+        from ..remote.agent_poller import AgentPoller
+        _poller = AgentPoller(
+            ssh_manager=get_ssh_manager(),
+            event_aggregator=aggregator,
+            chat_manager=chat_mgr,
+        )
+        await _poller.start()
+        app.state.agent_poller = _poller
+    except Exception:
+        pass  # Poller is best-effort; SSH may not be configured yet
+
+    # Wire local Guardian escalation to AI via SecureChat (Trigger 2b)
+    from ..chat.guardian_escalation import GuardianEscalation
+    _loop = asyncio.get_running_loop()
+    guardian_esc = GuardianEscalation(
+        aggregator=aggregator,
+        chat_manager=chat_mgr,
+        loop=_loop,
+    )
+    guardian_esc.start()
+    app.state.guardian_escalation = guardian_esc
+
+    # Wire Remote Shield VPS escalation to AI via SecureChat (Trigger 2d)
+    from ..chat.remote_shield_escalation import RemoteShieldEscalation
+    remote_esc = RemoteShieldEscalation(
+        aggregator=aggregator,
+        chat_manager=chat_mgr,
+        loop=_loop,
+    )
+    remote_esc.start()
+    app.state.remote_shield_escalation = remote_esc
+
+    # Wire Panic Room → AI escalation (Trigger 2c)
+    try:
+        from .panic_routes import get_panic_manager
+        pm = get_panic_manager()
+        pm.set_chat_manager(chat_mgr)
+    except Exception:
+        pass  # Panic manager is lazy-init, best-effort wiring
+
+    # Start scheduled security posture analysis (Trigger 3a)
+    from ..chat.posture_analyzer import PostureAnalyzer
+    try:
+        from .asset_routes import get_inventory
+        inv = get_inventory()
+    except (ImportError, RuntimeError):
+        inv = None
+    try:
+        from ..remote.shield_database import RemoteShieldDatabase
+        shield_db = RemoteShieldDatabase()
+    except (ImportError, RuntimeError):
+        shield_db = None
+    dashboard_services.shield_db = shield_db
+
+    # Wire SSH manager and vault for service lookup
+    try:
+        from .asset_routes import get_ssh_manager
+        dashboard_services.ssh_manager = get_ssh_manager()
+    except Exception:
+        pass  # SSH may not be configured yet
+    try:
+        from .vault_routes import vault_manager as _vm
+        dashboard_services.vault = _vm
+    except Exception:
+        pass
+
+    posture = PostureAnalyzer(
+        chat_manager=chat_mgr,
+        aggregator=aggregator,
+        inventory=inv,
+        shield_db=shield_db,
+    )
+    await posture.start()
+    app.state.posture_analyzer = posture
+
+    # Startup catch-up (Trigger 3b) — review events from offline period
+    from ..chat.startup_catchup import StartupCatchup
+
+    catchup = StartupCatchup(
+        chat_manager=chat_mgr,
+        audit_logger=audit_logger,
+        inventory=inv,
+        shield_db=shield_db,
+    )
+    await catchup.run()
+    app.state.startup_catchup = catchup
+
+    # Threshold breach detection (Trigger 3c) — aggregate pattern escalation
+    from ..chat.threshold_engine import ThresholdEngine
+    threshold_engine = ThresholdEngine(
+        aggregator=aggregator,
+        chat_manager=chat_mgr,
+        loop=asyncio.get_running_loop(),
+    )
+    threshold_engine.start()
+    app.state.threshold_engine = threshold_engine
+
+    # Intel feed aggregator — schedules daily fetch from all threat feeds
+    intel_store = None
+    try:
+        from ..intel.aggregator import IntelAggregator
+        from ..intel.store import IntelStore
+        from ..intel.otx_fetcher import OTXFetcher
+        from ..intel.abusech_fetcher import AbuseChFetcher
+        from ..intel.mitre_fetcher import MitreFetcher
+        from ..intel.nvd_fetcher import NVDFetcher
+
+        intel_store = IntelStore()
+        intel_agg = IntelAggregator(store=intel_store)
+
+        # Register all threat feed fetchers
+        otx = OTXFetcher()
+        otx.configure()
+        intel_agg.register(otx)
+
+        abusech = AbuseChFetcher()
+        abusech.configure()
+        intel_agg.register(abusech)
+
+        mitre = MitreFetcher()
+        mitre.configure()
+        intel_agg.register(mitre)
+
+        nvd = NVDFetcher()
+        nvd.configure()
+        intel_agg.register(nvd)
+
+        intel_agg.start()
+        app.state.intel_aggregator = intel_agg
+    except Exception:
+        logger.warning("Intel aggregator failed to start", exc_info=True)
+
+    # Cross-asset threat correlation (Watchtower completion)
+    try:
+        from ..intel.cross_asset_correlation import CrossAssetCorrelator
+        correlator = CrossAssetCorrelator(
+            aggregator=aggregator,
+            chat_manager=chat_mgr,
+            intel_store=intel_store,
+            loop=asyncio.get_running_loop(),
+        )
+        correlator.start()
+        app.state.cross_asset_correlator = correlator
+        dashboard_services._correlator = correlator
+        correlator.set_ws_broadcast(manager.broadcast)
+
+        # Wire cross-system alert propagation to remote agents
+        if shield_db is not None:
+            try:
+                from ..remote.alert_propagator import AlertPropagator
+                _propagator = AlertPropagator(shield_db=shield_db)
+                correlator.set_alert_propagation(_propagator.propagate)
+            except Exception:
+                logger.warning("Alert propagator failed to wire", exc_info=True)
+
+    except Exception:
+        logger.warning("Cross-asset correlator failed to start", exc_info=True)
+
+    # Wire Panic Room → Remote Shield agent dispatch
+    if shield_db is not None:
+        try:
+            from ..remote.panic_dispatcher import RemotePanicDispatcher
+            from .panic_routes import get_panic_manager as _get_pm
+            _panic_dispatcher = RemotePanicDispatcher(shield_db=shield_db)
+            _get_pm().set_panic_dispatcher(_panic_dispatcher)
+        except Exception:
+            logger.debug("Remote panic dispatcher failed to wire", exc_info=True)
+
+    # Browser extension inventory scanner + watcher + threat intel
+    try:
+        from ..guardian.extension_scanner import ExtensionScanner
+        from ..guardian.extension_intel import ExtensionIntelDatabase
+        from ..guardian.extension_watcher import ExtensionWatcher
+
+        ext_intel = ExtensionIntelDatabase()
+        ext_scanner = ExtensionScanner(aggregator=aggregator)
+        scan_result = ext_scanner.scan_all()  # Initial scan on startup
+        dashboard_services._extension_scanner = ext_scanner
+        dashboard_services._extension_intel = ext_intel
+        app.state.extension_scanner = ext_scanner
+
+        # Start real-time extension directory watcher
+        ext_watcher = ExtensionWatcher(
+            aggregator=aggregator,
+            intel_db=ext_intel,
+        )
+        # Seed known IDs from initial scan so only NEW installs trigger alerts
+        ext_watcher.set_known_extensions(
+            {e.extension_id for e in scan_result.extensions}
+        )
+        ext_watcher.start()
+        dashboard_services._extension_watcher = ext_watcher
+        app.state.extension_watcher = ext_watcher
+    except Exception:
+        logger.warning("Extension scanner/watcher failed on startup", exc_info=True)
+
+    # Defense Mesh heartbeat protocol (v0.3.36)
+    # HMAC-signed heartbeats with pre-shared keys.
+    # Pure automation at NORMAL phase (zero AI tokens).
+    # AI only invoked on escalation transitions: Haiku → Sonnet → Opus.
+    try:
+        from ..mesh.mesh_state import MeshCoordinator, EscalationPhase
+        from ..mesh.mesh_database import MeshDatabase, set_mesh_database
+        from ..mesh.mesh_keys import load_or_create_psk, get_psk_fingerprint
+        from .mesh_routes import set_mesh_coordinator
+        from ..core.user_preferences import get_user_preferences
+
+        mesh_db = MeshDatabase()
+        set_mesh_database(mesh_db)
+
+        prefs = get_user_preferences()
+        mesh_interval = int(prefs.get("mesh_interval", "30"))
+        mesh_port = int(prefs.get("mesh_port", "9378"))
+
+        # Load or generate HMAC pre-shared key
+        mesh_psk = load_or_create_psk()
+        logger.info(
+            "Mesh PSK loaded (fingerprint: %s)", get_psk_fingerprint(mesh_psk)
+        )
+
+        mesh_coord = MeshCoordinator(
+            node_id="desktop",
+            port=mesh_port,
+            interval=mesh_interval,
+            psk=mesh_psk,
+        )
+
+        # Wire escalation callback → audit log + WebSocket broadcast
+        _ws_loop = asyncio.get_running_loop()
+
+        def _mesh_phase_change(node_id, old_phase, new_phase, peer_state):
+            if new_phase == EscalationPhase.NORMAL:
+                evt = EventType.MESH_RECOVERY
+                sev = EventSeverity.INFO
+            else:
+                evt = EventType.MESH_ESCALATION
+                sev = EventSeverity.ALERT if new_phase in (
+                    EscalationPhase.HEIGHTENED, EscalationPhase.AUTONOMOUS
+                ) else EventSeverity.INVESTIGATE
+            get_audit_logger().log_event(
+                event_type=evt,
+                severity=sev,
+                message=f"Mesh peer {node_id}: {old_phase.value} → {new_phase.value}",
+                details={
+                    "node_id": node_id,
+                    "old_phase": old_phase.value,
+                    "new_phase": new_phase.value,
+                    "model_tier": new_phase.model_tier,
+                    "missed_count": peer_state.missed_count,
+                },
+            )
+            # Persist escalation phase to database
+            try:
+                from ..mesh.mesh_database import get_mesh_database
+                get_mesh_database().update_peer_heartbeat(
+                    node_id=node_id,
+                    escalation_phase=new_phase.value,
+                )
+            except Exception:
+                pass
+
+            # Execute autonomous escalation actions (v0.3.37)
+            try:
+                from ..mesh.autonomous_escalation import get_escalation_handler
+                handler = get_escalation_handler()
+                handler.handle_phase_change(node_id, old_phase, new_phase, peer_state)
+            except Exception:
+                logger.debug("Autonomous escalation failed for %s", node_id, exc_info=True)
+
+            # Broadcast peer alert to surviving nodes (v0.3.38)
+            try:
+                from ..mesh.peer_alerting import get_peer_alert_broadcaster
+                broadcaster = get_peer_alert_broadcaster()
+                if broadcaster:
+                    all_peers = list(mesh_coord.state_manager.all_peers())
+                    broadcaster.handle_phase_change(
+                        node_id, old_phase, new_phase, peer_state,
+                        all_peers=all_peers,
+                    )
+            except Exception:
+                logger.debug("Peer alert broadcast failed for %s", node_id, exc_info=True)
+
+            # Submit to escalation deduplicator (v0.3.43)
+            try:
+                from ..mesh.escalation_dedup import (
+                    EscalationEvent, get_escalation_deduplicator,
+                )
+                dedup = get_escalation_deduplicator()
+                if dedup and new_phase != EscalationPhase.NORMAL:
+                    dedup.submit(EscalationEvent(
+                        agent_id=node_id,
+                        rule_id=f"mesh_escalation_{new_phase.value.lower()}",
+                        event_type="mesh.escalation",
+                        severity="high" if new_phase == EscalationPhase.AUTONOMOUS else "medium",
+                        message=f"Peer {node_id}: {old_phase.value} → {new_phase.value}",
+                        details={
+                            "old_phase": old_phase.value,
+                            "new_phase": new_phase.value,
+                            "missed_count": peer_state.missed_count,
+                        },
+                    ))
+            except Exception:
+                logger.debug("Escalation dedup submit failed for %s", node_id, exc_info=True)
+
+            # Secondary brain activation/deactivation (v0.3.39)
+            try:
+                from ..mesh.secondary_brain import get_secondary_brain_manager
+                sb_mgr = get_secondary_brain_manager()
+                sb_mgr.handle_phase_change(node_id, old_phase, new_phase, peer_state)
+            except Exception:
+                logger.debug("Secondary brain handler failed for %s", node_id, exc_info=True)
+
+            # Broadcast to WebSocket clients
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    manager.broadcast({
+                        "type": "mesh_phase_change",
+                        "node_id": node_id,
+                        "old_phase": old_phase.value,
+                        "new_phase": new_phase.value,
+                        "model_tier": new_phase.model_tier,
+                        "missed_count": peer_state.missed_count,
+                    }),
+                    _ws_loop,
+                )
+            except Exception:
+                pass
+
+        mesh_coord.on_phase_change(_mesh_phase_change)
+
+        # Load persisted peers
+        for peer_row in mesh_db.list_peers():
+            mesh_coord.add_peer(
+                node_id=peer_row["node_id"],
+                ip_address=peer_row["ip_address"],
+                port=peer_row["port"],
+                is_desktop=peer_row["is_desktop"],
+                label=peer_row["label"],
+            )
+
+        mesh_coord.start()
+        set_mesh_coordinator(mesh_coord)
+        app.state.mesh_coordinator = mesh_coord
+
+        # Initialize peer alert broadcaster (v0.3.38)
+        try:
+            from ..mesh.peer_alerting import PeerAlertBroadcaster, set_peer_alert_broadcaster
+            broadcaster = PeerAlertBroadcaster(node_id="desktop", psk=mesh_psk)
+            set_peer_alert_broadcaster(broadcaster)
+        except Exception:
+            logger.debug("Peer alert broadcaster failed to initialize", exc_info=True)
+
+        # Initialize escalation deduplicator (v0.3.43)
+        try:
+            from ..mesh.escalation_dedup import (
+                EscalationDeduplicator, set_escalation_deduplicator,
+            )
+            dedup = EscalationDeduplicator()
+            dedup.start()
+            set_escalation_deduplicator(dedup)
+            app.state.escalation_dedup = dedup
+        except Exception:
+            logger.debug("Escalation deduplicator failed to initialize", exc_info=True)
+
+    except Exception:
+        logger.warning("Defense Mesh failed to start", exc_info=True)
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -196,6 +705,59 @@ async def shutdown_event():
         severity=EventSeverity.INFO,
         message="Citadel Archer API server shutting down"
     )
+
+    # Stop agent poller
+    poller = getattr(app.state, "agent_poller", None)
+    if poller:
+        await poller.stop()
+
+    # Stop Guardian escalation
+    guardian_esc = getattr(app.state, "guardian_escalation", None)
+    if guardian_esc:
+        guardian_esc.stop()
+
+    # Stop Remote Shield escalation
+    remote_esc = getattr(app.state, "remote_shield_escalation", None)
+    if remote_esc:
+        remote_esc.stop()
+
+    # Stop threshold engine
+    threshold_engine = getattr(app.state, "threshold_engine", None)
+    if threshold_engine:
+        threshold_engine.stop()
+
+    # Stop posture analyzer
+    posture = getattr(app.state, "posture_analyzer", None)
+    if posture:
+        try:
+            await posture.stop()
+        except Exception:
+            pass
+
+    # Stop cross-asset correlator
+    correlator = getattr(app.state, "cross_asset_correlator", None)
+    if correlator:
+        correlator.stop()
+
+    # Stop intel aggregator
+    intel_agg = getattr(app.state, "intel_aggregator", None)
+    if intel_agg:
+        intel_agg.stop()
+
+    # Stop escalation deduplicator
+    dedup = getattr(app.state, "escalation_dedup", None)
+    if dedup:
+        dedup.stop()
+
+    # Stop Defense Mesh coordinator
+    mesh_coord = getattr(app.state, "mesh_coordinator", None)
+    if mesh_coord:
+        mesh_coord.stop()
+
+    # Stop extension watcher
+    ext_watcher = getattr(app.state, "extension_watcher", None)
+    if ext_watcher:
+        ext_watcher.stop()
 
     if file_monitor:
         file_monitor.stop()
@@ -209,7 +771,7 @@ async def serve_frontend():
     """Serve frontend HTML for desktop app."""
     index_path = FRONTEND_DIR / "index.html"
     if index_path.exists():
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers=_NO_CACHE)
     else:
         # Fallback to API info if frontend not found
         return {
@@ -224,7 +786,7 @@ async def serve_frontend_html():
     """Serve frontend HTML via /index.html path."""
     index_path = FRONTEND_DIR / "index.html"
     if index_path.exists():
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers=_NO_CACHE)
     else:
         return {"name": "Citadel Archer API", "version": "0.2.3", "status": "operational"}
 
@@ -234,7 +796,7 @@ async def serve_assets_page():
     """Serve Assets page."""
     path = FRONTEND_DIR / "assets.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Assets page not found")
 
@@ -244,7 +806,7 @@ async def serve_assets_page_redirect():
     """Redirect /assets-page to /assets.html"""
     path = FRONTEND_DIR / "assets.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Assets page not found")
 
@@ -254,7 +816,7 @@ async def serve_risk_metrics():
     """Serve Risk Metrics page."""
     path = FRONTEND_DIR / "risk-metrics.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Risk Metrics page not found")
 
@@ -264,7 +826,7 @@ async def serve_risk_metrics_redirect():
     """Redirect /risk-metrics to /risk-metrics.html"""
     path = FRONTEND_DIR / "risk-metrics.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Risk Metrics page not found")
 
@@ -274,7 +836,7 @@ async def serve_timeline():
     """Serve Alert Timeline page."""
     timeline_path = FRONTEND_DIR / "timeline.html"
     if timeline_path.exists():
-        return FileResponse(timeline_path)
+        return FileResponse(timeline_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Timeline page not found")
 
@@ -284,7 +846,7 @@ async def serve_timeline_redirect():
     """Redirect /timeline to /timeline.html"""
     timeline_path = FRONTEND_DIR / "timeline.html"
     if timeline_path.exists():
-        return FileResponse(timeline_path)
+        return FileResponse(timeline_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Timeline page not found")
 
@@ -294,7 +856,7 @@ async def serve_charts():
     """Serve Charts & Visualization page."""
     charts_path = FRONTEND_DIR / "charts.html"
     if charts_path.exists():
-        return FileResponse(charts_path)
+        return FileResponse(charts_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Charts page not found")
 
@@ -304,7 +866,7 @@ async def serve_charts_redirect():
     """Redirect /charts to /charts.html"""
     charts_path = FRONTEND_DIR / "charts.html"
     if charts_path.exists():
-        return FileResponse(charts_path)
+        return FileResponse(charts_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Charts page not found")
 
@@ -314,7 +876,7 @@ async def serve_remote_shield():
     """Serve Remote Shield page."""
     path = FRONTEND_DIR / "remote-shield.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Remote Shield page not found")
 
@@ -324,7 +886,7 @@ async def serve_remote_shield_redirect():
     """Redirect /remote-shield to /remote-shield.html"""
     path = FRONTEND_DIR / "remote-shield.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Remote Shield page not found")
 
@@ -334,7 +896,7 @@ async def serve_panic_room():
     """Serve Panic Room page."""
     path = FRONTEND_DIR / "panic-room.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Panic Room page not found")
 
@@ -344,7 +906,7 @@ async def serve_panic_room_redirect():
     """Redirect /panic-room to /panic-room.html"""
     path = FRONTEND_DIR / "panic-room.html"
     if path.exists():
-        return FileResponse(path)
+        return FileResponse(path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Panic Room page not found")
 
@@ -365,7 +927,7 @@ async def serve_vault():
     """Serve Vault page for desktop app."""
     vault_path = FRONTEND_DIR / "vault.html"
     if vault_path.exists():
-        return FileResponse(vault_path)
+        return FileResponse(vault_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Vault page not found")
 
@@ -375,20 +937,17 @@ async def serve_vault_redirect():
     """Redirect /vault to /vault.html"""
     vault_path = FRONTEND_DIR / "vault.html"
     if vault_path.exists():
-        return FileResponse(vault_path)
+        return FileResponse(vault_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Vault page not found")
 
 
 @app.get("/test-events.html")
 async def serve_test_events():
-    """Serve test-events.html for Developer Tools (no-cache for dev tool)."""
+    """Serve test-events.html for Developer Tools."""
     test_events_path = FRONTEND_DIR / "test-events.html"
     if test_events_path.exists():
-        return FileResponse(
-            test_events_path,
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
-        )
+        return FileResponse(test_events_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Test events page not found")
 
@@ -398,10 +957,7 @@ async def serve_test_events_redirect():
     """Redirect /test-events to /test-events.html"""
     test_events_path = FRONTEND_DIR / "test-events.html"
     if test_events_path.exists():
-        return FileResponse(
-            test_events_path,
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
-        )
+        return FileResponse(test_events_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Test events page not found")
 
@@ -437,6 +993,46 @@ async def api_info():
     }
 
 
+def _calculate_threat_level() -> str:
+    """Calculate current threat level from recent audit events.
+
+    Returns 'green', 'yellow', or 'red'.
+    """
+    try:
+        logger = get_audit_logger()
+        # Look at events from the last hour
+        one_hour_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        recent = logger.query_events(start_time=one_hour_ago, limit=200)
+
+        critical_count = sum(1 for e in recent if e.get("severity") == "critical")
+        alert_count = sum(1 for e in recent if e.get("severity") == "alert")
+
+        if critical_count >= 1:
+            return "red"
+        if alert_count >= 3:
+            return "red"
+        if alert_count >= 1:
+            return "yellow"
+        return "green"
+    except Exception:
+        # On error, assume elevated risk rather than falsely reporting green
+        return "yellow"
+
+
+def _format_uptime() -> str:
+    """Format server uptime as a human-readable string."""
+    if _server_start_time is None:
+        return "0h 0m"
+    delta = datetime.now(timezone.utc) - _server_start_time
+    total_seconds = int(delta.total_seconds())
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    return f"{hours}h {minutes}m"
+
+
 @app.get("/api/status", response_model=SystemStatus)
 async def get_system_status():
     """
@@ -446,12 +1042,18 @@ async def get_system_status():
     """
     security_manager = get_security_manager()
 
+    # Calculate threat level from recent events
+    threat_level = _calculate_threat_level()
+
+    # Calculate uptime
+    uptime = _format_uptime()
+
     return SystemStatus(
         guardian_active=file_monitor.is_running if file_monitor else False,
         security_level=security_manager.current_level.value,
-        threat_level="green",  # TODO: Implement threat level calculation
+        threat_level=threat_level,
         monitored_paths=file_monitor.get_monitored_paths() if file_monitor else [],
-        uptime="0h 0m"  # TODO: Track uptime
+        uptime=uptime,
     )
 
 
@@ -552,18 +1154,54 @@ async def kill_process(pid: int, reason: Optional[str] = "User requested"):
 
 
 @app.get("/api/events", response_model=List[EventInfo])
-async def get_recent_events(limit: int = 50):
+async def get_recent_events(
+    limit: int = 50,
+    event_type: Optional[str] = None,
+    severity: Optional[str] = None,
+):
     """
     Get recent security events.
 
     PRD: "Log viewer in Dashboard"
-    TODO: Phase 1 - Implement event querying from audit log
     """
-    # Placeholder - will implement with audit log querying
-    return []
+    from ..core.audit_log import get_audit_logger, EventType, EventSeverity
+
+    logger = get_audit_logger()
+
+    # Build filter params
+    event_types = None
+    if event_type:
+        try:
+            event_types = [EventType(event_type)]
+        except ValueError:
+            pass
+
+    sev = None
+    if severity:
+        try:
+            sev = EventSeverity(severity)
+        except ValueError:
+            pass
+
+    raw_events = logger.query_events(
+        event_types=event_types,
+        severity=sev,
+        limit=limit,
+    )
+
+    return [
+        EventInfo(
+            event_id=e.get("event_id", ""),
+            event_type=e.get("event_type", ""),
+            severity=e.get("severity", "info"),
+            message=e.get("message", ""),
+            timestamp=e.get("timestamp", ""),
+        )
+        for e in raw_events
+    ]
 
 
-@app.get("/api/guardian/start")
+@app.post("/api/guardian/start")
 async def start_guardian():
     """Start Guardian monitoring."""
     if file_monitor and not file_monitor.is_running:
@@ -579,7 +1217,7 @@ async def start_guardian():
     return {"status": "success", "message": "Guardian started"}
 
 
-@app.get("/api/guardian/stop")
+@app.post("/api/guardian/stop")
 async def stop_guardian():
     """Stop Guardian monitoring."""
     if file_monitor and file_monitor.is_running:
@@ -755,6 +1393,19 @@ async def health_check():
     """
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat() + "Z"}
 
+
+# Desktop heartbeat — frontend pings this to signal the window is open
+_last_heartbeat = None
+
+@app.post("/api/heartbeat")
+async def heartbeat():
+    global _last_heartbeat
+    _last_heartbeat = datetime.now(timezone.utc)
+    return {"ok": True}
+
+def get_last_heartbeat():
+    return _last_heartbeat
+
 @app.post("/api/threats/submit")
 async def submit_threat(threat: ThreatSubmission):
     """
@@ -816,10 +1467,18 @@ async def submit_threat(threat: ThreatSubmission):
     
     # Store alert
     alerts_storage.append(alert)
-    
+
     # Enforce max alerts limit
     if len(alerts_storage) > alert_config["max_alerts"]:
         alerts_storage.pop(0)  # Remove oldest alert
+
+    # Evict alerts older than 24 hours to bound memory
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff_str = cutoff.isoformat()
+    alerts_storage[:] = [
+        a for a in alerts_storage
+        if a.created_at.replace('Z', '+00:00') >= cutoff_str
+    ]
     
     # Log alert creation
     # Map severity levels to EventSeverity

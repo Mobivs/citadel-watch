@@ -113,6 +113,8 @@ class OTXFetcher(IntelFetcher):
         try:
             resp = self._request("GET", "/api/v1/user/me")
             return resp.status_code in (200, 403)  # 403 = no key but API is up
+        except httpx.HTTPStatusError as exc:
+            return exc.response.status_code == 403  # API is up, just no auth
         except Exception:
             return False
 

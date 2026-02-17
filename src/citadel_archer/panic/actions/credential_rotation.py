@@ -1,9 +1,17 @@
 """
 Credential Rotation Action - Emergency credential rotation
+
+Safety:
+  - Recovery keys (comment ``citadel-recovery-*``) are NEVER removed
+    from authorized_keys during rotation.
+  - Rotation aborts if no recovery key is configured.
+  - The new operational private key is returned in the result so
+    the frontend can display it to the user.
 """
 
 import json
 import logging
+import re
 import secrets
 import hashlib
 import base64
@@ -12,6 +20,10 @@ from datetime import datetime, timedelta
 import asyncio
 
 from .base import BaseAction
+from ..recovery_key import RecoveryKeyManager, RECOVERY_KEY_COMMENT_PREFIX
+
+# Regex for safe session IDs (alphanumeric, underscores, hyphens only)
+_SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +33,18 @@ class CredentialRotation(BaseAction):
     Handles credential rotation during panic mode
     Rotates passwords, SSH keys, API tokens, certificates
     """
-    
+
     async def execute(self, action: 'Action', session: 'PanicSession') -> Dict[str, Any]:
         """Execute credential rotation based on action parameters"""
         action_name = action.name
         params = action.params
-        
+        asset_id = params.get('target_asset', 'local')
+
         try:
+            # Pre-flight: ensure recovery key exists before any rotation
+            if action_name in ('rotate_ssh_keys', 'generate_new_keys', 'rotate_passwords'):
+                recovery_mgr = RecoveryKeyManager(self.db)
+                recovery_mgr.ensure_recovery_key_present()
             if action_name == 'inventory_credentials':
                 return await self._inventory_credentials(session.id)
             elif action_name == 'generate_new_keys':
@@ -37,7 +54,7 @@ class CredentialRotation(BaseAction):
             elif action_name == 'archive_old':
                 return await self._archive_old_credentials(session.id)
             elif action_name == 'rotate_ssh_keys':
-                return await self._rotate_ssh_keys(session.id)
+                return await self._rotate_ssh_keys(session.id, asset_id=asset_id)
             elif action_name == 'rotate_api_tokens':
                 return await self._rotate_api_tokens(session.id)
             elif action_name == 'rotate_passwords':
@@ -280,8 +297,11 @@ class CredentialRotation(BaseAction):
         """Archive old credentials for potential recovery"""
         try:
             archived_count = 0
-            archive_path = f"/var/backups/panic/credentials/{session_id}"
-            
+
+            # Sanitize session_id to prevent path traversal
+            safe_id = self._sanitize_session_id(session_id)
+            archive_path = f"/var/backups/panic/credentials/{safe_id}"
+
             # Create archive directory
             import os
             os.makedirs(archive_path, mode=0o700, exist_ok=True)
@@ -328,47 +348,268 @@ class CredentialRotation(BaseAction):
                 'error': str(e)
             }
     
-    async def _rotate_ssh_keys(self, session_id) -> Dict[str, Any]:
-        """Rotate SSH keys specifically"""
+    async def _rotate_ssh_keys(self, session_id, asset_id=None) -> Dict[str, Any]:
+        """Rotate SSH keys while preserving recovery keys.
+
+        Safety invariant: authorized_keys ALWAYS contains at least one
+        ``citadel-recovery-*`` key after this method completes.
+
+        Args:
+            session_id: Active panic session ID.
+            asset_id: Target asset. ``None`` or ``"local"`` for this machine;
+                      a remote asset_id triggers SSH-based rotation.
+
+        The new operational private key is returned in the result so
+        the frontend can display it to the user (it is NOT stored on
+        the server permanently).
+        """
+        if asset_id and asset_id != "local":
+            return await self._rotate_ssh_keys_remote(session_id, asset_id)
+        return await self._rotate_ssh_keys_local(session_id)
+
+    @staticmethod
+    def _sanitize_session_id(session_id: str) -> str:
+        """Validate session_id is safe for use in file paths and commands.
+
+        Prevents path traversal and command injection.
+        """
+        if not _SAFE_ID_RE.match(str(session_id)):
+            raise ValueError(f"Invalid session_id format: {session_id!r}")
+        return str(session_id)
+
+    async def _rotate_ssh_keys_local(self, session_id) -> Dict[str, Any]:
+        """Rotate local ~/.ssh/authorized_keys."""
+        import os
+        import shutil
+
         try:
-            # Generate new SSH keys
+            session_id = self._sanitize_session_id(session_id)
+            recovery_mgr = RecoveryKeyManager(self.db)
+
+            # 1. Pre-flight: verify recovery key is configured
+            recovery_mgr.ensure_recovery_key_present()
+            recovery_lines = recovery_mgr.get_recovery_key_lines()
+
+            # 2. Generate new operational SSH keys
             private_key, public_key = await self._generate_ssh_keypair()
-            
-            # Backup current authorized_keys
-            import os
+
+            # 3. Backup current authorized_keys
             authorized_keys_path = os.path.expanduser('~/.ssh/authorized_keys')
             backup_path = f"{authorized_keys_path}.panic_backup_{session_id}"
-            
+
             if os.path.exists(authorized_keys_path):
-                import shutil
                 shutil.copy2(authorized_keys_path, backup_path)
-            
-            # Replace with new key
-            with open(authorized_keys_path, 'w') as f:
-                f.write(public_key + '\n')
-            
-            # Save private key securely
-            private_key_path = os.path.expanduser(f'~/.ssh/panic_key_{session_id}')
-            with open(private_key_path, 'w') as f:
-                f.write(private_key)
-            os.chmod(private_key_path, 0o600)
-            
+
+            # 4. Write new authorized_keys atomically (tmp + os.replace)
+            tmp_path = authorized_keys_path + '.tmp'
+            with open(tmp_path, 'w') as f:
+                # Preserve all recovery key lines
+                for line in recovery_lines:
+                    f.write(line.strip() + '\n')
+                # Add the new operational key
+                f.write(public_key.strip() + '\n')
+
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, authorized_keys_path)
+
+            # 5. Verify recovery key survived the write
+            with open(authorized_keys_path, 'r') as f:
+                written = f.read()
+            if RECOVERY_KEY_COMMENT_PREFIX not in written:
+                # CRITICAL: recovery key lost — restore backup immediately
+                logger.error("Recovery key missing after rotation — restoring backup!")
+                shutil.copy2(backup_path, authorized_keys_path)
+                return {
+                    'action': 'rotate_ssh_keys',
+                    'type': 'credentials',
+                    'status': 'failed',
+                    'error': 'Safety check failed: recovery key not found after write. Backup restored.'
+                }
+
+            logger.info(
+                f"SSH keys rotated (local) for session {session_id}. "
+                f"Recovery keys preserved: {len(recovery_lines)}"
+            )
+
             return {
                 'action': 'rotate_ssh_keys',
                 'type': 'credentials',
                 'status': 'success',
+                'asset': 'local',
                 'result': {
                     'backup': backup_path,
-                    'new_key': private_key_path
+                    'recovery_keys_preserved': len(recovery_lines),
+                    'new_private_key': private_key,
                 }
             }
-            
+
+        except RuntimeError as e:
+            # Pre-flight check failed (no recovery key)
+            return {
+                'action': 'rotate_ssh_keys',
+                'type': 'credentials',
+                'status': 'failed',
+                'asset': 'local',
+                'error': str(e)
+            }
         except Exception as e:
             return {
                 'action': 'rotate_ssh_keys',
                 'type': 'credentials',
                 'status': 'failed',
+                'asset': 'local',
                 'error': str(e)
+            }
+
+    async def _rotate_ssh_keys_remote(self, session_id, asset_id) -> Dict[str, Any]:
+        """Rotate SSH keys on a remote asset via SSHConnectionManager.
+
+        Steps:
+          1. Read remote authorized_keys
+          2. Verify recovery key lines exist
+          3. Generate new operational keypair
+          4. Build new authorized_keys = recovery lines + new pub key
+          5. Write back via SSH
+          6. Verify recovery key still present
+          7. Return new private key for the user
+        """
+        try:
+            session_id = self._sanitize_session_id(session_id)
+        except ValueError as e:
+            return {
+                'action': 'rotate_ssh_keys', 'type': 'credentials',
+                'status': 'failed', 'asset': asset_id, 'error': str(e),
+            }
+
+        try:
+            from ...remote.ssh_manager import SSHManagerError
+        except ImportError:
+            return {
+                'action': 'rotate_ssh_keys',
+                'type': 'credentials',
+                'status': 'failed',
+                'asset': asset_id,
+                'error': 'SSHConnectionManager not available (asyncssh not installed?)',
+            }
+
+        if self._ssh_manager is None:
+            return {
+                'action': 'rotate_ssh_keys',
+                'type': 'credentials',
+                'status': 'failed',
+                'asset': asset_id,
+                'error': 'SSH Manager not injected — cannot reach remote assets.',
+            }
+
+        try:
+            ssh = self._ssh_manager
+
+            ak_path = '~/.ssh/authorized_keys'
+
+            # 1. Read remote authorized_keys
+            read_result = await ssh.execute(asset_id, f'cat {ak_path} 2>/dev/null || true')
+            current_contents = read_result.stdout or ''
+            current_lines = [l for l in current_contents.splitlines() if l.strip()]
+
+            # 2. Identify recovery key lines
+            recovery_lines = [l for l in current_lines if RECOVERY_KEY_COMMENT_PREFIX in l]
+            if not recovery_lines:
+                return {
+                    'action': 'rotate_ssh_keys',
+                    'type': 'credentials',
+                    'status': 'failed',
+                    'asset': asset_id,
+                    'error': (
+                        f'No recovery key found on remote asset {asset_id}. '
+                        'Deploy a recovery key before rotating credentials.'
+                    ),
+                }
+
+            # 3. Generate new operational SSH keys
+            private_key, public_key = await self._generate_ssh_keypair()
+
+            # 4. Build new file content: recovery keys + new operational key
+            new_lines = [l.strip() for l in recovery_lines]
+            new_lines.append(public_key.strip())
+            new_content = '\n'.join(new_lines) + '\n'
+
+            # 5. Backup current file on remote
+            backup_cmd = f'cp {ak_path} {ak_path}.panic_backup_{session_id} 2>/dev/null; true'
+            await ssh.execute(asset_id, backup_cmd)
+
+            # 6. Write new authorized_keys atomically (write to tmp then move)
+            import base64 as b64
+            encoded = b64.b64encode(new_content.encode()).decode()
+            write_cmd = (
+                f'echo "{encoded}" | base64 -d > {ak_path}.tmp '
+                f'&& chmod 600 {ak_path}.tmp '
+                f'&& mv {ak_path}.tmp {ak_path}'
+            )
+            write_result = await ssh.execute(asset_id, write_cmd)
+            if write_result.exit_code != 0:
+                return {
+                    'action': 'rotate_ssh_keys',
+                    'type': 'credentials',
+                    'status': 'failed',
+                    'asset': asset_id,
+                    'error': f'Failed to write authorized_keys on remote: {write_result.stderr}',
+                }
+
+            # 7. Verify recovery key survived
+            verify_result = await ssh.execute(asset_id, f'cat {ak_path}')
+            if RECOVERY_KEY_COMMENT_PREFIX not in (verify_result.stdout or ''):
+                # Restore backup
+                await ssh.execute(
+                    asset_id,
+                    f'cp {ak_path}.panic_backup_{session_id} {ak_path}; chmod 600 {ak_path}',
+                )
+                return {
+                    'action': 'rotate_ssh_keys',
+                    'type': 'credentials',
+                    'status': 'failed',
+                    'asset': asset_id,
+                    'error': 'Safety check failed: recovery key missing after remote write. Backup restored.',
+                }
+
+            # 8. Invalidate SSH cache so next connection uses new credentials
+            try:
+                await ssh.invalidate_cache(asset_id)
+            except Exception:
+                pass  # Cache invalidation is best-effort
+
+            logger.info(
+                f"SSH keys rotated (remote {asset_id}) for session {session_id}. "
+                f"Recovery keys preserved: {len(recovery_lines)}"
+            )
+
+            return {
+                'action': 'rotate_ssh_keys',
+                'type': 'credentials',
+                'status': 'success',
+                'asset': asset_id,
+                'result': {
+                    'backup': f'{ak_path}.panic_backup_{session_id}',
+                    'recovery_keys_preserved': len(recovery_lines),
+                    'new_private_key': private_key,
+                },
+            }
+
+        except SSHManagerError as e:
+            return {
+                'action': 'rotate_ssh_keys',
+                'type': 'credentials',
+                'status': 'failed',
+                'asset': asset_id,
+                'error': str(e),
+            }
+        except Exception as e:
+            logger.error(f"Remote SSH key rotation failed for {asset_id}: {e}")
+            return {
+                'action': 'rotate_ssh_keys',
+                'type': 'credentials',
+                'status': 'failed',
+                'asset': asset_id,
+                'error': str(e),
             }
     
     async def _rotate_api_tokens(self, session_id) -> Dict[str, Any]:
@@ -445,30 +686,38 @@ class CredentialRotation(BaseAction):
     async def _generate_ssh_keypair(self) -> tuple:
         """Generate new SSH key pair"""
         try:
-            import subprocess
             import tempfile
-            
+            import os
+
             with tempfile.NamedTemporaryFile(delete=False) as tmp:
                 key_path = tmp.name
-            
-            # Generate key pair
-            subprocess.run([
-                'ssh-keygen', '-t', 'ed25519', '-f', key_path,
-                '-N', '', '-C', f'panic-key-{datetime.utcnow().isoformat()}'
-            ], check=True)
-            
-            # Read keys
-            with open(key_path, 'r') as f:
-                private_key = f.read()
-            with open(f'{key_path}.pub', 'r') as f:
-                public_key = f.read()
-            
-            # Clean up
-            import os
-            os.remove(key_path)
-            os.remove(f'{key_path}.pub')
-            
-            return private_key, public_key
+
+            try:
+                # Generate key pair (async to avoid blocking the event loop)
+                proc = await asyncio.create_subprocess_exec(
+                    'ssh-keygen', '-t', 'ed25519', '-f', key_path,
+                    '-N', '', '-C', f'panic-key-{datetime.utcnow().isoformat()}',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    raise RuntimeError(f"ssh-keygen failed: {stderr.decode().strip()}")
+
+                # Read keys
+                with open(key_path, 'r') as f:
+                    private_key = f.read()
+                with open(f'{key_path}.pub', 'r') as f:
+                    public_key = f.read()
+
+                return private_key, public_key
+            finally:
+                # Always clean up temp files, even on crash
+                for p in (key_path, f'{key_path}.pub'):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
             
         except Exception as e:
             logger.error(f"SSH key generation failed: {e}")
@@ -512,33 +761,113 @@ class CredentialRotation(BaseAction):
         """Generate SHA256 hash of credential"""
         return hashlib.sha256(credential.encode()).hexdigest()
     
+    def _get_vault_manager(self):
+        """Get VaultManager instance (or None if unavailable/locked)."""
+        try:
+            from ...vault.vault_manager import VaultManager
+            vm = VaultManager()
+            return vm if vm.is_unlocked else None
+        except Exception:
+            return None
+
     async def _get_vault_credentials(self) -> List[Dict]:
-        """Get credentials from vault"""
-        # This would integrate with actual vault implementation
-        # For now, return mock data
-        return [
-            {'type': 'ssh_key', 'name': 'server_ssh', 'path': '/vault/ssh/server'},
-            {'type': 'api_token', 'name': 'github_token', 'service': 'github'},
-            {'type': 'password', 'name': 'db_password', 'system': 'postgres'}
-        ]
-    
+        """Get credentials from vault."""
+        vm = self._get_vault_manager()
+        if vm is None:
+            logger.warning("Vault locked or unavailable — returning empty credential list")
+            return []
+
+        results = []
+        try:
+            for entry in vm.list_passwords():
+                cat = entry.get('category', 'general')
+                if cat == 'ssh':
+                    results.append({'type': 'ssh_key', 'name': entry['title'], 'id': entry['id']})
+                elif cat == 'api':
+                    results.append({'type': 'api_token', 'name': entry['title'], 'id': entry['id']})
+                else:
+                    results.append({'type': 'password', 'name': entry['title'], 'id': entry['id']})
+        except Exception as e:
+            logger.error(f"Failed to list vault credentials: {e}")
+        return results
+
     async def _get_vault_passwords(self) -> List[Dict]:
-        """Get password entries from vault"""
-        # Mock implementation
-        return [
-            {'name': 'admin_password', 'system': 'citadel'},
-            {'name': 'db_password', 'system': 'postgres'}
-        ]
-    
+        """Get password entries from vault."""
+        vm = self._get_vault_manager()
+        if vm is None:
+            logger.warning("Vault locked or unavailable — returning empty password list")
+            return []
+
+        results = []
+        try:
+            for entry in vm.list_passwords():
+                results.append({
+                    'name': entry['title'],
+                    'id': entry['id'],
+                    'system': entry.get('website', entry.get('category', 'unknown')),
+                })
+        except Exception as e:
+            logger.error(f"Failed to list vault passwords: {e}")
+        return results
+
     async def _update_vault_credential(self, name: str, value: str) -> bool:
-        """Update credential in vault"""
-        # Mock implementation - would integrate with vault
-        return True
-    
+        """Update credential in vault (add new FIRST, then delete old).
+
+        This ordering ensures the credential is never lost: if the add
+        fails, the old entry remains intact.
+        """
+        vm = self._get_vault_manager()
+        if vm is None:
+            logger.error("Cannot update vault credential — vault is locked")
+            return False
+
+        try:
+            existing = [e for e in vm.list_passwords() if e['title'] == name]
+            # Add new entry first (may have duplicate title briefly)
+            success, _ = vm.add_password(title=name, password=value, category='ssh')
+            if not success:
+                return False
+            # Only delete old entry after new one is safely stored
+            if existing:
+                vm.delete_password(existing[0]['id'])
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update vault credential '{name}': {e}")
+            return False
+
     async def _update_vault_password(self, name: str, password: str) -> bool:
-        """Update password in vault"""
-        # Mock implementation
-        return True
+        """Update password in vault (add new FIRST, then delete old).
+
+        This ordering ensures the password is never lost: if the add
+        fails, the old entry remains intact.
+        """
+        vm = self._get_vault_manager()
+        if vm is None:
+            logger.error("Cannot update vault password — vault is locked")
+            return False
+
+        try:
+            existing = [e for e in vm.list_passwords() if e['title'] == name]
+            old_entry = None
+            if existing:
+                old_entry = vm.get_password(existing[0]['id'])
+            # Add new entry first
+            success, _ = vm.add_password(
+                title=name,
+                password=password,
+                username=old_entry.get('username') if old_entry else None,
+                website=old_entry.get('website') if old_entry else None,
+                category=old_entry.get('category', 'general') if old_entry else 'general',
+            )
+            if not success:
+                return False
+            # Only delete old entry after new one is safely stored
+            if existing:
+                vm.delete_password(existing[0]['id'])
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update vault password '{name}': {e}")
+            return False
     
     async def _get_credential_inventory(self) -> List[Dict]:
         """Get inventory of all credentials"""
@@ -555,20 +884,45 @@ class CredentialRotation(BaseAction):
         return []
     
     async def _get_api_token_metadata(self) -> List[Dict]:
-        """Get API token metadata"""
-        # Mock implementation
-        return [
-            {'service': 'github', 'created': '2024-01-01'},
-            {'service': 'aws', 'created': '2024-01-15'}
-        ]
+        """Get API token metadata from vault (category='api')."""
+        vm = self._get_vault_manager()
+        if vm is None:
+            logger.warning("Vault locked — cannot retrieve API token metadata")
+            return []
+
+        results = []
+        try:
+            for entry in vm.list_passwords(category='api'):
+                results.append({
+                    'service': entry.get('website', entry['title']),
+                    'name': entry['title'],
+                    'id': entry['id'],
+                    'created': entry.get('created_at', 'unknown'),
+                })
+        except Exception as e:
+            logger.error(f"Failed to list API tokens: {e}")
+        return results
     
     async def _restore_ssh_keys(self, old_keys: List[str]):
-        """Restore SSH authorized keys"""
+        """Restore SSH authorized keys while preserving recovery keys."""
         import os
         authorized_keys_path = os.path.expanduser('~/.ssh/authorized_keys')
-        
-        with open(authorized_keys_path, 'w') as f:
-            f.writelines(old_keys)
+
+        # Get current recovery key lines (must survive rollback too)
+        recovery_mgr = RecoveryKeyManager(self.db)
+        recovery_lines = recovery_mgr.get_recovery_key_lines()
+
+        # Merge: recovery keys + restored old keys (minus any old recovery lines to avoid dupes)
+        restored = [line for line in old_keys if RECOVERY_KEY_COMMENT_PREFIX not in line]
+
+        tmp_path = authorized_keys_path + '.tmp'
+        with open(tmp_path, 'w') as f:
+            for line in recovery_lines:
+                f.write(line.strip() + '\n')
+            f.writelines(restored)
+
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, authorized_keys_path)
     
     async def _restore_api_tokens(self, token_metadata: List[Dict]):
         """Restore API tokens from archive"""

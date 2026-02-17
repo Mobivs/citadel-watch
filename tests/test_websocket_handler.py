@@ -45,7 +45,7 @@ class TestWSHandlerFileStructure:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     def test_file_exists(self):
         assert WS_HANDLER_PATH.exists(), "websocket-handler.js must exist"
@@ -76,7 +76,7 @@ class TestWSHandlerConstants:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     def test_max_retries_defined(self, src):
         assert re.search(r"MAX_RETRIES\s*=\s*5", src), \
@@ -124,7 +124,7 @@ class TestWSHandlerClassAPI:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     def test_connect_method(self, src):
         assert re.search(r"connect\s*\(", src), "Must have connect() method"
@@ -166,7 +166,7 @@ class TestExponentialBackoff:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     def test_compute_backoff_function_exists(self, src):
         assert re.search(r"function\s+computeBackoff", src), \
@@ -206,7 +206,7 @@ class TestSubscriptionPattern:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     def test_subscribers_map(self, src):
         assert re.search(r"_subscribers\s*=\s*new\s+Map", src), \
@@ -243,7 +243,7 @@ class TestConnectionStatusBroadcasting:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     def test_broadcasts_ws_connected(self, src):
         assert "'ws-connected'" in src or '"ws-connected"' in src
@@ -270,7 +270,7 @@ class TestMemoryLeakPrevention:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     def test_disconnect_clears_retry_timer(self, src):
         disconnect_section = src[src.index("disconnect()"):src.index("reset()")]
@@ -299,7 +299,7 @@ class TestMemoryLeakPrevention:
 
 
 # =====================================================================
-# Section 8: Auto-connect on DOMContentLoaded
+# Section 8: Auto-connect at module level
 # =====================================================================
 
 class TestAutoConnect:
@@ -309,15 +309,14 @@ class TestAutoConnect:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
-    def test_listens_for_dom_content_loaded(self, src):
-        assert "DOMContentLoaded" in src
-
-    def test_calls_connect_on_dom_ready(self, src):
-        # After DOMContentLoaded, wsHandler.connect() should be called
-        dcl_section = src[src.index("DOMContentLoaded"):]
-        assert "connect()" in dcl_section
+    def test_auto_connect_at_module_level(self, src):
+        """wsHandler.connect() must be called at module level (not gated by an event)."""
+        # Find the singleton creation line and check connect() follows it
+        singleton_idx = src.index("const wsHandler")
+        after_singleton = src[singleton_idx:]
+        assert "wsHandler.connect()" in after_singleton
 
 
 # =====================================================================
@@ -331,7 +330,7 @@ class TestWSHandlerExports:
     def src(self):
         if not WS_HANDLER_PATH.exists():
             pytest.skip("websocket-handler.js not found")
-        return WS_HANDLER_PATH.read_text()
+        return WS_HANDLER_PATH.read_text(encoding='utf-8')
 
     @pytest.fixture
     def export_block(self, src):
@@ -367,7 +366,7 @@ class TestComponentImportWSHandler:
         path = COMPONENT_FILES[request.param]
         if not path.exists():
             pytest.skip(f"{request.param}.js not found")
-        return request.param, path.read_text()
+        return request.param, path.read_text(encoding='utf-8')
 
     def test_imports_ws_handler(self, component):
         name, src = component
@@ -389,17 +388,17 @@ class TestComponentSubscriptions:
         path = COMPONENT_FILES[request.param]
         if not path.exists():
             pytest.skip(f"{request.param}.js not found")
-        return request.param, path.read_text()
+        return request.param, path.read_text(encoding='utf-8')
 
     def test_connect_uses_ws_handler_subscribe(self, component):
         name, src = component
         assert "wsHandler.subscribe(" in src, \
             f"{name}.js connectWebSocket() must call wsHandler.subscribe()"
 
-    def test_connect_calls_ws_handler_connect(self, component):
+    def test_polls_ws_handler_connected(self, component):
         name, src = component
-        assert "wsHandler.connect()" in src, \
-            f"{name}.js connectWebSocket() must call wsHandler.connect()"
+        assert "wsHandler.connected" in src, \
+            f"{name}.js must poll wsHandler.connected for badge status"
 
     def test_listens_for_ws_connected_event(self, component):
         name, src = component
@@ -424,7 +423,7 @@ class TestOldWebSocketRemoved:
         path = COMPONENT_FILES[request.param]
         if not path.exists():
             pytest.skip(f"{request.param}.js not found")
-        return request.param, path.read_text()
+        return request.param, path.read_text(encoding='utf-8')
 
     def test_no_new_websocket(self, component):
         name, src = component
@@ -470,7 +469,7 @@ class TestPageSpecificSubscriptions:
     def _get_src(self, path):
         if not path.exists():
             pytest.skip(f"{path.name} not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_charts_subscribes_to_event(self):
         src = self._get_src(CHARTS_PATH)

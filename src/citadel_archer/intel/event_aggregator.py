@@ -28,6 +28,7 @@ class EventCategory(str, Enum):
     AI = "ai"
     USER = "user"
     INTEL = "intel"
+    REMOTE = "remote"
 
 
 # Map core EventType values to categories
@@ -59,17 +60,36 @@ _EVENT_CATEGORY_MAP: Dict[str, EventCategory] = {
     # System events
     "system.start": EventCategory.SYSTEM,
     "system.stop": EventCategory.SYSTEM,
+    "system.extension_scan": EventCategory.SYSTEM,
+    "system.extension_risk": EventCategory.SYSTEM,
+    "system.extension_install": EventCategory.SYSTEM,
+    "system.extension_malicious": EventCategory.SYSTEM,
     "security.level.changed": EventCategory.SYSTEM,
     # User events
     "user.login": EventCategory.USER,
     "user.logout": EventCategory.USER,
     "user.override": EventCategory.USER,
+    # Remote shield events (VPS agent sensors)
+    "remote.auth_log": EventCategory.REMOTE,
+    "remote.process_monitor": EventCategory.REMOTE,
+    "remote.file_integrity": EventCategory.REMOTE,
+    "remote.cron_monitor": EventCategory.REMOTE,
+    "remote.network_anomaly": EventCategory.REMOTE,
 }
 
 
 def categorize_event(event_type: str) -> EventCategory:
-    """Map an event type string to its category."""
-    return _EVENT_CATEGORY_MAP.get(event_type, EventCategory.SYSTEM)
+    """Map an event type string to its category.
+
+    Falls back to prefix matching for remote.* event types, then SYSTEM.
+    """
+    cat = _EVENT_CATEGORY_MAP.get(event_type)
+    if cat:
+        return cat
+    # Prefix fallback: future remote sensor types auto-categorize
+    if event_type.startswith("remote."):
+        return EventCategory.REMOTE
+    return EventCategory.SYSTEM
 
 
 @dataclass

@@ -110,8 +110,10 @@
         .status-protected             { background: rgba(59,130,246,0.12);  color: #3B82F6; border: 1px solid rgba(59,130,246,0.25); }
         .status-offline   .status-dot { background: #6B7280; }
         .status-offline               { background: rgba(107,114,128,0.12); color: #6B7280; border: 1px solid rgba(107,114,128,0.25); }
-        .status-compromised .status-dot { background: #EF4444; }
-        .status-compromised             { background: rgba(239,68,68,0.12);  color: #EF4444; border: 1px solid rgba(239,68,68,0.25); }
+        .status-compromised .status-dot { background: #ff3333; }
+        .status-compromised             { background: rgba(255,51,51,0.12);  color: #ff3333; border: 1px solid rgba(255,51,51,0.25); }
+        .status-unknown .status-dot     { background: #F59E0B; }
+        .status-unknown                 { background: rgba(245,158,11,0.12); color: #F59E0B; border: 1px solid rgba(245,158,11,0.25); }
 
         /* Threat level badge */
         .threat-badge {
@@ -315,6 +317,187 @@
             }
         }
 
+        /* Add/Edit Asset modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 60;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.open { display: flex; }
+
+        .modal-card {
+            background: rgba(10, 14, 39, 0.98);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            border-radius: 12px;
+            width: 480px;
+            max-width: 95vw;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6);
+        }
+
+        .modal-input {
+            width: 100%;
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.8rem;
+            color: #E5E7EB;
+            transition: border-color 0.2s;
+        }
+
+        .modal-input:focus {
+            outline: none;
+            border-color: #00D9FF;
+            box-shadow: 0 0 0 2px rgba(0, 217, 255, 0.15);
+        }
+
+        .modal-input::placeholder { color: #6B7280; }
+
+        .modal-label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #9CA3AF;
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .btn-primary {
+            padding: 0.5rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: rgba(0, 217, 255, 0.15);
+            border: 1px solid rgba(0, 217, 255, 0.4);
+            color: #00D9FF;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary:hover { background: rgba(0, 217, 255, 0.25); }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-danger {
+            padding: 0.5rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: rgba(255, 51, 51, 0.15);
+            border: 1px solid rgba(255, 51, 51, 0.4);
+            color: #ff3333;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-danger:hover { background: rgba(255, 51, 51, 0.25); }
+
+        .btn-ghost {
+            padding: 0.5rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #9CA3AF;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-ghost:hover { border-color: rgba(255, 255, 255, 0.2); color: #E5E7EB; }
+
+        /* Invite modal steps */
+        .invite-step { display: none; }
+        .invite-step.active { display: block; }
+
+        .invite-code-box {
+            position: relative;
+            background: rgba(5, 10, 25, 0.9);
+            border: 1px solid rgba(0, 217, 255, 0.35);
+            border-radius: 8px;
+            padding: 0.75rem 2.75rem 0.75rem 0.75rem;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.75rem;
+            color: #00D9FF;
+            word-break: break-all;
+            user-select: all;
+            line-height: 1.5;
+        }
+
+        .invite-copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: rgba(0, 217, 255, 0.1);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 6px;
+            padding: 0.35rem;
+            cursor: pointer;
+            color: #00D9FF;
+            transition: all 0.2s;
+        }
+        .invite-copy-btn:hover { background: rgba(0, 217, 255, 0.25); }
+
+        .invite-copy-feedback {
+            position: absolute;
+            top: -1.75rem;
+            right: 0;
+            font-size: 0.7rem;
+            color: #00cc66;
+            font-weight: 600;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .invite-copy-feedback.show { opacity: 1; }
+
+        .invite-instructions {
+            list-style: none;
+            padding: 0;
+            margin: 0.75rem 0 0;
+            font-size: 0.75rem;
+            color: #9CA3AF;
+        }
+        .invite-instructions li {
+            padding: 0.25rem 0;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+        .invite-instructions li::before {
+            content: attr(data-step);
+            position: absolute;
+            left: 0;
+            color: #00D9FF;
+            font-weight: 600;
+        }
+
+        .invite-info {
+            font-size: 0.7rem;
+            color: #6B7280;
+            margin-top: 0.5rem;
+        }
+
+        .invite-link {
+            font-size: 0.75rem;
+            color: #6B7280;
+            cursor: pointer;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            background: none;
+            border: none;
+            padding: 0;
+            transition: color 0.2s;
+        }
+        .invite-link:hover { color: #00D9FF; }
+
         /* Responsive */
         @media (max-width: 640px) {
             .filter-bar { flex-direction: column !important; align-items: stretch !important; }
@@ -405,6 +588,10 @@
                     <span class="stat-pill" style="background:rgba(107,114,128,0.12); color:#6B7280;">
                         <span id="stat-total">0</span> Total
                     </span>
+                    <button id="add-asset-btn" class="btn-primary flex items-center gap-1.5">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Add Asset
+                    </button>
                 </div>
             </div>
 
@@ -425,6 +612,7 @@
                     <option value="protected">Protected</option>
                     <option value="offline">Offline</option>
                     <option value="compromised">Compromised</option>
+                    <option value="unknown">Unknown</option>
                 </select>
 
                 <!-- Threat level filter -->
@@ -446,7 +634,7 @@
                 <!-- Live badge -->
                 <div id="live-badge" style="display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.625rem;border-radius:9999px;font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;background:rgba(230,184,0,0.15);color:#e6b800;border:1px solid rgba(230,184,0,0.3);">
                     <span id="live-dot" style="width:6px;height:6px;border-radius:50%;background:#e6b800;animation:pulse 2s infinite;"></span>
-                    <span id="live-text">Simulated</span>
+                    <span id="live-text">Connecting...</span>
                 </div>
             </div>
 
@@ -501,6 +689,208 @@
         <footer class="text-center py-4 text-gray-500 text-sm flex-shrink-0">
             <p>Protected by Citadel Archer AI &bull; Proactive Defense &bull; Built to protect the innocents 🛡️</p>
         </footer>
+    </div>
+
+    <!-- Add/Edit Asset Modal -->
+    <div id="asset-modal-overlay" class="modal-overlay">
+        <div class="modal-card">
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-5">
+                    <h3 id="asset-modal-title" class="text-lg font-bold text-neon-blue">Add Asset</h3>
+                    <button id="asset-modal-close" class="p-2 rounded-lg hover:bg-neon-blue/10 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <form id="asset-form" autocomplete="off">
+                    <input type="hidden" id="asset-form-id" value="" />
+
+                    <div class="space-y-4">
+                        <!-- Name -->
+                        <div>
+                            <label class="modal-label" for="asset-form-name">Name *</label>
+                            <input id="asset-form-name" class="modal-input" type="text" placeholder="e.g. Production VPS" required maxlength="200" />
+                        </div>
+
+                        <!-- Hostname + IP row -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="modal-label" for="asset-form-hostname">Hostname</label>
+                                <input id="asset-form-hostname" class="modal-input" type="text" placeholder="e.g. vps1.example.com" />
+                            </div>
+                            <div>
+                                <label class="modal-label" for="asset-form-ip">IP Address</label>
+                                <input id="asset-form-ip" class="modal-input" type="text" placeholder="e.g. 192.168.1.10" />
+                            </div>
+                        </div>
+
+                        <!-- Platform + Type row -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="modal-label" for="asset-form-platform">Platform</label>
+                                <select id="asset-form-platform" class="modal-input">
+                                    <option value="linux">Linux</option>
+                                    <option value="windows">Windows</option>
+                                    <option value="macos">macOS</option>
+                                    <option value="vps">VPS</option>
+                                    <option value="local">Local</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="modal-label" for="asset-form-type">Asset Type</label>
+                                <select id="asset-form-type" class="modal-input">
+                                    <option value="vps">VPS</option>
+                                    <option value="workstation">Workstation</option>
+                                    <option value="lan">LAN</option>
+                                    <option value="cloud">Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- SSH Port + Username row -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="modal-label" for="asset-form-ssh-port">SSH Port</label>
+                                <input id="asset-form-ssh-port" class="modal-input" type="number" value="22" min="1" max="65535" />
+                            </div>
+                            <div>
+                                <label class="modal-label" for="asset-form-ssh-user">SSH Username</label>
+                                <input id="asset-form-ssh-user" class="modal-input" type="text" value="root" />
+                            </div>
+                        </div>
+
+                        <!-- Tags -->
+                        <div>
+                            <label class="modal-label" for="asset-form-tags">Tags (comma-separated)</label>
+                            <input id="asset-form-tags" class="modal-input" type="text" placeholder="e.g. production, web, nginx" />
+                        </div>
+
+                        <!-- Notes -->
+                        <div>
+                            <label class="modal-label" for="asset-form-notes">Notes</label>
+                            <textarea id="asset-form-notes" class="modal-input" rows="2" placeholder="Optional notes..." style="resize:vertical;"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Error message -->
+                    <div id="asset-form-error" class="mt-3 text-xs text-red-400" style="display:none;"></div>
+
+                    <!-- Actions -->
+                    <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-white/5">
+                        <button type="button" id="asset-modal-cancel" class="btn-ghost">Cancel</button>
+                        <button type="submit" id="asset-form-submit" class="btn-primary">
+                            <span id="asset-form-submit-text">Create Asset</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invite Remote Agent Modal -->
+    <div id="invite-modal-overlay" class="modal-overlay">
+        <div class="modal-card">
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-5">
+                    <h3 id="invite-modal-title" class="text-lg font-bold text-neon-blue">Invite Remote Agent</h3>
+                    <button id="invite-modal-close" class="p-2 rounded-lg hover:bg-neon-blue/10 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Step 1: Generate -->
+                <div id="invite-step-generate" class="invite-step active">
+                    <p class="text-sm text-gray-400 mb-4">Generate a one-time invitation code for a remote AI agent to join the Citadel network.</p>
+
+                    <div class="space-y-4">
+                        <div>
+                            <label class="modal-label" for="invite-agent-name">Agent Name *</label>
+                            <input id="invite-agent-name" class="modal-input" type="text" placeholder="e.g. Production VPS Agent" required maxlength="200" />
+                        </div>
+                        <div>
+                            <label class="modal-label" for="invite-agent-type">Agent Type</label>
+                            <select id="invite-agent-type" class="modal-input">
+                                <option value="vps">VPS (Linux)</option>
+                                <option value="workstation">Windows PC</option>
+                                <option value="cloud">Cloud</option>
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="modal-label" for="invite-recipient-name">Recipient Name</label>
+                                <input id="invite-recipient-name" class="modal-input" type="text" placeholder="e.g. Mom" maxlength="100" />
+                            </div>
+                            <div>
+                                <label class="modal-label" for="invite-recipient-email">Email</label>
+                                <input id="invite-recipient-email" class="modal-input" type="email" placeholder="e.g. mom@gmail.com" maxlength="254" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <p class="invite-info">Invitation expires 10 minutes after generation. Email is optional — used for the "Share via Email" button.</p>
+
+                    <div id="invite-generate-error" class="mt-3 text-xs text-red-400" style="display:none;"></div>
+
+                    <div class="flex items-center justify-between mt-6 pt-4 border-t border-white/5">
+                        <button type="button" id="invite-add-manually" class="invite-link">Or add an asset manually</button>
+                        <div class="flex items-center gap-3">
+                            <button type="button" id="invite-cancel" class="btn-ghost">Cancel</button>
+                            <button type="button" id="invite-generate-btn" class="btn-primary">Generate Invitation</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Result -->
+                <div id="invite-step-result" class="invite-step">
+                    <div class="flex items-center justify-between mb-4">
+                        <p class="text-sm text-gray-400">Share this invitation with the recipient:</p>
+                        <span id="invite-status-badge" class="status-badge status-unknown" style="font-size:0.7rem;">
+                            <span class="status-dot"></span>
+                            <span id="invite-status-text">Waiting...</span>
+                        </span>
+                    </div>
+
+                    <!-- Share buttons -->
+                    <div class="flex gap-2 mb-4 flex-wrap">
+                        <button type="button" id="invite-share-email-btn" class="btn-primary flex items-center gap-1.5" title="Opens your email client">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            Share via Email
+                        </button>
+                        <button type="button" id="invite-open-page-btn" class="btn-primary flex items-center gap-1.5" style="background:rgba(139,92,246,0.15);border-color:rgba(139,92,246,0.4);color:#a78bfa;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            Open Enrollment Page
+                        </button>
+                    </div>
+
+                    <p class="text-xs text-gray-500 mb-3">Or copy the invitation code manually:</p>
+
+                    <div style="position:relative;">
+                        <div id="invite-code-box" class="invite-code-box"></div>
+                        <button type="button" id="invite-copy-btn" class="invite-copy-btn" title="Copy to clipboard">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                            </svg>
+                        </button>
+                        <span id="invite-copy-feedback" class="invite-copy-feedback">Copied!</span>
+                    </div>
+
+                    <ol id="invite-instructions" class="invite-instructions">
+                        <li data-step="1.">SSH into the remote server</li>
+                        <li data-step="2.">Open Claude Code in the terminal</li>
+                        <li data-step="3.">Paste the invitation string above</li>
+                    </ol>
+
+                    <div class="flex items-center justify-end mt-6 pt-4 border-t border-white/5">
+                        <button type="button" id="invite-done-btn" class="btn-primary">Done</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Detail overlay -->

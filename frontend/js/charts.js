@@ -459,14 +459,18 @@ function connectWebSocket() {
     _wsUnsubs.push(wsHandler.subscribe('security_level_changed', handleWebSocketMessage));
     _wsUnsubs.push(wsHandler.subscribe('alert_created', handleWebSocketMessage));
 
-    // Track connection status
+    // Track connection status via events
     _onWsConnected = () => setLiveStatus(true);
     _onWsDisconnected = () => setLiveStatus(false);
     window.addEventListener('ws-connected', _onWsConnected);
     window.addEventListener('ws-disconnected', _onWsDisconnected);
 
-    // Connect if not already
-    wsHandler.connect();
+    // Poll connection status continuously (handles race where ws-connected
+    // event fired before our listener was registered, and catches later
+    // disconnects if the ws-disconnected event is missed).
+    setLiveStatus(wsHandler.connected);
+    const poll = setInterval(() => setLiveStatus(wsHandler.connected), 2000);
+    _wsUnsubs.push(() => clearInterval(poll));
 }
 
 function handleWebSocketMessage(msg) {
@@ -488,9 +492,9 @@ function setLiveStatus(connected) {
         dot.className = 'live-dot connected';
         text.textContent = 'Live';
     } else {
-        badge.className = 'live-badge simulated';
-        dot.className = 'live-dot simulated';
-        text.textContent = 'Simulated';
+        badge.className = 'live-badge offline';
+        dot.className = 'live-dot offline';
+        text.textContent = 'Offline';
     }
 }
 
@@ -635,12 +639,7 @@ async function init() {
     refreshInterval = setInterval(refreshAllCharts, 30000);
 }
 
-// Start when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
-}
+// NOTE: No auto-init here — tab-loader.js manages the init/destroy lifecycle.
 
 // ── Exports for testing ─────────────────────────────────────────────
 

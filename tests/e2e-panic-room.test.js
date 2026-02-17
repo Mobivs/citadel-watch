@@ -179,7 +179,7 @@ class PanicRoomE2ETest {
             const initialProgress = await this.page.$eval('#progressBar', el => el.style.width);
             assert(initialProgress === '0%', 'Progress should start at 0%');
             
-            // Wait for simulated updates
+            // Wait for execution progress updates
             await this.page.waitForTimeout(3000);
             
             // Check progress has increased

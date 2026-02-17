@@ -16,12 +16,90 @@
             <p class="text-gray-400 mt-2">Emergency Response System</p>
         </div>
 
+        <!-- Recovery Key Status -->
+        <div id="recoveryKeyCard" class="glassmorphism rounded-lg p-6 mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-xl font-semibold">
+                    <span id="recoveryKeyIcon" class="inline-block w-3 h-3 rounded-full bg-gray-500 mr-2"></span>
+                    Recovery Key
+                </h2>
+                <div id="recoveryKeyActions" class="flex space-x-2">
+                    <button id="generateRecoveryKey" class="bg-green-600 hover:bg-green-700 text-white text-sm py-1 px-3 rounded hidden">
+                        Generate
+                    </button>
+                    <button id="rotateRecoveryKey" class="bg-yellow-600 hover:bg-yellow-700 text-white text-sm py-1 px-3 rounded hidden">
+                        Rotate
+                    </button>
+                    <button id="verifyRecoveryKey" class="bg-blue-600 hover:bg-blue-700 text-white text-sm py-1 px-3 rounded hidden">
+                        Verify
+                    </button>
+                </div>
+            </div>
+            <div id="recoveryKeyStatus" class="text-gray-400 text-sm">
+                Checking recovery key status...
+            </div>
+        </div>
+
+        <!-- Recovery Key Modal (shows private key ONCE) -->
+        <div id="recoveryKeyModal" class="fixed inset-0 bg-black bg-opacity-85 hidden flex items-center justify-center z-50">
+            <div class="glassmorphism rounded-lg p-8 max-w-lg w-full">
+                <h2 class="text-2xl font-bold text-yellow-400 mb-2">Recovery Key Generated</h2>
+                <p class="text-red-400 font-semibold mb-4">Save this private key NOW. It will NEVER be shown again.</p>
+                <div class="bg-gray-900 rounded p-3 mb-4 relative">
+                    <pre id="recoveryKeyDisplay" class="text-xs text-green-400 whitespace-pre-wrap break-all max-h-48 overflow-y-auto"></pre>
+                    <button id="copyRecoveryKey" class="absolute top-2 right-2 bg-gray-700 hover:bg-gray-600 text-white text-xs py-1 px-2 rounded">
+                        Copy
+                    </button>
+                </div>
+                <div class="text-sm text-gray-400 mb-4">
+                    <p><strong>Fingerprint:</strong> <span id="recoveryKeyFingerprint" class="text-blue-400"></span></p>
+                    <p><strong>Key ID:</strong> <span id="recoveryKeyId" class="text-blue-400"></span></p>
+                    <p id="recoveryKeySavedTo" class="mt-2 hidden"><strong>Auto-saved to:</strong> <code id="recoveryKeySavePath" class="text-green-400"></code></p>
+                </div>
+                <div class="flex space-x-3 mb-3">
+                    <button id="downloadRecoveryKey" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded flex-1">
+                        Download .pem backup
+                    </button>
+                    <button id="copyRecoveryKey2" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded flex-1">
+                        Copy to clipboard
+                    </button>
+                </div>
+                <button id="closeRecoveryKeyModal" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded w-full">
+                    Close
+                </button>
+            </div>
+        </div>
+
         <!-- Main Panic Button Section -->
         <div class="glassmorphism rounded-lg p-8 mb-6 text-center">
             <button id="panicButton" class="panic-button bg-red-600 hover:bg-red-700 text-white font-bold py-6 px-12 rounded-full text-2xl transform hover:scale-105 transition-all">
                 🚨 ACTIVATE PANIC MODE
             </button>
-            <p class="text-gray-400 mt-4">Click to initiate emergency security response</p>
+            <p id="panicButtonHint" class="text-gray-400 mt-4">Click to initiate emergency security response</p>
+        </div>
+
+        <!-- Asset Scope Selector -->
+        <div id="assetScopeSection" class="glassmorphism rounded-lg p-6 mb-6 hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold">Target Assets:</h2>
+                <div class="flex items-center gap-3">
+                    <span id="assetScopeCount" class="text-sm text-gray-400">0 of 0 selected</span>
+                    <button id="selectAllAssets" class="text-xs text-blue-400 hover:underline">Select All Online</button>
+                    <button id="deselectAllAssets" class="text-xs text-gray-400 hover:underline">Deselect All</button>
+                </div>
+            </div>
+            <div id="assetScopeList" class="space-y-2">
+                <!-- Local machine (always present) -->
+                <label class="flex items-center gap-3 p-2 rounded bg-gray-800/50 cursor-pointer hover:bg-gray-700/50">
+                    <input type="checkbox" value="local" class="asset-scope-checkbox w-4 h-4" checked>
+                    <span class="flex-1">
+                        <span class="text-sm font-medium text-gray-200">Local Machine</span>
+                        <span class="text-xs text-gray-500 ml-2">(this computer)</span>
+                    </span>
+                    <span class="text-xs px-2 py-0.5 rounded bg-green-500/15 text-green-400 border border-green-500/30">local</span>
+                </label>
+                <!-- Remote assets injected here by JS -->
+            </div>
         </div>
 
         <!-- Playbook Selection -->
@@ -51,7 +129,9 @@
         <div id="confirmModal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-50">
             <div class="glassmorphism rounded-lg p-8 max-w-md">
                 <h2 class="text-2xl font-bold text-red-400 mb-4">⚠️ Confirm Panic Mode</h2>
-                <p class="mb-4">Selected playbooks:</p>
+                <p class="mb-2 text-sm text-gray-400">Target assets:</p>
+                <ul id="selectedAssets" class="list-disc list-inside mb-4 text-gray-300 text-sm"></ul>
+                <p class="mb-2 text-sm text-gray-400">Selected playbooks:</p>
                 <ul id="selectedPlaybooks" class="list-disc list-inside mb-6 text-gray-300"></ul>
                 <div class="flex space-x-4">
                     <button id="confirmPanic" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">

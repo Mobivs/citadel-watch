@@ -127,22 +127,23 @@ class TestChartData:
         svc.event_aggregator = agg
 
         now = datetime.utcnow()
+        # Place events 1-2 hours ago so they fall within chart hour-buckets
         for i in range(5):
             agg.ingest(
                 event_type="file.modified",
                 severity="info",
-                timestamp=(now - timedelta(minutes=i * 10)).isoformat(),
+                timestamp=(now - timedelta(hours=1, minutes=i * 10)).isoformat(),
             )
         agg.ingest(
             event_type="process.suspicious",
             severity="critical",
-            timestamp=now.isoformat(),
+            timestamp=(now - timedelta(hours=1)).isoformat(),
         )
 
         # Clear cache so fresh data flows through
         module_cache.clear()
-        result = svc.get_chart_data(hours=2)
-        assert result.period == "2h"
+        result = svc.get_chart_data(hours=4)
+        assert result.period == "4h"
         total = sum(p.total for p in result.points)
         assert total >= 1
 
@@ -254,7 +255,7 @@ class TestAssets:
 
     def test_with_inventory(self):
         svc = DashboardServices()
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         svc.asset_inventory = inv
 
         inv.register(Asset(name="srv1", platform=AssetPlatform.LINUX,
@@ -269,7 +270,7 @@ class TestAssets:
 
     def test_status_filter(self):
         svc = DashboardServices()
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         svc.asset_inventory = inv
 
         inv.register(Asset(name="a", status=AssetStatus.ONLINE))
@@ -281,7 +282,7 @@ class TestAssets:
 
     def test_platform_filter(self):
         svc = DashboardServices()
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         svc.asset_inventory = inv
 
         inv.register(Asset(name="a", platform=AssetPlatform.LINUX))
@@ -293,7 +294,7 @@ class TestAssets:
 
     def test_event_count_per_asset(self):
         svc = DashboardServices()
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         agg = EventAggregator()
         svc.asset_inventory = inv
         svc.event_aggregator = agg
@@ -340,17 +341,21 @@ class TestEndpointsWithTestClient:
     def client(self):
         from fastapi.testclient import TestClient
         from citadel_archer.api.dashboard_ext import router, services
+        from citadel_archer.api.asset_routes import router as asset_router, set_inventory
         from citadel_archer.api.security import initialize_session_token
         from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)
+        app.include_router(asset_router)
         token = initialize_session_token()
 
         # Wire up minimal services
+        inv = AssetInventory(db_path=None)
         services.event_aggregator = EventAggregator()
-        services.asset_inventory = AssetInventory()
+        services.asset_inventory = inv
         services.threat_scorer = ThreatScorer()
+        set_inventory(inv)
 
         tc = TestClient(app)
         tc.headers["X-Session-Token"] = token
@@ -440,3 +445,26 @@ class TestCacheIntegration:
         import time; time.sleep(0.01)
         r2 = svc.get_chart_data(hours=24)
         assert r2.generated_at != r1.generated_at
+
+
+# ── Preference Endpoints ──────────────────────────────────────────────
+
+class TestPreferenceEndpoints:
+    """Verify that preference API endpoints are registered."""
+
+    def test_preference_routes_exist(self):
+        """The router should include preference GET/PUT routes."""
+        from citadel_archer.api.dashboard_ext import router
+
+        paths = [r.path for r in router.routes]
+        assert "/preferences" in paths or any("/preferences" in p for p in paths)
+
+    def test_user_preferences_importable(self):
+        """UserPreferences module should be importable from dashboard_ext."""
+        from citadel_archer.core.user_preferences import (
+            UserPreferences,
+            get_user_preferences,
+            set_user_preferences,
+            PREF_DASHBOARD_MODE,
+        )
+        assert PREF_DASHBOARD_MODE == "dashboard_mode"

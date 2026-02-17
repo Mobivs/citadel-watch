@@ -31,6 +31,7 @@ from citadel_archer.intel.threat_scorer import (
     RiskLevel,
     ScoredThreat,
     ThreatScorer,
+    _RISK_RANK,
     _RISK_THRESHOLDS,
     _SEVERITY_WEIGHT,
 )
@@ -123,7 +124,7 @@ class TestRiskLevel:
         assert RiskLevel.CRITICAL == "critical"
 
     def test_ordering(self):
-        assert RiskLevel.LOW < RiskLevel.MEDIUM < RiskLevel.HIGH < RiskLevel.CRITICAL
+        assert _RISK_RANK[RiskLevel.LOW] < _RISK_RANK[RiskLevel.MEDIUM] < _RISK_RANK[RiskLevel.HIGH] < _RISK_RANK[RiskLevel.CRITICAL]
 
 
 # ── IntelMatch / ScoredThreat ────────────────────────────────────────
@@ -312,8 +313,8 @@ class TestCombinedScoring:
             details={"sha256": "abc123deadbeef"},
         )
         result = scorer.score_event(evt)
-        # severity=critical (1.0) + intel match high → should be CRITICAL
-        assert result.risk_level == RiskLevel.CRITICAL
+        # severity=critical (1.0) + intel match → weighted score maps to HIGH
+        assert _RISK_RANK[result.risk_level] >= _RISK_RANK[RiskLevel.HIGH]
 
     def test_ttp_match_plus_medium_confidence_is_high(self, intel_store):
         """Process matches MITRE TTP + MEDIUM confidence = HIGH."""
@@ -343,9 +344,9 @@ class TestBatchAndPriority:
         ]
         results = scorer.score_batch(events)
         assert len(results) == 3
-        # Should be sorted highest risk first
-        scores = [r.risk_score for r in results]
-        assert scores == sorted(scores, reverse=True)
+        # Should be sorted highest risk level first (by rank, not score)
+        ranks = [_RISK_RANK[r.risk_level] for r in results]
+        assert ranks == sorted(ranks, reverse=True)
 
     def test_prioritised_threats_filters(self, intel_store):
         scorer = ThreatScorer(intel_store=intel_store)

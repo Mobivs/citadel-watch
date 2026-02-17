@@ -67,7 +67,7 @@ def _make_scored(asset_id="a-1", risk_level=RiskLevel.LOW, timestamp=None):
     if timestamp is None:
         timestamp = datetime.utcnow().isoformat()
     return ScoredThreat(
-        event_id="e-1", event_type="test", severity="info", message="test",
+        event_id="e-1", event_type="test",
         timestamp=timestamp, asset_id=asset_id,
         risk_level=risk_level, risk_score=25.0,
     )
@@ -256,7 +256,7 @@ class TestAssetViewEngine:
         assert result.total_assets == 0
 
     def test_query_with_inventory(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         inv.register(_make_asset("a-1", "Box1"))
         inv.register(_make_asset("a-2", "Box2"))
         view = AssetView(inventory=inv)
@@ -264,7 +264,7 @@ class TestAssetViewEngine:
         assert result.total_assets == 2
 
     def test_query_with_filter(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         inv.register(_make_asset("a-1", "Box1", AssetStatus.ONLINE))
         inv.register(_make_asset("a-2", "Box2", AssetStatus.OFFLINE))
         view = AssetView(inventory=inv)
@@ -272,7 +272,7 @@ class TestAssetViewEngine:
         assert result.total_filtered == 1
 
     def test_drill_down_found(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         inv.register(_make_asset("a-1", "Box1"))
         view = AssetView(inventory=inv)
         view.ingest_events([_make_event(asset_id="a-1")])
@@ -286,7 +286,7 @@ class TestAssetViewEngine:
         assert detail is None
 
     def test_to_dict_serialisable(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         inv.register(_make_asset("a-1", "Box1"))
         view = AssetView(inventory=inv)
         result = view.query()
@@ -295,7 +295,7 @@ class TestAssetViewEngine:
         assert len(json_str) > 0
 
     def test_summary(self):
-        inv = AssetInventory()
+        inv = AssetInventory(db_path=None)
         inv.register(_make_asset("a-1", "Box1", AssetStatus.ONLINE))
         inv.register(_make_asset("a-2", "Box2", AssetStatus.OFFLINE))
         view = AssetView(inventory=inv)
@@ -336,7 +336,7 @@ class TestAssetsHTML:
         path = FRONTEND_DIR / "assets.html"
         if not path.exists():
             pytest.skip("assets.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_tailwind_cdn(self, html_content):
         assert "cdn.tailwindcss.com" in html_content
@@ -411,7 +411,7 @@ class TestAssetsJS:
         path = FRONTEND_DIR / "js" / "assets.js"
         if not path.exists():
             pytest.skip("assets.js not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_imports_api_client(self, js_content):
         assert "api-client" in js_content
@@ -466,13 +466,13 @@ class TestAssetsNavigation:
         path = FRONTEND_DIR / "index.html"
         if not path.exists():
             pytest.skip("index.html not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_has_assets_tab(self, index_content):
         assert 'id="tab-btn-assets"' in index_content
 
     def test_has_assets_panel(self, index_content):
-        assert 'id="tab-panel-assets"' in index_content
+        assert 'id="tab-panel-dynamic"' in index_content  # shared dynamic panel
 
     def test_assets_tab_after_risk(self, index_content):
         risk_pos = index_content.index('id="tab-btn-risk-metrics"')
@@ -488,10 +488,98 @@ class TestAssetsRoutes:
         path = Path(__file__).parent.parent / "src" / "citadel_archer" / "api" / "main.py"
         if not path.exists():
             pytest.skip("main.py not found")
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
     def test_assets_html_route(self, main_content):
         assert "/assets.html" in main_content
 
     def test_assets_page_route(self, main_content):
         assert "assets-page" in main_content or "assets.html" in main_content
+
+
+# =====================================================================
+# Section 10: Invite Remote Agent Modal
+# =====================================================================
+
+class TestInviteModalHTML:
+    """Validate invite modal HTML structure in assets.html."""
+
+    @pytest.fixture
+    def html_content(self):
+        path = FRONTEND_DIR / "assets.html"
+        if not path.exists():
+            pytest.skip("assets.html not found")
+        return path.read_text(encoding='utf-8')
+
+    def test_has_invite_modal_overlay(self, html_content):
+        assert 'id="invite-modal-overlay"' in html_content
+
+    def test_has_generate_step(self, html_content):
+        assert 'id="invite-step-generate"' in html_content
+
+    def test_has_result_step(self, html_content):
+        assert 'id="invite-step-result"' in html_content
+
+    def test_has_agent_name_input(self, html_content):
+        assert 'id="invite-agent-name"' in html_content
+
+    def test_has_agent_type_select(self, html_content):
+        assert 'id="invite-agent-type"' in html_content
+
+    def test_has_code_box(self, html_content):
+        assert 'id="invite-code-box"' in html_content
+
+    def test_has_copy_button(self, html_content):
+        assert 'id="invite-copy-btn"' in html_content
+
+    def test_has_add_manually_link(self, html_content):
+        assert 'id="invite-add-manually"' in html_content
+        assert "add an asset manually" in html_content.lower()
+
+    def test_has_copy_feedback(self, html_content):
+        assert 'id="invite-copy-feedback"' in html_content
+        assert "Copied!" in html_content
+
+    def test_has_instruction_steps(self, html_content):
+        assert "SSH into the remote server" in html_content
+        assert "Open Claude Code" in html_content
+        assert "Paste the invitation string" in html_content
+
+    def test_invite_css_classes(self, html_content):
+        assert "invite-code-box" in html_content
+        assert "invite-copy-btn" in html_content
+        assert "invite-step" in html_content
+        assert "invite-copy-feedback" in html_content
+
+
+class TestInviteModalJS:
+    """Validate invite modal JS functions in assets.js."""
+
+    @pytest.fixture
+    def js_content(self):
+        path = FRONTEND_DIR / "js" / "assets.js"
+        if not path.exists():
+            pytest.skip("assets.js not found")
+        return path.read_text(encoding='utf-8')
+
+    def test_has_open_invite_modal(self, js_content):
+        assert "openInviteModal" in js_content
+
+    def test_has_close_invite_modal(self, js_content):
+        assert "closeInviteModal" in js_content
+
+    def test_has_generate_invitation_handler(self, js_content):
+        assert "handleGenerateInvitation" in js_content
+
+    def test_has_copy_invitation_handler(self, js_content):
+        assert "handleCopyInvitation" in js_content
+
+    def test_calls_invitations_api(self, js_content):
+        assert "/api/ext-agents/invitations" in js_content
+
+    def test_uses_clipboard_api(self, js_content):
+        assert "navigator.clipboard.writeText" in js_content
+
+    def test_add_asset_opens_invite(self, js_content):
+        assert "add-asset-btn" in js_content
+        assert "openInviteModal" in js_content

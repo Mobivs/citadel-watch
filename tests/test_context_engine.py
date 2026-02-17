@@ -511,8 +511,8 @@ class TestColdStartProgression:
         assert r0.cold_start is True
         assert r0.baseline_match is True
 
-        # Days 1-6: keep learning
-        for day in range(1, 7):
+        # Days 1-7: keep learning
+        for day in range(1, 8):
             evt = AggregatedEvent(
                 event_type="process.started",
                 category=EventCategory.PROCESS,

@@ -27,13 +27,16 @@ class BehaviorType(str, Enum):
     PROCESS_SPAWN = "process_spawn"
     FILE_MODIFICATION = "file_modification"
     NETWORK_CONNECTION = "network_connection"
+    REMOTE_AUTH = "remote_auth"
+    REMOTE_SENSOR = "remote_sensor"
 
 
-# Map EventCategory values to BehaviorType (only the three we track)
+# Map EventCategory values to BehaviorType
 _CATEGORY_TO_BEHAVIOR: Dict[EventCategory, BehaviorType] = {
     EventCategory.PROCESS: BehaviorType.PROCESS_SPAWN,
     EventCategory.FILE: BehaviorType.FILE_MODIFICATION,
     EventCategory.NETWORK: BehaviorType.NETWORK_CONNECTION,
+    EventCategory.REMOTE: BehaviorType.REMOTE_SENSOR,  # default for remote
 }
 
 
@@ -289,6 +292,19 @@ class ContextEngine:
     def _event_key(event: AggregatedEvent) -> str:
         """Extract a meaningful key from an event for pattern tracking."""
         details = event.details or {}
+
+        # For remote auth events, key by detail (e.g. "failed_password")
+        if event.category == EventCategory.REMOTE and "auth_log" in event.event_type:
+            detail = details.get("detail") or details.get("auth_type", "")
+            if detail:
+                return f"auth:{detail}"
+
+        # For other remote events, key by sensor name
+        if event.category == EventCategory.REMOTE:
+            sensor = details.get("sensor") or details.get("check", "")
+            if sensor:
+                return sensor
+
         # Try common detail fields in priority order
         for field_name in ("process_name", "process", "name",
                            "file_path", "path", "file",
@@ -304,12 +320,19 @@ class ContextEngine:
         """Process an event: learn from it and compare to baseline.
 
         Only events whose category maps to a tracked ``BehaviorType``
-        (PROCESS, FILE, NETWORK) are processed. Others are silently
-        ignored (returns None).
+        (PROCESS, FILE, NETWORK, REMOTE) are processed. Others are
+        silently ignored (returns None).
         """
         behavior = _CATEGORY_TO_BEHAVIOR.get(event.category)
         if behavior is None:
             return None
+
+        # Granular mapping for remote events
+        if event.category == EventCategory.REMOTE:
+            if "auth_log" in event.event_type:
+                behavior = BehaviorType.REMOTE_AUTH
+            else:
+                behavior = BehaviorType.REMOTE_SENSOR
 
         asset_id = event.asset_id or "_global"
         key = self._event_key(event)
@@ -352,6 +375,12 @@ class ContextEngine:
             behavior = _CATEGORY_TO_BEHAVIOR.get(event.category)
             if behavior is None:
                 continue
+            # Granular mapping for remote events
+            if event.category == EventCategory.REMOTE:
+                if "auth_log" in event.event_type:
+                    behavior = BehaviorType.REMOTE_AUTH
+                else:
+                    behavior = BehaviorType.REMOTE_SENSOR
             asset_id = event.asset_id or "_global"
             key = self._event_key(event)
             with self._lock:

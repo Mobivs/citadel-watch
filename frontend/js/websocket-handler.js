@@ -31,6 +31,8 @@ const MESSAGE_TYPES = [
     'guardian_started',
     'guardian_stopped',
     'process_killed',
+    'threat:remote-shield',
+    'threat:correlation',
 ];
 
 
@@ -67,18 +69,22 @@ class WebSocketHandler {
             url = `${protocol}//${location.host}/ws`;
         }
         this._url = url;
+        console.log('[WS] Connecting to', url);
 
         try {
             this._ws = new WebSocket(url);
         } catch (err) {
-            console.error('[WS] Connection failed:', err);
+            console.error('[WS] Constructor failed:', err);
             this._onDisconnect();
             return;
         }
 
         this._ws.onopen = () => this._onConnect();
-        this._ws.onclose = () => this._onDisconnect();
-        this._ws.onerror = () => {}; // onclose fires after onerror
+        this._ws.onclose = (e) => {
+            console.warn('[WS] Close: code=%d reason=%s wasClean=%s', e.code, e.reason, e.wasClean);
+            this._onDisconnect();
+        };
+        this._ws.onerror = (e) => console.warn('[WS] Error:', e.type || e);
         this._ws.onmessage = (evt) => this._onMessage(evt);
     }
 
@@ -244,8 +250,14 @@ class WebSocketHandler {
     /** @private */
     _scheduleReconnect() {
         if (this._retryCount >= MAX_RETRIES) {
-            console.warn(`[WS] Max retries (${MAX_RETRIES}) reached. Giving up.`);
-            this._notifySubscribers('_max_retries', { retries: this._retryCount });
+            // Don't give up permanently — slow-poll every 30s so the WS
+            // can recover when the backend becomes available.
+            console.warn(`[WS] Fast retries exhausted. Slow-polling every 30s...`);
+            this._retryTimer = setTimeout(() => {
+                this._retryTimer = null;
+                this._retryCount = 0;  // reset for fresh fast retries
+                this.connect(this._url);
+            }, 30000);
             return;
         }
 
@@ -314,11 +326,11 @@ function computeBackoff(attempt, baseMs, maxMs) {
 const wsHandler = new WebSocketHandler();
 
 
-// ── Auto-connect on DOMContentLoaded ───────────────────────────────
-
-document.addEventListener('DOMContentLoaded', () => {
-    wsHandler.connect();
-});
+// ── Auto-connect ─────────────────────────────────────────────────
+// Module scripts are deferred (DOM is ready when this executes).
+// Connecting here instead of waiting for DOMContentLoaded avoids a
+// potential race where the event already fired before registration.
+wsHandler.connect();
 
 
 // ── Exports ────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@
 # CRUD operations for passwords
 # Master password verification via encrypted canary
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
@@ -118,6 +119,11 @@ class VaultManager:
             escaped_password = self._escape_pragma_value(master_password)
             conn.execute(f"PRAGMA key = '{escaped_password}'")
 
+            # WAL + busy_timeout after PRAGMA key (SQLCipher requires key first)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
+
             # Create schema
             conn.execute("""
                 CREATE TABLE vault_config (
@@ -224,6 +230,10 @@ class VaultManager:
 
         try:
             conn = sqlite3.connect(str(self.vault_path))
+            # WAL + busy_timeout (after any PRAGMA key for SQLCipher compat)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
 
             # Read salt for key derivation
             cursor = conn.execute(
@@ -516,6 +526,131 @@ class VaultManager:
                 message=f"Failed to list passwords: {str(e)}"
             )
             return []
+
+    # ------------------------------------------------------------------
+    # SSH credential helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def validate_ssh_key(private_key: str) -> Tuple[bool, str]:
+        """Validate an SSH private key format.
+
+        Returns:
+            (is_valid, error_or_key_type)
+        """
+        key = private_key.strip()
+        if not key:
+            return False, "Empty key"
+
+        # Detect key type from header
+        key_types = {
+            "-----BEGIN OPENSSH PRIVATE KEY-----": "openssh",
+            "-----BEGIN RSA PRIVATE KEY-----": "rsa",
+            "-----BEGIN EC PRIVATE KEY-----": "ecdsa",
+            "-----BEGIN DSA PRIVATE KEY-----": "dsa",
+        }
+        for header, key_type in key_types.items():
+            if key.startswith(header):
+                # Check for matching footer
+                footer = header.replace("BEGIN", "END")
+                if footer not in key:
+                    return False, f"Missing END marker for {key_type} key"
+                return True, key_type
+
+        return False, "Unrecognized private key format"
+
+    def get_ssh_credential(self, credential_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve and parse an SSH credential from the vault.
+
+        Returns a structured dict with auth_type, private_key/password,
+        port, username, etc. Returns None if not found or vault locked.
+        """
+        entry = self.get_password(credential_id)
+        if entry is None:
+            return None
+
+        # Parse SSH metadata from notes JSON
+        ssh_meta = {}
+        if entry.get("notes"):
+            try:
+                ssh_meta = json.loads(entry["notes"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        auth_type = ssh_meta.get("auth_type", "password")
+
+        result = {
+            "id": entry["id"],
+            "title": entry["title"],
+            "auth_type": auth_type,
+            "default_port": ssh_meta.get("default_port", 22),
+            "default_username": ssh_meta.get("default_username", entry.get("username", "root")),
+            "fingerprint": ssh_meta.get("fingerprint", ""),
+        }
+
+        if auth_type == "key":
+            result["private_key"] = ssh_meta.get("private_key", "")
+            result["key_passphrase"] = ssh_meta.get("key_passphrase", "")
+        else:
+            result["password"] = entry.get("password", "")
+
+        return result
+
+    def add_ssh_credential(
+        self,
+        title: str,
+        auth_type: str = "key",
+        private_key: Optional[str] = None,
+        key_passphrase: str = "",
+        password: Optional[str] = None,
+        default_username: str = "root",
+        default_port: int = 22,
+    ) -> Tuple[bool, str]:
+        """Add an SSH credential to the vault with structured metadata.
+
+        Args:
+            title: Display name (e.g. "VPS Root Key")
+            auth_type: "key" or "password"
+            private_key: SSH private key content (required if auth_type=key)
+            key_passphrase: Passphrase for encrypted keys
+            password: SSH password (required if auth_type=password)
+            default_username: Default SSH username
+            default_port: Default SSH port
+
+        Returns:
+            (success, credential_id_or_error)
+        """
+        if auth_type == "key":
+            if not private_key:
+                return False, "private_key is required for key auth"
+            is_valid, msg = self.validate_ssh_key(private_key)
+            if not is_valid:
+                return False, f"Invalid SSH key: {msg}"
+
+        ssh_meta: Dict[str, Any] = {
+            "auth_type": auth_type,
+            "default_port": default_port,
+            "default_username": default_username,
+        }
+
+        if auth_type == "key":
+            ssh_meta["private_key"] = private_key
+            ssh_meta["key_passphrase"] = key_passphrase
+            # Store a placeholder password (the real secret is in the key)
+            stored_password = "(ssh-key)"
+        else:
+            stored_password = password or ""
+
+        notes_json = json.dumps(ssh_meta)
+
+        return self.add_password(
+            title=title,
+            password=stored_password,
+            username=default_username,
+            website=None,
+            notes=notes_json,
+            category="ssh",
+        )
 
     def delete_password(self, password_id: str) -> Tuple[bool, str]:
         """Delete password from vault."""

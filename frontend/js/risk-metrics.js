@@ -68,7 +68,7 @@ async function fetchChartData(hours, bucketHours) {
 
 async function fetchAssets() {
     try {
-        const resp = await apiClient.get('/api/assets');
+        const resp = await apiClient.get('/api/asset-view');
         if (!resp.ok) return null;
         return await resp.json();
     } catch (err) {
@@ -423,7 +423,12 @@ function connectWebSocket() {
     window.addEventListener('ws-connected', _onWsConnected);
     window.addEventListener('ws-disconnected', _onWsDisconnected);
 
-    wsHandler.connect();
+    // Poll connection status continuously (handles race where ws-connected
+    // event fired before our listener was registered, and catches later
+    // disconnects if the ws-disconnected event is missed).
+    setLiveStatus(wsHandler.connected);
+    const poll = setInterval(() => setLiveStatus(wsHandler.connected), 2000);
+    _wsUnsubs.push(() => clearInterval(poll));
 }
 
 function handleWebSocketMessage(msg) {
@@ -450,7 +455,7 @@ function setLiveStatus(connected) {
         badge.style.color = '#e6b800';
         badge.style.borderColor = 'rgba(230,184,0,0.3)';
         if (dot) dot.style.background = '#e6b800';
-        if (text) text.textContent = 'Simulated';
+        if (text) text.textContent = 'Offline';
     }
 }
 
@@ -570,12 +575,7 @@ async function init() {
     refreshInterval = setInterval(refreshAll, 30000);
 }
 
-// Start
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
-}
+// NOTE: No auto-init here — tab-loader.js manages the init/destroy lifecycle.
 
 // ── Exports for testing ─────────────────────────────────────────────
 

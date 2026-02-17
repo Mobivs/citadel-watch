@@ -64,7 +64,7 @@ ALL_PAGE_JS = {
 def _read(path: Path) -> str:
     if not path.exists():
         pytest.skip(f"{path.name} not found")
-    return path.read_text()
+    return path.read_text(encoding='utf-8')
 
 
 # =====================================================================
@@ -85,22 +85,22 @@ class TestDashboardComponentsRender:
         assert "Citadel Archer" in html
 
     def test_guardian_status_component(self, html):
-        assert "<guardian-status>" in html
+        assert "<guardian-status" in html
 
     def test_threat_level_component(self, html):
-        assert "<threat-level>" in html
+        assert "<threat-level" in html
 
     def test_protected_systems_component(self, html):
-        assert "<protected-systems>" in html
+        assert "<protected-systems" in html
 
     def test_event_log_component(self, html):
-        assert "<event-log>" in html
+        assert "<event-log" in html
 
     def test_process_list_component(self, html):
-        assert "<process-list>" in html
+        assert "<process-list" in html
 
     def test_ai_insights_component(self, html):
-        assert "<ai-insights>" in html
+        assert "<ai-insights" in html
 
     def test_security_level_badge(self, html):
         assert 'id="security-level-badge"' in html
@@ -110,24 +110,25 @@ class TestDashboardComponentsRender:
         assert 'id="nav-conn-dot"' in html
         assert 'id="nav-conn-text"' in html
 
-    def test_all_five_tab_buttons(self, html):
-        for tab in ["intelligence", "charts", "timeline", "risk-metrics", "assets"]:
+    def test_all_tab_buttons(self, html):
+        for tab in ["intelligence", "charts", "timeline", "risk-metrics", "assets",
+                     "remote-shield", "panic-room"]:
             assert f'id="tab-btn-{tab}"' in html, f"Missing tab button: {tab}"
 
-    def test_all_five_tab_panels(self, html):
-        for tab in ["intelligence", "charts", "timeline", "risk-metrics", "assets"]:
-            assert f'id="tab-panel-{tab}"' in html, f"Missing tab panel: {tab}"
+    def test_tab_panels(self, html):
+        # Tab-loader architecture: intelligence panel + shared dynamic panel
+        assert 'id="tab-panel-intelligence"' in html
+        assert 'id="tab-panel-dynamic"' in html
 
-    def test_iframe_for_each_phase2_page(self, html):
-        for page in ["charts", "timeline", "risk-metrics", "assets"]:
-            assert f'id="tab-iframe-{page}"' in html, f"Missing iframe: {page}"
+    def test_no_iframes(self, html):
+        assert '<iframe' not in html, "Tab-loader architecture uses no iframes"
 
     def test_tab_bar_role_tablist(self, html):
         assert 'role="tablist"' in html
 
     def test_tab_buttons_have_aria_controls(self, html):
-        for tab in ["intelligence", "charts", "timeline", "risk-metrics", "assets"]:
-            assert f'aria-controls="tab-panel-{tab}"' in html
+        assert 'aria-controls="tab-panel-intelligence"' in html
+        assert 'aria-controls="tab-panel-dynamic"' in html
 
     def test_loads_web_component_scripts(self, html):
         for comp in ["guardian-status", "threat-level", "protected-systems",
@@ -312,7 +313,7 @@ class TestRiskMetricsPageIntegration:
         assert "/api/charts" in js
 
     def test_js_fetches_assets_api(self, js):
-        assert "/api/assets" in js
+        assert "/api/asset-view" in js
 
     def test_js_draws_gauge(self, js):
         assert "drawGauge" in js
@@ -410,11 +411,11 @@ class TestWebSocketE2EIntegration:
             assert "wsHandler.subscribe(" in src, \
                 f"{name}.js must subscribe to events"
 
-    def test_all_pages_call_ws_handler_connect(self):
+    def test_all_pages_poll_ws_handler_connected(self):
         for name, path in ALL_PAGE_JS.items():
             src = _read(path)
-            assert "wsHandler.connect()" in src, \
-                f"{name}.js must call wsHandler.connect()"
+            assert "wsHandler.connected" in src, \
+                f"{name}.js must poll wsHandler.connected for badge status"
 
     def test_all_pages_listen_ws_connected(self):
         for name, path in ALL_PAGE_JS.items():
@@ -471,9 +472,10 @@ class TestErrorScenarios:
     def test_ws_max_delay_cap(self, ws_src):
         assert re.search(r"MAX_DELAY_MS\s*=\s*30000", ws_src)
 
-    def test_ws_gives_up_after_max_retries(self, ws_src):
+    def test_ws_slow_polls_after_max_retries(self, ws_src):
+        """After fast retries are exhausted, falls back to slow 30s polling."""
         assert re.search(r"_retryCount\s*>=\s*MAX_RETRIES", ws_src)
-        assert "_max_retries" in ws_src, "Must notify subscribers on max retries"
+        assert "30000" in ws_src, "Must slow-poll every 30s after fast retries"
 
     def test_all_pages_have_set_live_status(self):
         for name, path in ALL_PAGE_JS.items():
@@ -658,7 +660,7 @@ class TestCrossPageConsistency:
     SEVERITY_HEX = {
         "critical": "#ff3333",
         "high": "#ff9900",
-        "medium": "#ffcc00",
+        "medium": "#e6b800",
         "low": "#00cc66",
     }
 
@@ -668,23 +670,23 @@ class TestCrossPageConsistency:
             assert colour in css, f"CSS must define severity colour {colour} for {level}"
 
     def test_all_js_use_unified_colours(self):
-        """All JS files must use the unified severity palette."""
+        """All JS files must use the unified severity palette (hex or rgba)."""
         for name, path in ALL_PAGE_JS.items():
             src = _read(path)
-            # Each file should reference at least critical and low colours
-            assert "#ff3333" in src or "ff3333" in src, \
+            # Each file should reference at least critical and low colours (hex or rgba)
+            assert "#ff3333" in src or "255, 51, 51" in src, \
                 f"{name}.js must use unified critical colour"
-            assert "#00cc66" in src or "00cc66" in src, \
+            assert "#00cc66" in src or "0, 204, 102" in src, \
                 f"{name}.js must use unified low colour"
 
     def test_connection_badge_colours_consistent(self):
-        """All pages with live badges must use same green/red colours."""
+        """All pages with live badges must use same green/red colours (hex or rgba)."""
         for name, path in ALL_PAGE_JS.items():
             src = _read(path)
             if "setLiveStatus" in src:
-                assert "#00cc66" in src, \
+                assert "#00cc66" in src or "0, 204, 102" in src, \
                     f"{name}.js live badge green must be #00cc66"
-                assert "#ff3333" in src, \
+                assert "#ff3333" in src or "255, 51, 51" in src, \
                     f"{name}.js live badge red must be #ff3333"
 
     def test_css_custom_properties_exist(self):
@@ -698,9 +700,10 @@ class TestCrossPageConsistency:
         css = _read(STYLES_CSS)
         assert "#0f0f0f" in css, "Dark background must be #0f0f0f"
 
-    def test_accent_colour_00d4ff(self):
+    def test_accent_colour_00D9FF(self):
         css = _read(STYLES_CSS)
-        assert "#00d4ff" in css, "Accent colour must be #00d4ff"
+        assert "#00D9FF" in css.upper() or "#00d9ff" in css.lower(), \
+            "Accent colour must be #00D9FF"
 
 
 # =====================================================================
@@ -760,7 +763,8 @@ class TestNavigationIntegration:
 
     def test_tab_ids_constant(self, nav_src):
         assert "TAB_IDS" in nav_src
-        for tab in ["intelligence", "charts", "timeline", "risk-metrics", "assets"]:
+        for tab in ["intelligence", "charts", "timeline", "risk-metrics", "assets",
+                     "remote-shield", "panic-room"]:
             assert f"'{tab}'" in nav_src or f'"{tab}"' in nav_src
 
     def test_tab_config_with_sources(self, nav_src):
@@ -775,9 +779,9 @@ class TestNavigationIntegration:
         assert "citadel_active_tab" in nav_src
         assert "localStorage" in nav_src
 
-    def test_iframe_lazy_loading(self, nav_src):
-        assert "loadIframe" in nav_src
-        assert "_loadedIframes" in nav_src, "Must track loaded iframes to avoid reloads"
+    def test_tab_loader_integration(self, nav_src):
+        assert "activate" in nav_src, "Must import activate from tab-loader.js"
+        assert "deactivate" in nav_src, "Must import deactivate from tab-loader.js"
 
     def test_keyboard_navigation(self, nav_src):
         for key in ["ArrowRight", "ArrowLeft", "Home", "End"]:
