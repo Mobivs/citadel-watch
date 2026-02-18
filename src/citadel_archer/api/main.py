@@ -56,11 +56,14 @@ app = FastAPI(
     version="0.2.2"
 )
 
-# CORS configuration (local only for security)
+# CORS configuration — local + Tailscale origins.
+# Remote agents use Bearer token auth (no CORS), but the Tailscale origin
+# is needed if the desktop UI is accessed from a Tailscale IP.
 _allowed_origins = [
     "http://localhost:3000", "http://127.0.0.1:3000",
     "http://localhost:8000", "http://127.0.0.1:8000",
     "http://localhost:8080", "http://127.0.0.1:8080",
+    "http://100.68.75.8:8000",   # Tailscale (this machine)
 ]
 app.add_middleware(
     CORSMiddleware,

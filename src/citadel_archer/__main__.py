@@ -65,7 +65,7 @@ def main():
     if args.backend_only:
         # Development mode: Backend only (no GUI)
         print("=" * 60)
-        print("  ⚠️  DEVELOPMENT MODE: Backend Only (No GUI)")
+        print("  [!] DEVELOPMENT MODE: Backend Only (No GUI)")
         print("=" * 60)
         print()
         print("  This mode is for development/testing.")

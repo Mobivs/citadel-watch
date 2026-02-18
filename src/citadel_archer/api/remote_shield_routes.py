@@ -68,6 +68,24 @@ def set_asset_inventory(inv: AssetInventory):
     _asset_inventory = inv
 
 
+def _generate_shield_context(
+    agent_id: str, hostname: str, platform: str = "vps",
+    coordinator_url: str = "",
+) -> str:
+    """Generate operational context for a Shield agent (best-effort)."""
+    try:
+        from ..chat.agent_context import generate_context
+        return generate_context(
+            agent_id=agent_id,
+            agent_name=hostname,
+            agent_type=platform if platform in SHIELD_AGENT_TYPES else "vps",
+            coordinator_url=coordinator_url,
+        )
+    except Exception:
+        logger.warning("Failed to generate shield context for %s", agent_id)
+        return ""
+
+
 # Enums
 class ThreatType(str, Enum):
     """Types of threats detected by Remote Shield agents."""
@@ -174,6 +192,10 @@ class AgentRegistrationResponse(BaseModel):
     api_token: str
     asset_id: Optional[str] = None
     message: str
+    operational_context: str = Field(
+        default="",
+        description="Agent instructions and operational parameters",
+    )
 
 
 class PatchStatusReport(BaseModel):
@@ -296,7 +318,7 @@ def _auto_link_agent(
 
 
 @router.post("/agents/register", response_model=AgentRegistrationResponse)
-async def register_agent(registration: AgentRegistration):
+async def register_agent(registration: AgentRegistration, request: Request):
     """
     Register a new Remote Shield agent.
     Called by agent on startup to get unique agent_id and API token.
@@ -310,6 +332,7 @@ async def register_agent(registration: AgentRegistration):
         - asset_id: Linked managed asset ID
     """
     db = get_shield_db()
+    base_url = str(request.base_url).rstrip("/")
 
     # Check if agent already registered (by hostname)
     existing = db.get_agent_by_hostname(registration.hostname)
@@ -322,11 +345,16 @@ async def register_agent(registration: AgentRegistration):
         # Re-link asset (in case it was deleted/recreated)
         asset_id = _auto_link_agent(agent_id, registration.hostname, registration.ip)
 
+        context = _generate_shield_context(
+            agent_id, registration.hostname, "vps", base_url,
+        )
+
         return AgentRegistrationResponse(
             agent_id=agent_id,
             api_token=api_token,
             asset_id=asset_id,
             message=f"Agent {registration.hostname} re-registered with new token",
+            operational_context=context,
         )
 
     # Create new agent
@@ -344,11 +372,16 @@ async def register_agent(registration: AgentRegistration):
     # Auto-link to managed asset
     asset_id = _auto_link_agent(agent_id, registration.hostname, registration.ip)
 
+    context = _generate_shield_context(
+        agent_id, registration.hostname, "vps", base_url,
+    )
+
     return AgentRegistrationResponse(
         agent_id=agent_id,
         api_token=api_token,
         asset_id=asset_id,
         message=f"Agent {registration.hostname} registered successfully",
+        operational_context=context,
     )
 
 
@@ -935,9 +968,37 @@ async def enroll_shield_agent(req: ShieldEnrollRequest, request: Request):
         agent_id, invitation_id, req.platform, asset_id,
     )
 
+    context = _generate_shield_context(
+        agent_id, req.hostname, req.platform,
+        str(request.base_url).rstrip("/"),
+    )
+
     return AgentRegistrationResponse(
         agent_id=agent_id,
         api_token=api_token,
         asset_id=asset_id,
         message=f"Shield agent {req.hostname} enrolled successfully (platform: {req.platform})",
+        operational_context=context,
     )
+
+
+# ── Agent Context Endpoint ───────────────────────────────────────────
+
+
+@router.get("/shield/agents/context")
+async def get_shield_agent_context(
+    request: Request,
+    agent_id: str = Depends(verify_agent_token),
+):
+    """Return operational context for the calling Shield agent.
+
+    Allows an authenticated agent to re-fetch its instructions at any time.
+    """
+    db = get_shield_db()
+    agent = db.get_agent(agent_id)
+    hostname = agent["hostname"] if agent else agent_id
+    platform = agent.get("platform", "vps") if agent else "vps"
+    base_url = str(request.base_url).rstrip("/")
+
+    context = _generate_shield_context(agent_id, hostname, platform, base_url)
+    return {"operational_context": context}

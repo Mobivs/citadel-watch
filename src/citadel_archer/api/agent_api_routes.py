@@ -134,11 +134,17 @@ class RotateTokenResponse(BaseModel):
 
 class CreateInvitationRequest(BaseModel):
     agent_name: str = Field(..., min_length=1, max_length=100, description="Display name for the agent")
-    agent_type: str = Field(..., description="Agent type: forge, openclaw, claude_code, custom")
+    agent_type: str = Field(..., description="Agent type: forge, openclaw, claude_code, custom, vps, workstation, cloud")
     ttl_seconds: int = Field(600, ge=60, le=86400, description="Time-to-live in seconds (default 10 min)")
     max_attempts: int = Field(5, ge=1, le=20, description="Max failed verification attempts before lockout")
     recipient_email: str = Field("", max_length=254, description="Recipient email address (optional)")
     recipient_name: str = Field("", max_length=100, description="Recipient name (optional)")
+    coordinator_url: str = Field(
+        "",
+        max_length=500,
+        description="Override coordinator URL in onboarding prompt (e.g. Tailscale IP). "
+                    "If empty, auto-detected from request origin.",
+    )
 
 
 class CreateInvitationResponse(BaseModel):
@@ -151,6 +157,10 @@ class CreateInvitationResponse(BaseModel):
     message: str
     enrollment_url: str = ""
     mailto_url: str = ""
+    agent_prompt: str = Field(
+        default="",
+        description="Complete onboarding prompt to copy-paste to the remote agent",
+    )
 
 
 class EnrollAgentRequest(BaseModel):
@@ -163,6 +173,10 @@ class EnrollAgentResponse(BaseModel):
     agent_name: str
     agent_type: str
     message: str
+    operational_context: str = Field(
+        default="",
+        description="Agent instructions, API reference, and behavioral rules",
+    )
 
 
 # ── Auth Dependencies ─────────────────────────────────────────────────
@@ -766,7 +780,9 @@ async def create_invitation(
     # Build enrollment URL and mailto link (v0.3.32 Easy Deployment)
     from ..chat.agent_invitation import InvitationStore
     _, raw_secret = InvitationStore.parse_compact_string(compact_string)
-    base_url = str(request.base_url).rstrip("/")
+    # Use admin-provided coordinator_url (e.g. Tailscale IP) or fall back to request origin
+    base_url = (req.coordinator_url.rstrip("/") if req.coordinator_url
+                else str(request.base_url).rstrip("/"))
     enrollment_url = f"{base_url}/enroll/{invitation.invitation_id}?s={raw_secret}"
 
     mailto_url = ""
@@ -787,6 +803,20 @@ async def create_invitation(
             f"&body={urllib.parse.quote(body)}"
         )
 
+    # Generate onboarding prompt for AI agents
+    from ..chat.agent_context import generate_onboarding_prompt
+    try:
+        agent_prompt = generate_onboarding_prompt(
+            invitation_string=compact_string,
+            agent_name=req.agent_name,
+            agent_type=req.agent_type,
+            coordinator_url=base_url,
+            ttl_seconds=req.ttl_seconds,
+        )
+    except Exception:
+        logger.warning("Failed to generate onboarding prompt")
+        agent_prompt = ""
+
     return CreateInvitationResponse(
         invitation_id=invitation.invitation_id,
         compact_string=compact_string,
@@ -801,6 +831,7 @@ async def create_invitation(
         ),
         enrollment_url=enrollment_url,
         mailto_url=mailto_url,
+        agent_prompt=agent_prompt,
     )
 
 
@@ -1004,6 +1035,19 @@ async def enroll_agent(
     except Exception:
         logger.warning("Failed to log audit event for agent enrollment")
 
+    # Generate operational context for the agent
+    from ..chat.agent_context import generate_context
+    try:
+        context = generate_context(
+            agent_id=agent_id,
+            agent_name=invitation.agent_name,
+            agent_type=invitation.agent_type,
+            coordinator_url=str(request.base_url).rstrip("/"),
+        )
+    except Exception:
+        logger.warning("Failed to generate agent context, enrollment continues without it")
+        context = ""
+
     return EnrollAgentResponse(
         agent_id=agent_id,
         api_token=raw_token,
@@ -1013,4 +1057,153 @@ async def enroll_agent(
             f"Agent '{invitation.agent_name}' enrolled successfully. "
             "Save this API token — it won't be shown again."
         ),
+        operational_context=context,
     )
+
+
+# ── Agent Context Endpoints ──────────────────────────────────────────
+
+
+@router.get("/context")
+async def get_agent_context(
+    request: Request,
+    agent: dict = Depends(verify_external_agent_token),
+):
+    """Return operational context for the calling agent.
+
+    Allows an authenticated agent to re-fetch its instructions at any time
+    (e.g., after restart or context loss). Uses the same template engine
+    as enrollment.
+    """
+    from ..chat.agent_context import generate_context
+    context = generate_context(
+        agent_id=agent["agent_id"],
+        agent_name=agent["name"],
+        agent_type=agent["agent_type"],
+        coordinator_url=str(request.base_url).rstrip("/"),
+    )
+    return {"operational_context": context}
+
+
+class TemplateUpdateRequest(BaseModel):
+    template: str = Field(..., min_length=10, max_length=50000, description="Template text with {placeholders}")
+
+
+@router.get("/context/templates")
+async def list_context_templates(
+    _token: str = Depends(verify_session_token),
+):
+    """List current AI and Shield context templates (admin-only).
+
+    Returns both templates with a flag indicating whether each is the
+    built-in default or an admin-customized version.
+    """
+    from ..chat.agent_context import (
+        get_ai_template, get_shield_template,
+        DEFAULT_AI_TEMPLATE, DEFAULT_SHIELD_TEMPLATE,
+        PREF_KEY_AI_TEMPLATE, PREF_KEY_SHIELD_TEMPLATE,
+        _get_prefs,
+    )
+
+    ai_template = get_ai_template()
+    shield_template = get_shield_template()
+
+    # Check if custom templates are set
+    try:
+        prefs = _get_prefs()
+        ai_is_custom = prefs.get(PREF_KEY_AI_TEMPLATE) is not None
+        shield_is_custom = prefs.get(PREF_KEY_SHIELD_TEMPLATE) is not None
+    except Exception:
+        ai_is_custom = False
+        shield_is_custom = False
+
+    return {
+        "templates": {
+            "ai": {
+                "template": ai_template,
+                "is_custom": ai_is_custom,
+            },
+            "shield": {
+                "template": shield_template,
+                "is_custom": shield_is_custom,
+            },
+        }
+    }
+
+
+@router.put("/context/templates/{template_type}")
+async def update_context_template(
+    template_type: str,
+    req: TemplateUpdateRequest,
+    _token: str = Depends(verify_session_token),
+):
+    """Update an agent context template (admin-only).
+
+    template_type must be 'ai' or 'shield'.
+    """
+    from ..chat.agent_context import set_ai_template, set_shield_template
+
+    if template_type == "ai":
+        set_ai_template(req.template)
+    elif template_type == "shield":
+        set_shield_template(req.template)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="template_type must be 'ai' or 'shield'",
+        )
+
+    try:
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+        log_security_event(
+            EventType.AI_DECISION,
+            EventSeverity.ALERT,
+            f"Agent context template updated: {template_type}",
+            details={
+                "action": "context_template_updated",
+                "template_type": template_type,
+                "template_length": len(req.template),
+            },
+        )
+    except Exception:
+        logger.warning("Failed to log audit event for template update")
+
+    return {"message": f"{template_type} template updated successfully"}
+
+
+@router.delete("/context/templates/{template_type}")
+async def reset_context_template(
+    template_type: str,
+    _token: str = Depends(verify_session_token),
+):
+    """Reset an agent context template to built-in default (admin-only).
+
+    template_type must be 'ai' or 'shield'.
+    """
+    from ..chat.agent_context import reset_ai_template, reset_shield_template
+
+    if template_type == "ai":
+        reset_ai_template()
+    elif template_type == "shield":
+        reset_shield_template()
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="template_type must be 'ai' or 'shield'",
+        )
+
+    try:
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+        log_security_event(
+            EventType.AI_DECISION,
+            EventSeverity.INFO,
+            f"Agent context template reset to default: {template_type}",
+            details={
+                "action": "context_template_reset",
+                "template_type": template_type,
+            },
+        )
+    except Exception:
+        logger.warning("Failed to log audit event for template reset")
+
+    return {"message": f"{template_type} template reset to default"}

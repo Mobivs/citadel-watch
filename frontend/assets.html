@@ -812,12 +812,20 @@
                             <input id="invite-agent-name" class="modal-input" type="text" placeholder="e.g. Production VPS Agent" required maxlength="200" />
                         </div>
                         <div>
-                            <label class="modal-label" for="invite-agent-type">Agent Type</label>
+                            <label class="modal-label" for="invite-agent-type">How will this agent run?</label>
                             <select id="invite-agent-type" class="modal-input">
-                                <option value="vps">VPS (Linux)</option>
-                                <option value="workstation">Windows PC</option>
-                                <option value="cloud">Cloud</option>
+                                <option value="claude_code">Claude Code (on VPS, server, or cloud)</option>
+                                <option value="forge">Forge AI (on VPS, server, or cloud)</option>
+                                <option value="vps">Shield script (Linux VPS)</option>
+                                <option value="workstation">Shield script (Windows PC)</option>
+                                <option value="cloud">Shield script (cloud instance)</option>
+                                <option value="custom">Other AI agent</option>
                             </select>
+                        </div>
+                        <div>
+                            <label class="modal-label" for="invite-coordinator-url">Coordinator URL <span style="opacity:0.5">(for remote agents)</span></label>
+                            <input id="invite-coordinator-url" class="modal-input" type="url" placeholder="e.g. http://100.68.75.8:8000 (Tailscale IP)" maxlength="500" />
+                            <p class="text-xs text-white/30 mt-1">How the remote agent reaches this machine. Leave blank if agent is on the same network.</p>
                         </div>
                         <div class="grid grid-cols-2 gap-3">
                             <div>

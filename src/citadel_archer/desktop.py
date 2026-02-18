@@ -129,9 +129,11 @@ class CitadelDesktopApp:
 
     def start_backend(self):
         """Start FastAPI backend in background thread."""
+        # Bind to 0.0.0.0 so remote agents can reach us over Tailscale/VPN.
+        # Session-token auth + CORS origin allowlist protect against unauthorized access.
         config = uvicorn.Config(
             app,
-            host="127.0.0.1",
+            host="0.0.0.0",
             port=8000,
             log_level="error",  # Reduce console noise
             access_log=False

@@ -322,6 +322,19 @@ class TestPersistenceAcrossInstances:
 
 # ── Route integration tests ──────────────────────────────────────────
 
+class _MockRequest:
+    """Minimal mock for starlette.requests.Request used in route tests."""
+    class _URL:
+        def __str__(self):
+            return "http://testserver/"
+    base_url = _URL()
+    class _Client:
+        host = "127.0.0.1"
+    client = _Client()
+
+_mock_request = _MockRequest()
+
+
 class TestRouteIntegration:
     """Verify route handlers use the database correctly."""
 
@@ -350,7 +363,7 @@ class TestRouteIntegration:
         from citadel_archer.api.remote_shield_routes import register_agent, AgentRegistration
 
         reg = AgentRegistration(hostname="test-vps", ip="192.168.1.100")
-        resp = await register_agent(reg)
+        resp = await register_agent(reg, _mock_request)
 
         assert resp.agent_id
         assert resp.api_token
@@ -369,10 +382,10 @@ class TestRouteIntegration:
         from citadel_archer.api.remote_shield_routes import register_agent, AgentRegistration
 
         reg = AgentRegistration(hostname="test-vps", ip="192.168.1.100")
-        resp1 = await register_agent(reg)
+        resp1 = await register_agent(reg, _mock_request)
         old_token = resp1.api_token
 
-        resp2 = await register_agent(reg)
+        resp2 = await register_agent(reg, _mock_request)
         new_token = resp2.api_token
 
         assert resp1.agent_id == resp2.agent_id  # same agent
@@ -387,7 +400,7 @@ class TestRouteIntegration:
         from citadel_archer.api.remote_shield_routes import register_agent, submit_threat, AgentRegistration, ThreatReport
 
         reg = AgentRegistration(hostname="vps1", ip="10.0.0.1")
-        resp = await register_agent(reg)
+        resp = await register_agent(reg, _mock_request)
 
         threat = ThreatReport(
             type="brute_force_attempt",
@@ -411,8 +424,8 @@ class TestRouteIntegration:
     async def test_list_agents_from_db(self):
         from citadel_archer.api.remote_shield_routes import register_agent, list_agents, AgentRegistration
 
-        await register_agent(AgentRegistration(hostname="vps1", ip="10.0.0.1"))
-        await register_agent(AgentRegistration(hostname="vps2", ip="10.0.0.2"))
+        await register_agent(AgentRegistration(hostname="vps1", ip="10.0.0.1"), _mock_request)
+        await register_agent(AgentRegistration(hostname="vps2", ip="10.0.0.2"), _mock_request)
 
         agents = await list_agents()
         assert len(agents) == 2
@@ -434,7 +447,7 @@ class TestRouteIntegration:
         )
 
         reg = AgentRegistration(hostname="vps1", ip="10.0.0.1")
-        agent_resp = await register_agent(reg)
+        agent_resp = await register_agent(reg, _mock_request)
 
         threat = ThreatReport(type="vulnerability", severity=6, title="CVE found", hostname="vps1")
         threat_resp = await submit_threat(threat, agent_id=agent_resp.agent_id)
@@ -450,7 +463,7 @@ class TestRouteIntegration:
         from fastapi import HTTPException
 
         reg = AgentRegistration(hostname="vps1", ip="10.0.0.1")
-        resp = await register_agent(reg)
+        resp = await register_agent(reg, _mock_request)
 
         # Valid token
         agent_id = verify_agent_token(f"Bearer {resp.api_token}")
@@ -475,7 +488,7 @@ class TestRouteIntegration:
         from citadel_archer.api.remote_shield_routes import register_agent, AgentRegistration, get_asset_inventory
 
         reg = AgentRegistration(hostname="auto-linked-vps", ip="10.99.0.1")
-        resp = await register_agent(reg)
+        resp = await register_agent(reg, _mock_request)
 
         assert resp.asset_id is not None
 

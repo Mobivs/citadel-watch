@@ -532,6 +532,7 @@ function setupModal() {
 let _invitationString = '';
 let _enrollmentUrl = '';
 let _mailtoUrl = '';
+let _agentPrompt = '';
 let _inviteStatusInterval = null;
 let _copyFeedbackTimer = null;
 
@@ -568,6 +569,7 @@ function closeInviteModal() {
     _invitationString = '';
     _enrollmentUrl = '';
     _mailtoUrl = '';
+    _agentPrompt = '';
     stopInviteStatusPolling();
 }
 
@@ -583,6 +585,7 @@ async function handleGenerateInvitation() {
     }
 
     const agentType = document.getElementById('invite-agent-type')?.value || 'vps';
+    const coordinatorUrl = document.getElementById('invite-coordinator-url')?.value.trim() || '';
     const recipientName = document.getElementById('invite-recipient-name')?.value.trim() || '';
     const recipientEmail = document.getElementById('invite-recipient-email')?.value.trim() || '';
     if (genBtn) genBtn.disabled = true;
@@ -594,6 +597,7 @@ async function handleGenerateInvitation() {
             agent_type: agentType,
             ttl_seconds: 600,
         };
+        if (coordinatorUrl) body.coordinator_url = coordinatorUrl;
         if (recipientName) body.recipient_name = recipientName;
         if (recipientEmail) body.recipient_email = recipientEmail;
 
@@ -606,6 +610,7 @@ async function handleGenerateInvitation() {
         _invitationString = data.compact_string;
         _enrollmentUrl = data.enrollment_url || '';
         _mailtoUrl = data.mailto_url || '';
+        _agentPrompt = data.agent_prompt || '';
 
         // Switch to result step
         document.getElementById('invite-step-generate')?.classList.remove('active');
@@ -614,13 +619,29 @@ async function handleGenerateInvitation() {
         if (titleEl) titleEl.textContent = 'Invitation Ready';
 
         const codeBox = document.getElementById('invite-code-box');
-        if (codeBox) codeBox.textContent = _invitationString;
+        const isAiAgent = ['claude_code', 'forge', 'openclaw', 'custom'].includes(agentType);
+
+        if (codeBox) {
+            if (isAiAgent && _agentPrompt) {
+                // AI agents: show a preview, copy button copies full prompt
+                codeBox.textContent = _agentPrompt.slice(0, 200) + '...';
+                codeBox.title = 'Full onboarding prompt (click Copy to get all instructions)';
+            } else {
+                codeBox.textContent = _invitationString;
+            }
+        }
 
         // Show/hide share buttons based on available URLs
         const emailBtn = document.getElementById('invite-share-email-btn');
         if (emailBtn) emailBtn.style.display = _mailtoUrl ? 'inline-flex' : 'none';
         const pageBtn = document.getElementById('invite-open-page-btn');
         if (pageBtn) pageBtn.style.display = _enrollmentUrl ? 'inline-flex' : 'none';
+
+        // Update copy button label for AI agents
+        const copyBtn = document.getElementById('invite-copy-btn');
+        if (copyBtn && isAiAgent && _agentPrompt) {
+            copyBtn.title = 'Copy full onboarding prompt with enrollment instructions';
+        }
 
         // Show platform-specific instructions
         const instructionsList = document.getElementById('invite-instructions');
@@ -636,6 +657,12 @@ async function handleGenerateInvitation() {
                     <li data-step="1.">Copy windows_shield.py to the family PC</li>
                     <li data-step="2.">Open PowerShell on the family PC</li>
                     <li data-step="3.">Run: python windows_shield.py enroll &lt;server_url&gt; &lt;invitation&gt;</li>
+                `;
+            } else if (isAiAgent && _agentPrompt) {
+                instructionsList.innerHTML = `
+                    <li data-step="1.">SSH into the remote server and open Claude Code</li>
+                    <li data-step="2.">Click <strong>Copy</strong> to copy the full onboarding prompt</li>
+                    <li data-step="3.">Paste it into Claude Code — it includes enrollment instructions</li>
                 `;
             } else {
                 instructionsList.innerHTML = `
@@ -660,13 +687,16 @@ async function handleGenerateInvitation() {
 }
 
 async function handleCopyInvitation() {
-    if (!_invitationString) return;
+    // For AI agents, copy the full onboarding prompt (includes invitation + instructions).
+    // For shield agents, copy just the bare invitation string.
+    const textToCopy = _agentPrompt || _invitationString;
+    if (!textToCopy) return;
     try {
-        await navigator.clipboard.writeText(_invitationString);
+        await navigator.clipboard.writeText(textToCopy);
     } catch {
         // Fallback for older browsers / non-HTTPS
         const ta = document.createElement('textarea');
-        ta.value = _invitationString;
+        ta.value = textToCopy;
         ta.style.position = 'fixed';
         ta.style.opacity = '0';
         document.body.appendChild(ta);
