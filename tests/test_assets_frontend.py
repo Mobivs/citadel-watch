@@ -13,6 +13,7 @@
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -310,6 +311,15 @@ class TestAssetViewEngine:
 
 class TestDashboardServicesAssets:
     """DashboardServices.get_assets()."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_agents(self):
+        """Prevent real agent registry from leaking into asset tests."""
+        with patch(
+            "citadel_archer.api.dashboard_ext.DashboardServices._get_enrolled_agent_views",
+            return_value=[],
+        ):
+            yield
 
     def test_no_inventory_returns_empty(self):
         svc = DashboardServices()

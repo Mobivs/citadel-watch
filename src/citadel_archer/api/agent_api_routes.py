@@ -14,6 +14,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from ..chat.agent_registry import AgentRegistry
@@ -1207,3 +1208,47 @@ async def reset_context_template(
         logger.warning("Failed to log audit event for template reset")
 
     return {"message": f"{template_type} template reset to default"}
+
+
+# ── Daemon Download Endpoints ─────────────────────────────────────────
+
+
+@router.get("/setup.sh", response_class=PlainTextResponse)
+async def serve_setup_script():
+    """Serve the bash setup script for one-liner agent deployment.
+
+    Unauthenticated — the invitation string provides security.
+    Usage: curl -fsSL http://coordinator/api/ext-agents/setup.sh | sudo bash -s -- <invitation> <url>
+    """
+    from pathlib import Path
+
+    script_path = Path(__file__).resolve().parent.parent / "agent" / "setup_daemon.sh"
+    if not script_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Setup script not found on server",
+        )
+    return PlainTextResponse(
+        content=script_path.read_text(encoding="utf-8"),
+        media_type="text/x-shellscript",
+    )
+
+
+@router.get("/daemon.py", response_class=PlainTextResponse)
+async def serve_daemon_script():
+    """Serve the Python daemon script for download by the setup script.
+
+    Unauthenticated — called by setup.sh after invitation is already validated.
+    """
+    from pathlib import Path
+
+    script_path = Path(__file__).resolve().parent.parent / "agent" / "citadel_daemon.py"
+    if not script_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Daemon script not found on server",
+        )
+    return PlainTextResponse(
+        content=script_path.read_text(encoding="utf-8"),
+        media_type="text/x-python",
+    )

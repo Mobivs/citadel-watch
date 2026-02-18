@@ -518,6 +518,7 @@ function setupModal() {
     });
     _trackListener(document.getElementById('invite-generate-btn'), 'click', handleGenerateInvitation);
     _trackListener(document.getElementById('invite-copy-btn'), 'click', handleCopyInvitation);
+    _trackListener(document.getElementById('invite-oneliner-copy-btn'), 'click', handleCopyOneliner);
     _trackListener(document.getElementById('invite-share-email-btn'), 'click', handleShareViaEmail);
     _trackListener(document.getElementById('invite-open-page-btn'), 'click', handleOpenEnrollmentPage);
     _trackListener(document.getElementById('invite-done-btn'), 'click', closeInviteModal);
@@ -533,13 +534,16 @@ let _invitationString = '';
 let _enrollmentUrl = '';
 let _mailtoUrl = '';
 let _agentPrompt = '';
+let _onelinerCommand = '';
 let _inviteStatusInterval = null;
 let _copyFeedbackTimer = null;
+let _onelinerFeedbackTimer = null;
 
 function openInviteModal() {
     _invitationString = '';
     _enrollmentUrl = '';
     _mailtoUrl = '';
+    _onelinerCommand = '';
     stopInviteStatusPolling();
     // Reset to generate step
     const stepGen = document.getElementById('invite-step-generate');
@@ -570,6 +574,7 @@ function closeInviteModal() {
     _enrollmentUrl = '';
     _mailtoUrl = '';
     _agentPrompt = '';
+    _onelinerCommand = '';
     stopInviteStatusPolling();
 }
 
@@ -620,6 +625,7 @@ async function handleGenerateInvitation() {
 
         const codeBox = document.getElementById('invite-code-box');
         const isAiAgent = ['claude_code', 'forge', 'openclaw', 'custom'].includes(agentType);
+        const isLinuxShield = ['vps', 'cloud'].includes(agentType);
 
         if (codeBox) {
             if (isAiAgent && _agentPrompt) {
@@ -664,6 +670,12 @@ async function handleGenerateInvitation() {
                     <li data-step="2.">Click <strong>Copy</strong> to copy the full onboarding prompt</li>
                     <li data-step="3.">Paste it into Claude Code — it includes enrollment instructions</li>
                 `;
+            } else if (isLinuxShield) {
+                instructionsList.innerHTML = `
+                    <li data-step="1.">SSH into the remote Linux server</li>
+                    <li data-step="2.">Copy and run the one-liner command below</li>
+                    <li data-step="3.">The daemon installs and starts automatically</li>
+                `;
             } else {
                 instructionsList.innerHTML = `
                     <li data-step="1.">SSH into the remote server</li>
@@ -671,6 +683,19 @@ async function handleGenerateInvitation() {
                     <li data-step="3.">Paste the invitation string above</li>
                 `;
             }
+        }
+
+        // Show one-liner for Linux Shield agent types (vps, cloud)
+        const onelinerSection = document.getElementById('invite-oneliner-section');
+        const onelinerBox = document.getElementById('invite-oneliner-box');
+        if (onelinerSection && onelinerBox && isLinuxShield) {
+            const baseUrl = coordinatorUrl || window.location.origin;
+            _onelinerCommand = `curl -fsSL ${baseUrl}/api/ext-agents/setup.sh | sudo bash -s -- ${_invitationString} ${baseUrl}`;
+            onelinerBox.textContent = _onelinerCommand;
+            onelinerSection.style.display = 'block';
+        } else if (onelinerSection) {
+            onelinerSection.style.display = 'none';
+            _onelinerCommand = '';
         }
 
         // Start status polling
@@ -711,6 +736,31 @@ async function handleCopyInvitation() {
         _copyFeedbackTimer = setTimeout(() => {
             feedback.classList.remove('show');
             _copyFeedbackTimer = null;
+        }, 1500);
+    }
+}
+
+async function handleCopyOneliner() {
+    if (!_onelinerCommand) return;
+    try {
+        await navigator.clipboard.writeText(_onelinerCommand);
+    } catch {
+        const ta = document.createElement('textarea');
+        ta.value = _onelinerCommand;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+    }
+    const feedback = document.getElementById('invite-oneliner-feedback');
+    if (feedback) {
+        feedback.classList.add('show');
+        if (_onelinerFeedbackTimer) clearTimeout(_onelinerFeedbackTimer);
+        _onelinerFeedbackTimer = setTimeout(() => {
+            feedback.classList.remove('show');
+            _onelinerFeedbackTimer = null;
         }, 1500);
     }
 }
@@ -1287,8 +1337,10 @@ function destroy() {
     _invitationString = '';
     _enrollmentUrl = '';
     _mailtoUrl = '';
+    _onelinerCommand = '';
     stopInviteStatusPolling();
     if (_copyFeedbackTimer) { clearTimeout(_copyFeedbackTimer); _copyFeedbackTimer = null; }
+    if (_onelinerFeedbackTimer) { clearTimeout(_onelinerFeedbackTimer); _onelinerFeedbackTimer = null; }
     allAssets = [];
     filteredAssets = [];
     currentPage = 1;

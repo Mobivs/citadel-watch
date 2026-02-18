@@ -893,6 +893,21 @@
                         <li data-step="3.">Paste the invitation string above</li>
                     </ol>
 
+                    <!-- One-liner setup command (for Linux Shield agents) -->
+                    <div id="invite-oneliner-section" style="display:none; margin-top: 1rem;">
+                        <p class="text-xs text-gray-500 mb-2">One-liner setup (copy and run on the remote server):</p>
+                        <div style="position:relative;">
+                            <div id="invite-oneliner-box" class="invite-code-box" style="font-size:0.7rem;"></div>
+                            <button type="button" id="invite-oneliner-copy-btn" class="invite-copy-btn" title="Copy one-liner command">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                                </svg>
+                            </button>
+                            <span id="invite-oneliner-feedback" class="invite-copy-feedback">Copied!</span>
+                        </div>
+                    </div>
+
                     <div class="flex items-center justify-end mt-6 pt-4 border-t border-white/5">
                         <button type="button" id="invite-done-btn" class="btn-primary">Done</button>
                     </div>

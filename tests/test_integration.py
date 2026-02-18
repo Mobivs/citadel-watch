@@ -20,6 +20,7 @@ import time
 import pytest
 from datetime import datetime, timedelta
 from typing import List
+from unittest.mock import patch
 
 from citadel_archer.intel.models import (
     CVE,
@@ -430,6 +431,15 @@ class TestCrossReference:
 
 class TestDashboardServices:
     """DashboardServices integrates with EventAggregator and ThreatScorer."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_agents(self):
+        """Prevent real agent registry from leaking into asset tests."""
+        with patch(
+            "citadel_archer.api.dashboard_ext.DashboardServices._get_enrolled_agent_views",
+            return_value=[],
+        ):
+            yield
 
     def test_chart_data_with_events(self, event_aggregator, threat_scorer, asset_inventory):
         svc = DashboardServices()

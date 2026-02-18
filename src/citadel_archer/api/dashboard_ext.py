@@ -499,6 +499,55 @@ class DashboardServices:
 
     # -- Assets (multi-asset view) ----------------------------------------
 
+    def _get_enrolled_agent_views(self) -> List[AssetView]:
+        """Fetch enrolled external agents and convert to AssetView objects."""
+        try:
+            from .agent_api_routes import get_agent_registry
+            from ..chat.inter_agent import get_inter_agent_protocol
+        except Exception:
+            return []
+
+        try:
+            registry = get_agent_registry()
+            agents = registry.list_agents()
+        except Exception:
+            return []
+
+        # Build a set of online agent IDs for status lookup
+        try:
+            protocol = get_inter_agent_protocol()
+            online_agents = {a["agent_id"] for a in protocol.list_online_agents()}
+        except Exception:
+            online_agents = set()
+
+        agent_type_to_platform = {
+            "claude_code": "cloud", "forge": "cloud", "custom": "cloud",
+            "vps": "cloud", "workstation": "workstation", "cloud": "cloud",
+        }
+
+        views = []
+        for agent in agents:
+            if agent.get("status") == "revoked":
+                continue
+            is_online = agent["agent_id"] in online_agents
+            last_seen = (
+                agent.get("last_message_at")
+                or agent.get("created_at")
+                or ""
+            )
+            views.append(AssetView(
+                asset_id=agent["agent_id"],
+                name=agent["name"],
+                platform=agent_type_to_platform.get(agent["agent_type"], "cloud"),
+                status="online" if is_online else "offline",
+                hostname=agent["name"],
+                ip_address="",
+                guardian_active=is_online,
+                event_count=agent.get("message_count") or 0,
+                last_seen=last_seen,
+            ))
+        return views
+
     def get_assets(
         self, status_filter: Optional[str] = None,
         platform_filter: Optional[str] = None,
@@ -508,43 +557,53 @@ class DashboardServices:
         if cached is not None:
             return cached
 
-        if self.asset_inventory is None:
-            result = AssetsResponse(
-                assets=[], total=0, by_status={},
-                generated_at=datetime.utcnow().isoformat(),
-            )
-            cache.set(cache_key, result)
-            return result
-
-        all_assets = self.asset_inventory.all()
-
-        if status_filter:
-            all_assets = [a for a in all_assets if a.status.value == status_filter]
-        if platform_filter:
-            all_assets = [a for a in all_assets if a.platform.value == platform_filter]
-
         views: List[AssetView] = []
-        for a in all_assets:
-            event_count = 0
-            if self.event_aggregator is not None:
-                event_count = len(self.event_aggregator.by_asset(a.asset_id))
-            views.append(AssetView(
-                asset_id=a.asset_id,
-                name=a.name,
-                platform=a.platform.value,
-                status=a.status.value,
-                hostname=a.hostname,
-                ip_address=a.ip_address,
-                guardian_active=a.guardian_active,
-                event_count=event_count,
-                last_seen=a.last_seen,
-            ))
 
-        inv_stats = self.asset_inventory.stats()
+        # Inventory-managed assets
+        if self.asset_inventory is not None:
+            all_assets = self.asset_inventory.all()
+            if status_filter:
+                all_assets = [a for a in all_assets if a.status.value == status_filter]
+            if platform_filter:
+                all_assets = [a for a in all_assets if a.platform.value == platform_filter]
+
+            for a in all_assets:
+                event_count = 0
+                if self.event_aggregator is not None:
+                    event_count = len(self.event_aggregator.by_asset(a.asset_id))
+                views.append(AssetView(
+                    asset_id=a.asset_id,
+                    name=a.name,
+                    platform=a.platform.value,
+                    status=a.status.value,
+                    hostname=a.hostname,
+                    ip_address=a.ip_address,
+                    guardian_active=a.guardian_active,
+                    event_count=event_count,
+                    last_seen=a.last_seen,
+                ))
+
+        # Enrolled external agents (merged into the same list)
+        agent_views = self._get_enrolled_agent_views()
+        if agent_views:
+            if status_filter:
+                agent_views = [v for v in agent_views if v.status == status_filter]
+            if platform_filter:
+                agent_views = [v for v in agent_views if v.platform == platform_filter]
+            views.extend(agent_views)
+
+        inv_stats = (
+            self.asset_inventory.stats() if self.asset_inventory else {}
+        )
+        by_status = inv_stats.get("by_status", {})
+        # Merge agent counts into by_status
+        for av in agent_views if agent_views else []:
+            by_status[av.status] = by_status.get(av.status, 0) + 1
+
         result = AssetsResponse(
             assets=views,
             total=len(views),
-            by_status=inv_stats.get("by_status", {}),
+            by_status=by_status,
             generated_at=datetime.utcnow().isoformat(),
         )
         cache.set(cache_key, result)

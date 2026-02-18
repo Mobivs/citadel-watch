@@ -246,6 +246,15 @@ class TestThreatScore:
 # ── DashboardServices — assets ──────────────────────────────────────
 
 class TestAssets:
+    @pytest.fixture(autouse=True)
+    def _isolate_agents(self):
+        """Prevent real agent registry from leaking into asset tests."""
+        with patch(
+            "citadel_archer.api.dashboard_ext.DashboardServices._get_enrolled_agent_views",
+            return_value=[],
+        ):
+            yield
+
     def test_empty_when_no_inventory(self):
         svc = DashboardServices()
         module_cache.clear()
@@ -308,6 +317,103 @@ class TestAssets:
         module_cache.clear()
         result = svc.get_assets()
         assert result.assets[0].event_count == 2
+
+    def test_enrolled_agents_appear_in_assets(self):
+        """Enrolled external agents should be merged into the asset view."""
+        svc = DashboardServices()
+        svc.asset_inventory = AssetInventory(db_path=None)
+
+        mock_registry = MagicMock()
+        mock_registry.list_agents.return_value = [
+            {
+                "agent_id": "abc123",
+                "name": "Test-VPS-Agent",
+                "agent_type": "claude_code",
+                "status": "active",
+                "created_at": "2026-02-18T00:00:00",
+                "last_message_at": "2026-02-18T01:00:00",
+                "message_count": 5,
+            },
+        ]
+
+        mock_protocol = MagicMock()
+        mock_protocol.list_online_agents.return_value = [
+            {"agent_id": "abc123"},
+        ]
+
+        module_cache.clear()
+        with patch("citadel_archer.api.dashboard_ext.DashboardServices._get_enrolled_agent_views") as mock_method:
+            # Call the real method but with mocked dependencies
+            from citadel_archer.api.dashboard_ext import AssetView as DashAssetView
+            mock_method.return_value = [
+                DashAssetView(
+                    asset_id="abc123",
+                    name="Test-VPS-Agent",
+                    platform="cloud",
+                    status="online",
+                    hostname="Test-VPS-Agent",
+                    ip_address="",
+                    guardian_active=True,
+                    event_count=5,
+                    last_seen="2026-02-18T01:00:00",
+                ),
+            ]
+            result = svc.get_assets()
+
+        assert result.total == 1
+        agent_view = result.assets[0]
+        assert agent_view.asset_id == "abc123"
+        assert agent_view.name == "Test-VPS-Agent"
+        assert agent_view.status == "online"
+        assert agent_view.platform == "cloud"
+        assert agent_view.event_count == 5
+
+    def test_enrolled_agents_mixed_with_inventory(self):
+        """Agents should appear alongside inventory assets."""
+        svc = DashboardServices()
+        inv = AssetInventory(db_path=None)
+        svc.asset_inventory = inv
+
+        inv.register(Asset(name="local-srv", platform=AssetPlatform.LINUX,
+                           status=AssetStatus.ONLINE, hostname="srv.local"))
+
+        module_cache.clear()
+        with patch("citadel_archer.api.dashboard_ext.DashboardServices._get_enrolled_agent_views") as mock_method:
+            from citadel_archer.api.dashboard_ext import AssetView as DashAssetView
+            mock_method.return_value = [
+                DashAssetView(
+                    asset_id="agent-xyz",
+                    name="Remote-Agent",
+                    platform="cloud",
+                    status="offline",
+                    hostname="Remote-Agent",
+                    ip_address="",
+                    guardian_active=False,
+                    event_count=0,
+                    last_seen="",
+                ),
+            ]
+            result = svc.get_assets()
+
+        assert result.total == 2
+        names = {a.name for a in result.assets}
+        assert "local-srv" in names
+        assert "Remote-Agent" in names
+
+    def test_no_agents_when_registry_unavailable(self):
+        """get_assets should still work if agent registry is not set up."""
+        svc = DashboardServices()
+        inv = AssetInventory(db_path=None)
+        svc.asset_inventory = inv
+        inv.register(Asset(name="local", status=AssetStatus.ONLINE))
+
+        module_cache.clear()
+        with patch("citadel_archer.api.dashboard_ext.DashboardServices._get_enrolled_agent_views") as mock_method:
+            mock_method.return_value = []
+            result = svc.get_assets()
+
+        assert result.total == 1
+        assert result.assets[0].name == "local"
 
 
 # ── EventBroadcaster ────────────────────────────────────────────────
