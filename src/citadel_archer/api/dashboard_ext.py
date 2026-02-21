@@ -176,6 +176,8 @@ class AssetView(BaseModel):
     guardian_active: bool
     event_count: int
     last_seen: str
+    asset_source: str = "inventory"  # "inventory" or "enrolled"
+    agent_type: str = ""  # e.g. "claude_code", "vps", "workstation"
 
 
 class AssetsResponse(BaseModel):
@@ -539,12 +541,14 @@ class DashboardServices:
                 asset_id=agent["agent_id"],
                 name=agent["name"],
                 platform=agent_type_to_platform.get(agent["agent_type"], "cloud"),
-                status="online" if is_online else "offline",
+                status="enrolled" if not is_online else "online",
                 hostname=agent["name"],
                 ip_address="",
                 guardian_active=is_online,
                 event_count=agent.get("message_count") or 0,
                 last_seen=last_seen,
+                asset_source="enrolled",
+                agent_type=agent.get("agent_type", ""),
             ))
         return views
 
@@ -583,22 +587,16 @@ class DashboardServices:
                     last_seen=a.last_seen,
                 ))
 
-        # Enrolled external agents (merged into the same list)
-        agent_views = self._get_enrolled_agent_views()
-        if agent_views:
-            if status_filter:
-                agent_views = [v for v in agent_views if v.status == status_filter]
-            if platform_filter:
-                agent_views = [v for v in agent_views if v.platform == platform_filter]
-            views.extend(agent_views)
+        # NOTE: Enrolled AI agents (AgentRegistry) are NOT shown here as a
+        # separate source. Enrollment now auto-creates a managed_assets record
+        # (asset_id == agent_id), so enrolled agents appear via the inventory
+        # path above — one asset = one row, no duplication.
+        # _get_enrolled_agent_views() is kept for legacy code but not called here.
 
         inv_stats = (
             self.asset_inventory.stats() if self.asset_inventory else {}
         )
         by_status = inv_stats.get("by_status", {})
-        # Merge agent counts into by_status
-        for av in agent_views if agent_views else []:
-            by_status[av.status] = by_status.get(av.status, 0) + 1
 
         result = AssetsResponse(
             assets=views,

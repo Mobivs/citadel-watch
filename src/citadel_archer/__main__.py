@@ -65,7 +65,7 @@ def main():
     if args.backend_only:
         # Development mode: Backend only (no GUI)
         print("=" * 60)
-        print("  [!] DEVELOPMENT MODE: Backend Only (No GUI)")
+        print("  DEVELOPMENT MODE: Backend Only (No GUI)")
         print("=" * 60)
         print()
         print("  This mode is for development/testing.")
@@ -106,7 +106,7 @@ def main():
         except KeyboardInterrupt:
             print("\n\nShutdown signal received...")
         except Exception as e:
-            print(f"\n\n❌ Error: {str(e)}")
+            print(f"\n\n[X] Error: {str(e)}")
             import traceback
             traceback.print_exc()
             sys.exit(1)

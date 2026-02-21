@@ -179,6 +179,24 @@ class ChatStore:
                 conn.close()
         return [self._row_to_message(r) for r in rows]
 
+    def delete_matching_payload(self, text_fragment: str) -> int:
+        """Delete messages whose payload contains the given text fragment.
+
+        Used to deduplicate persistent system messages (e.g. startup banners)
+        before writing a fresh copy. Returns the number of rows deleted.
+        """
+        fragment = f"%{text_fragment}%"
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                cur = conn.execute(
+                    "DELETE FROM chat_messages WHERE payload LIKE ?", (fragment,)
+                )
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+
     def count(self) -> int:
         with self._lock:
             conn = self._get_conn()

@@ -10,6 +10,7 @@
 # The "ext-agent:" prefix distinguishes these from Remote Shield monitoring
 # agents ("agent:"), which are security scanners, not conversational AI.
 
+import json
 import logging
 from typing import List, Optional
 
@@ -166,6 +167,7 @@ class CreateInvitationResponse(BaseModel):
 
 class EnrollAgentRequest(BaseModel):
     invitation_string: str = Field(..., min_length=20, max_length=200, description="Compact invitation string (CITADEL-1:...)")
+    hostname: str = Field("", max_length=253, description="Agent's self-reported hostname (optional)")
 
 
 class EnrollAgentResponse(BaseModel):
@@ -323,6 +325,21 @@ async def revoke_agent(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{agent_id}' not found",
         )
+
+    # Also remove the managed_assets record that was auto-created at enrollment.
+    # agent_id == asset_id by convention (see enroll_agent).
+    try:
+        from ..api.asset_routes import get_inventory
+        get_inventory().remove(agent_id)
+    except Exception:
+        pass  # best-effort — never block revocation
+
+    # Bust the assets cache so the UI reflects the change immediately.
+    try:
+        from ..api.dashboard_ext import cache
+        cache.clear()
+    except Exception:
+        pass
 
     # Audit log
     try:
@@ -650,6 +667,7 @@ async def get_inbox(
 async def agent_heartbeat(
     agent_id: str,
     req: HeartbeatRequest,
+    request: Request,
     agent: dict = Depends(verify_external_agent_token),
 ):
     """Record an agent heartbeat (marks agent as online).
@@ -659,6 +677,47 @@ async def agent_heartbeat(
     """
     if agent["agent_id"] != agent_id:
         raise HTTPException(403, "Cannot heartbeat for a different agent")
+
+    # Refresh stored IP address from the connecting client.
+    # This keeps the IP current for agents that enrolled before IP capture
+    # was added (which stored an empty ip_address, shown as "enrolled-api").
+    client_ip = request.client.host if request.client else ""
+    valid_ip = client_ip and client_ip not in ("unknown", "127.0.0.1", "::1")
+    if valid_ip:
+        try:
+            get_agent_registry().update_ip_address(agent_id, client_ip)
+        except Exception:
+            pass  # best-effort — never break heartbeat
+
+    # Ensure a managed_assets record exists for this agent. Handles agents
+    # enrolled before enrollment auto-created assets (e.g. Hostinger-VPS-8).
+    # Also syncs the IP so the asset list shows the correct address.
+    try:
+        from ..api.asset_routes import get_inventory
+        from ..intel.assets import Asset, AssetType, AssetStatus, AssetPlatform
+
+        inv = get_inventory()
+        ip_str = client_ip if valid_ip else ""
+        asset = inv.get(agent_id)
+        if asset is None:
+            asset = Asset(
+                asset_id=agent_id,
+                name=agent.get("name", agent_id),
+                platform=AssetPlatform.LINUX,
+                asset_type=AssetType.VPS,
+                status=AssetStatus.ONLINE,
+                hostname=agent.get("hostname") or "",
+                ip_address=ip_str,
+            )
+            inv.register(asset)
+        else:
+            # Keep IP and status fresh on every heartbeat.
+            kwargs: dict = {"status": "online"}
+            if ip_str:
+                kwargs["ip_address"] = ip_str
+            inv.update(agent_id, **kwargs)
+    except Exception:
+        pass  # best-effort — never break heartbeat
 
     from ..chat.inter_agent import AgentCapability, get_inter_agent_protocol
 
@@ -682,7 +741,27 @@ async def agent_heartbeat(
         status_detail=req.status_detail,
         capabilities=caps,
     )
-    return presence.to_dict()
+    response = presence.to_dict()
+
+    # Attach any queued defensive commands for this agent.
+    # The daemon reads data.get("pending_commands", []) from the heartbeat response.
+    try:
+        from ..agent.actions_database import get_queued_for_agent, init_db
+        init_db()
+        queued = get_queued_for_agent(agent_id)
+        if queued:
+            response["pending_commands"] = [
+                {
+                    "action_uuid": a["action_uuid"],
+                    "action_id":   a["action_id"],
+                    "parameters":  json.loads(a.get("parameters") or "{}"),
+                }
+                for a in queued
+            ]
+    except Exception:
+        pass  # never break heartbeat due to action queue errors
+
+    return response
 
 
 @router.get("/protocol/stats")
@@ -997,11 +1076,14 @@ async def enroll_agent(
         )
 
     # Register the agent via AgentRegistry
+    # client_ip is the Tailscale IP when connecting over the VPN mesh.
     registry = get_agent_registry()
     try:
         agent_id, raw_token = registry.register_agent(
             name=invitation.agent_name,
             agent_type=invitation.agent_type,
+            ip_address=client_ip if client_ip != "unknown" else "",
+            hostname=req.hostname,
         )
     except Exception as e:
         logger.error(
@@ -1015,6 +1097,36 @@ async def enroll_agent(
 
     # Link invitation to resulting agent
     store.set_resulting_agent_id(invitation_id, agent_id)
+
+    # Auto-create a managed_assets record so this agent appears in the asset
+    # inventory as a proper machine. One enrollment = one asset entry.
+    # Uses agent_id as asset_id so both systems stay in sync without a FK.
+    try:
+        from ..api.asset_routes import get_inventory
+        from ..intel.assets import Asset, AssetType, AssetStatus, AssetPlatform
+
+        inv = get_inventory()
+        # Avoid duplicate if IP or hostname already matches an existing asset.
+        ip_str = client_ip if client_ip and client_ip != "unknown" else ""
+        existing = None
+        if ip_str:
+            existing = next((a for a in inv.all() if a.ip_address == ip_str), None)
+        if not existing and req.hostname:
+            existing = next((a for a in inv.all() if a.hostname == req.hostname), None)
+
+        if not existing:
+            asset = Asset(
+                asset_id=agent_id,
+                name=invitation.agent_name,
+                platform=AssetPlatform.LINUX,
+                asset_type=AssetType.VPS,
+                status=AssetStatus.ONLINE,
+                hostname=req.hostname or "",
+                ip_address=ip_str,
+            )
+            inv.register(asset)
+    except Exception:
+        pass  # best-effort — never block enrollment
 
     # Audit: successful enrollment
     try:
@@ -1210,6 +1322,277 @@ async def reset_context_template(
     return {"message": f"{template_type} template reset to default"}
 
 
+# ── Daemon Reporting Endpoints ────────────────────────────────────────
+#
+# Used by citadel_daemon.py running on remote Linux machines.
+# The daemon uses the same Bearer token auth as other ext-agent endpoints.
+
+
+class ThreatReportRequest(BaseModel):
+    type: str = Field(..., max_length=100, description="Threat type, e.g. brute_force_attempt")
+    severity: int = Field(..., ge=1, le=10, description="Numeric severity 1-10")
+    title: str = Field(..., max_length=200, description="Short human-readable title")
+    details: dict = Field(default_factory=dict, description="Additional context")
+    hostname: str = Field("", max_length=253, description="Source hostname")
+    timestamp: str = Field("", max_length=50, description="ISO timestamp from daemon")
+
+
+class PatchStatusRequest(BaseModel):
+    pending_count: int = Field(0, ge=0)
+    check_status: str = Field("ok", max_length=50)
+    package_manager: str = Field("", max_length=20)
+    oldest_pending_days: int = Field(0, ge=0)
+
+
+@router.post("/{agent_id}/threats")
+async def report_daemon_threat(
+    agent_id: str,
+    req: ThreatReportRequest,
+    agent: dict = Depends(verify_external_agent_token),
+):
+    """Accept a security threat report from a Citadel Daemon running on a managed machine.
+
+    The daemon sends one threat per request. Stored in the audit log under
+    EventType.REMOTE_THREAT so get_daemon_threats() can surface them to the AI.
+    """
+    if agent["agent_id"] != agent_id:
+        raise HTTPException(403, "Cannot report threats for a different agent")
+
+    # Map numeric severity to EventSeverity
+    sev_int = req.severity
+    try:
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+        if sev_int >= 9:
+            ev_sev = EventSeverity.CRITICAL
+        elif sev_int >= 7:
+            ev_sev = EventSeverity.ALERT
+        elif sev_int >= 4:
+            ev_sev = EventSeverity.INVESTIGATE
+        else:
+            ev_sev = EventSeverity.INFO
+
+        host = req.hostname or agent.get("hostname") or agent_id
+        log_security_event(
+            EventType.REMOTE_THREAT,
+            ev_sev,
+            f"[daemon:{host}] {req.title}",
+            details={
+                "source":    "citadel_daemon",
+                "agent_id":  agent_id,
+                "agent_name": agent.get("name", agent_id),
+                "hostname":  host,
+                "threat_type": req.type,
+                "severity":  sev_int,
+                "timestamp": req.timestamp,
+                **req.details,
+            },
+        )
+    except Exception:
+        logger.warning("Failed to store daemon threat report for agent %s", agent_id)
+
+    return {"status": "ok", "agent_id": agent_id, "type": req.type}
+
+
+@router.post("/{agent_id}/patch-status")
+async def report_patch_status(
+    agent_id: str,
+    req: PatchStatusRequest,
+    agent: dict = Depends(verify_external_agent_token),
+):
+    """Accept patch status from a Citadel Daemon. Stored in the audit log."""
+    if agent["agent_id"] != agent_id:
+        raise HTTPException(403, "Cannot report patch status for a different agent")
+
+    if req.pending_count > 0:
+        try:
+            from ..core.audit_log import log_security_event, EventType, EventSeverity
+            host = agent.get("hostname") or agent_id
+            log_security_event(
+                EventType.REMOTE_PATCH,
+                EventSeverity.INVESTIGATE,
+                f"[daemon:{host}] {req.pending_count} package update(s) pending",
+                details={
+                    "source":             "citadel_daemon",
+                    "agent_id":           agent_id,
+                    "agent_name":         agent.get("name", agent_id),
+                    "hostname":           agent.get("hostname") or agent_id,
+                    "pending_count":      req.pending_count,
+                    "check_status":       req.check_status,
+                    "package_manager":    req.package_manager,
+                    "oldest_pending_days": req.oldest_pending_days,
+                },
+            )
+        except Exception:
+            logger.warning("Failed to store patch status for agent %s", agent_id)
+
+    return {"status": "ok", "agent_id": agent_id, "pending_count": req.pending_count}
+
+
+# ── Active Response: Result Reporting & Approval Workflow ─────────────
+
+
+class ActionResultRequest(BaseModel):
+    action_uuid: str = Field(..., min_length=1, max_length=64)
+    action_id: str = Field(..., min_length=1, max_length=64)
+    status: str = Field(..., pattern=r"^(success|failed)$")
+    result: dict = Field(default_factory=dict)
+    forensics: dict = Field(default_factory=dict)
+    timestamp: str = Field("", max_length=64)
+
+
+@router.post("/{agent_id}/action-result")
+async def report_action_result(
+    agent_id: str,
+    req: ActionResultRequest,
+    agent: dict = Depends(verify_external_agent_token),
+):
+    """Daemon reports the result of an executed defensive action.
+
+    Bearer auth — only the daemon that received the command can report back.
+    """
+    if agent["agent_id"] != agent_id:
+        raise HTTPException(403, "Cannot report results for a different agent")
+
+    try:
+        from ..agent.actions_database import record_result, init_db
+        init_db()
+        found = record_result(
+            req.action_uuid,
+            req.status,
+            {"result": req.result, "forensics": req.forensics},
+        )
+        if not found:
+            logger.warning(
+                "action-result for unknown uuid %s from agent %s",
+                req.action_uuid, agent_id,
+            )
+    except Exception:
+        logger.exception("Failed to record action result for agent %s", agent_id)
+
+    if req.status == "failed":
+        try:
+            from ..core.audit_log import log_security_event, EventType, EventSeverity
+            host = agent.get("hostname") or agent_id
+            log_security_event(
+                EventType.REMOTE_THREAT,
+                EventSeverity.ALERT,
+                f"[daemon:{host}] Defensive action FAILED: {req.action_id}",
+                details={
+                    "source":      "citadel_daemon",
+                    "agent_id":    agent_id,
+                    "hostname":    host,
+                    "action_id":   req.action_id,
+                    "action_uuid": req.action_uuid,
+                    "result":      req.result,
+                },
+            )
+        except Exception:
+            pass
+
+    return {"status": "ok", "action_uuid": req.action_uuid}
+
+
+@router.post("/actions/{action_uuid}/approve")
+async def approve_daemon_action(
+    action_uuid: str,
+    _token: str = Depends(verify_session_token),
+):
+    """Approve a pending defensive action (dashboard user only).
+
+    Moves the action from pending_approval → queued so it is delivered
+    on the daemon's next heartbeat.
+    """
+    from ..agent.actions_database import approve_action, init_db
+    init_db()
+    found = approve_action(action_uuid)
+    if not found:
+        raise HTTPException(404, f"Action {action_uuid} not found or not pending approval")
+    return {"status": "queued", "action_uuid": action_uuid}
+
+
+@router.post("/actions/{action_uuid}/deny")
+async def deny_daemon_action(
+    action_uuid: str,
+    _token: str = Depends(verify_session_token),
+):
+    """Deny a pending defensive action (dashboard user only)."""
+    from ..agent.actions_database import deny_action, init_db
+    init_db()
+    found = deny_action(action_uuid)
+    if not found:
+        raise HTTPException(404, f"Action {action_uuid} not found or not pending approval")
+    return {"status": "denied", "action_uuid": action_uuid}
+
+
+# ── Coordinator URL Detection ─────────────────────────────────────────
+
+
+def _detect_coordinator_ip() -> Optional[str]:
+    """Detect the best external IP for this coordinator.
+
+    Priority: Tailscale CLI > Tailscale-range socket scan > default route.
+    """
+    import socket
+    import subprocess
+
+    # 1. Try Tailscale CLI (most reliable — works on Windows + Linux)
+    try:
+        result = subprocess.run(
+            ["tailscale", "ip", "-4"],
+            capture_output=True, text=True, timeout=3,
+        )
+        ip = result.stdout.strip().splitlines()[0].strip()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+
+    # 2. Scan hostname resolution for Tailscale range (100.64.0.0/10)
+    candidates: List[str] = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addr = info[4][0]
+            if not addr.startswith("127.") and addr != "0.0.0.0":
+                candidates.append(addr)
+    except Exception:
+        pass
+
+    tailscale = [a for a in candidates if a.startswith("100.")]
+    if tailscale:
+        return tailscale[0]
+
+    # 3. Default route IP (UDP connect trick — no packets sent)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+
+    return candidates[0] if candidates else None
+
+
+@router.get("/coordinator-url")
+async def get_coordinator_url(request: Request):
+    """Return the best-guess external URL for this coordinator.
+
+    Tries Tailscale CLI, then socket scan, then default route.
+    Used by the frontend to pre-populate the one-liner command.
+    Unauthenticated — returns no sensitive data.
+    """
+    port = request.url.port or 8000
+    ip = _detect_coordinator_ip()
+    if ip:
+        url = f"http://{ip}:{port}"
+    else:
+        url = str(request.base_url).rstrip("/")
+
+    return {"coordinator_url": url}
+
+
 # ── Daemon Download Endpoints ─────────────────────────────────────────
 
 
@@ -1251,4 +1634,32 @@ async def serve_daemon_script():
     return PlainTextResponse(
         content=script_path.read_text(encoding="utf-8"),
         media_type="text/x-python",
+    )
+
+
+@router.get("/keepalive.py", response_class=PlainTextResponse)
+async def serve_keepalive_script():
+    """Serve the standalone keepalive script for enrolled AI agents.
+
+    Unauthenticated download. The agent_id + token must be configured on
+    the agent side via 'python3 keepalive.py setup ...'.
+
+    Usage on VPS:
+      curl -fsSL http://coordinator/api/ext-agents/keepalive.py -o /opt/citadel/keepalive.py
+      python3 /opt/citadel/keepalive.py setup --coordinator URL --agent-id ID --token TOKEN
+      python3 /opt/citadel/keepalive.py install-systemd
+      systemctl enable --now citadel-keepalive
+    """
+    from pathlib import Path
+
+    script_path = Path(__file__).resolve().parent.parent / "agent" / "keepalive.py"
+    if not script_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Keepalive script not found on server",
+        )
+    return PlainTextResponse(
+        content=script_path.read_text(encoding="utf-8"),
+        media_type="text/x-python",
+        headers={"Content-Disposition": 'attachment; filename="keepalive.py"'},
     )

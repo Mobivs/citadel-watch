@@ -38,6 +38,7 @@ setup(
         # "pywebview>=4.4.1",  # Skip for now - will add when building desktop wrapper
         "httpx>=0.26.0",
         "python-dotenv>=1.0.0",
+        "asyncssh>=2.14.0",
     ],
     entry_points={
         "console_scripts": [

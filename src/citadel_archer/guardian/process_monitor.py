@@ -66,6 +66,27 @@ class SuspiciousProcessPatterns:
     HIGH_CPU_THRESHOLD = 80.0  # 80% CPU usage
     HIGH_CPU_DURATION = 60  # seconds
 
+    # Windows/OS kernel processes that legitimately consume high CPU.
+    # PID 0 ("System Idle Process") always reports idle cycles as CPU usage —
+    # flagging it as a crypto miner is a false positive.
+    # Other entries here are kernel or critical-session processes that are
+    # never user-controllable malware.
+    TRUSTED_SYSTEM_PROCESSES = {
+        "system idle process",  # PID 0 — normal Windows idle accounting
+        "system",               # PID 4 — Windows kernel
+        "registry",             # PID ~100 — NT Registry
+        "smss.exe",             # Session Manager
+        "csrss.exe",            # Client/Server Runtime
+        "wininit.exe",          # Windows Init
+        "lsass.exe",            # Local Security Authority (legitimate)
+        "services.exe",         # Service Control Manager
+        "svchost.exe",          # Service Host (many instances — benign)
+        "dwm.exe",              # Desktop Window Manager
+        "winlogon.exe",         # Logon UI
+        "fontdrvhost.exe",      # Font Driver Host
+        "memory compression",   # Windows Memory Compression
+    }
+
     @classmethod
     def is_malicious_name(cls, process_name: str) -> bool:
         """Check if process name matches known malware."""
@@ -192,6 +213,14 @@ class ProcessMonitor:
             try:
                 pid = proc.info['pid']
                 current_processes.add(pid)
+
+                # Skip PID 0 and known-safe kernel/session processes.
+                if pid == 0:
+                    continue
+                proc_name_lower = (proc.info.get('name') or "").lower()
+                if proc_name_lower in SuspiciousProcessPatterns.TRUSTED_SYSTEM_PROCESSES:
+                    self.known_processes.add(pid)  # mark as seen so we don't revisit
+                    continue
 
                 # Skip processes we've already analyzed
                 if pid in self.known_processes:
@@ -375,6 +404,18 @@ class ProcessMonitor:
         """
         try:
             pid = proc.pid
+            # Skip PID 0 (System Idle Process) and other trusted kernel processes.
+            # Windows reports idle CPU cycles through these — high CPU is expected
+            # and does NOT indicate malware.
+            if pid == 0:
+                return
+            try:
+                name_lower = (proc.name() or "").lower()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return
+            if name_lower in SuspiciousProcessPatterns.TRUSTED_SYSTEM_PROCESSES:
+                return
+
             cpu_percent = proc.cpu_percent(interval=1.0)
 
             # Track high CPU processes

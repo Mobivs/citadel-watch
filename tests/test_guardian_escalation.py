@@ -297,10 +297,10 @@ class TestBatchAggregation:
         chat.send_system.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_more_than_3_events_shows_overflow(self):
+    async def test_more_than_5_events_shows_overflow(self):
         esc, agg, chat = _make_escalation()
 
-        for i in range(5):
+        for i in range(7):
             esc._on_event(
                 _make_event(
                     event_type=f"file.modified.{i}",
@@ -363,16 +363,15 @@ class TestSummaryFormat:
         assert call_args[0][1] == MessageType.EVENT
 
     @pytest.mark.asyncio
-    async def test_message_truncates_long_summaries(self):
+    async def test_message_shows_full_text(self):
         esc, agg, chat = _make_escalation()
         long_msg = "A" * 200
         esc._on_event(_make_event(message=long_msg))
         await esc._flush_batch()
 
         summary = chat.send_system.call_args[0][0]
-        # Each event message is truncated to 100 chars
-        assert "A" * 100 in summary
-        assert "A" * 101 not in summary
+        # Full message text is included (no truncation)
+        assert "A" * 200 in summary
 
 
 # ===================================================================

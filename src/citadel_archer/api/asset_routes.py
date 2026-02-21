@@ -212,12 +212,35 @@ async def delete_asset(
     asset_id: str,
     _token: str = Depends(verify_session_token),
 ):
-    """Delete a managed asset."""
+    """Delete a managed asset.
+
+    If the asset_id is also an enrolled AI agent (same ID assigned at
+    enrollment), the agent is also revoked so nothing is left orphaned.
+    """
     inv = get_inventory()
     removed = inv.remove(asset_id)
-    if not removed:
+
+    # Also revoke any enrolled AI agent with the same ID.
+    # Enrollment auto-creates managed_assets with asset_id == agent_id,
+    # so deleting the asset must clean up the agent entry too.
+    agent_revoked = False
+    try:
+        from .agent_api_routes import get_agent_registry
+        agent_revoked = get_agent_registry().revoke_agent(asset_id)
+    except Exception:
+        pass
+
+    if not removed and not agent_revoked:
         raise HTTPException(404, f"Asset not found: {asset_id}")
-    return {"asset_id": asset_id, "deleted": True}
+
+    # Bust the assets cache so the UI reflects the deletion immediately.
+    try:
+        from .dashboard_ext import cache
+        cache.clear()
+    except Exception:
+        pass
+
+    return {"asset_id": asset_id, "deleted": True, "agent_revoked": agent_revoked}
 
 
 @router.post("/{asset_id}/link-agent")

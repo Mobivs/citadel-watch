@@ -237,7 +237,7 @@ def get_hostname():
 def enroll(server_url, invitation_string):
     """Enroll this agent with the Citadel server via invitation string."""
     server_url = server_url.rstrip("/")
-    url = f"{server_url}/api/agents/enroll"
+    url = f"{server_url}/api/ext-agents/enroll"
 
     hostname = get_hostname()
     ip = get_local_ip()
@@ -249,12 +249,10 @@ def enroll(server_url, invitation_string):
     status_code, resp = http_post(url, {
         "invitation_string": invitation_string,
         "hostname": hostname,
-        "ip": ip,
-        "platform": "linux",
     })
 
     if status_code != 200:
-        detail = resp.get("detail", "Unknown error")
+        detail = resp.get("detail", "Unknown error") if isinstance(resp, dict) else str(resp)
         print(f"Enrollment failed (HTTP {status_code}): {detail}", file=sys.stderr)
         return False
 
@@ -262,19 +260,19 @@ def enroll(server_url, invitation_string):
         "server_url": server_url,
         "agent_id": resp["agent_id"],
         "api_token": resp["api_token"],
-        "asset_id": resp.get("asset_id", ""),
+        "agent_name": resp.get("agent_name", hostname),
         "hostname": hostname,
+        "ip_address": ip,
         "enrolled_at": datetime.now(timezone.utc).isoformat(),
     }
     save_config(config)
 
     print(f"Enrolled successfully!")
     print(f"  Agent ID:  {config['agent_id']}")
-    print(f"  Asset ID:  {config['asset_id']}")
+    print(f"  Name:      {config['agent_name']}")
     print(f"  Server:    {server_url}")
     print(f"  Config:    {CONFIG_PATH}")
-    print(f"\nRun 'python3 {os.path.basename(__file__)} daemon' to start monitoring.")
-    print(f"Or:  'python3 {os.path.basename(__file__)} install' to install systemd service.")
+    print(f"\nRun 'python3 {os.path.basename(__file__)} install' to start as a systemd service.")
     return True
 
 
@@ -635,7 +633,7 @@ def sensor_patch_status(stop_event):
 
 def _report_patch_status(config, patch_data):
     """POST patch status to coordinator."""
-    url = f"{config['server_url']}/api/agents/{config['agent_id']}/patch-status"
+    url = f"{config['server_url']}/api/ext-agents/{config['agent_id']}/patch-status"
     http_post(url, patch_data, token=config["api_token"])
 
 
@@ -713,17 +711,25 @@ def sensor_resources(stop_event):
 # -- Reporting ---------------------------------------------------------------
 
 def report_threats(conn, config):
-    """Send unreported events to the Citadel server as threats."""
+    """Send unreported events to the Citadel coordinator as threats.
+
+    Uses POST /api/ext-agents/{agent_id}/threats — dedicated endpoint
+    for daemon security findings.
+    """
     events = get_unreported_events(conn)
     if not events:
         return
 
-    server_url = config["server_url"]
-    token = config["api_token"]
-    hostname = config.get("hostname", get_hostname())
-    threshold = config.get("alert_threshold", 0)
+    server_url = config.get("server_url", "")
+    agent_id   = config.get("agent_id", "")
+    token      = config.get("api_token", "")
+    hostname   = config.get("hostname", get_hostname())
+    threshold  = config.get("alert_threshold", 0)
     reported_ids = []
     suppressed_ids = []
+
+    if not server_url or not agent_id:
+        return
 
     severity_map = {"info": 3, "medium": 5, "high": 7, "critical": 9}
 
@@ -735,7 +741,7 @@ def report_threats(conn, config):
             suppressed_ids.append(event_id)
             continue
 
-        url = f"{server_url}/api/threats/remote-shield"
+        url = f"{server_url}/api/ext-agents/{agent_id}/threats"
         code, resp = http_post(url, {
             "type": threat_type,
             "severity": numeric_severity,
@@ -758,8 +764,11 @@ def send_heartbeat(config):
     server_url = config["server_url"]
     agent_id = config["agent_id"]
     token = config["api_token"]
-    url = f"{server_url}/api/agents/{agent_id}/heartbeat"
-    code, resp = http_post(url, {}, token=token)
+    url = f"{server_url}/api/ext-agents/{agent_id}/heartbeat"
+    code, resp = http_post(url, {
+        "version": VERSION,
+        "status_detail": "daemon_running",
+    }, token=token)
     if code == 200 and resp:
         try:
             data = json.loads(resp) if isinstance(resp, str) else resp
@@ -780,61 +789,304 @@ def send_heartbeat(config):
 
 # -- Command Execution -------------------------------------------------------
 
+# Hard-coded whitelist — the server cannot instruct the daemon to run anything
+# outside this set.  Add new actions here AND in the coordinator's playbook.
+ALLOWED_ACTIONS = frozenset({
+    # Active defense (new)
+    "kill_process",
+    "block_ip",
+    "disable_cron_job",
+    "collect_forensics",
+    "rotate_ssh_keys",
+    "restart_service",
+    "apply_patches",
+    # Legacy / policy commands
+    "check_updates",
+    "threat_alert",
+    "apply_policy",
+})
+
+
 def _execute_command(config, cmd):
-    """Execute a command from the server and acknowledge it."""
-    command_id = cmd.get("command_id", "")
-    command_type = cmd.get("command_type", "")
-    result = "unknown_command"
+    """Execute a whitelisted command from the coordinator.
 
-    if command_type == "check_updates":
-        try:
-            # Try apt
-            subprocess.run(
-                ["apt", "update"],
-                capture_output=True, timeout=120,
-                env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
-            )
-            result = "triggered_apt_update"
-        except FileNotFoundError:
-            try:
-                subprocess.run(
-                    ["dnf", "check-update"],
-                    capture_output=True, timeout=120,
-                )
-                result = "triggered_dnf_check"
-            except FileNotFoundError:
-                result = "no_package_manager"
-        except Exception as e:
-            result = f"error: {e}"
+    Schema (new): { action_uuid, action_id, parameters }
+    Schema (legacy): { command_id, command_type, payload }
 
-    elif command_type == "threat_alert":
-        payload = cmd.get("payload", {})
-        severity = payload.get("severity", "unknown")
-        desc = payload.get("description", "Cross-system alert")
-        print(f"[ALERT] ({severity}): {desc}", file=sys.stderr, flush=True)
-        result = "alert_received"
+    Unknown or non-whitelisted commands are silently rejected.
+    Results are reported back via POST /api/ext-agents/{id}/action-result.
+    """
+    # Support both new (action_id/action_uuid) and legacy (command_type/command_id) schemas
+    action_id = cmd.get("action_id") or cmd.get("command_type", "")
+    action_uuid = cmd.get("action_uuid") or cmd.get("command_id", "")
+    params = cmd.get("parameters") or cmd.get("payload") or {}
 
-    elif command_type == "apply_policy":
-        payload = cmd.get("payload", {})
-        changed = False
-        threshold = payload.get("alert_threshold")
-        if threshold is not None:
-            config["alert_threshold"] = int(threshold)
-            changed = True
-        if changed:
-            save_config(config)
-        result = f"policy_applied:threshold={threshold}"
+    # Hard whitelist check — reject silently
+    if action_id not in ALLOWED_ACTIONS:
+        print(f"[!] Rejected unknown command: {action_id}", file=sys.stderr, flush=True)
+        return None
 
-    # Acknowledge command
-    if command_id:
-        url = f"{config['server_url']}/api/agents/{config['agent_id']}/commands/ack"
+    result: dict = {"action_id": action_id, "status": "success"}
+    exec_status = "success"
+
+    try:
+        if action_id == "kill_process":
+            result = _cmd_kill_process(params)
+
+        elif action_id == "block_ip":
+            result = _cmd_block_ip(params)
+
+        elif action_id == "disable_cron_job":
+            result = _cmd_disable_cron_job(params)
+
+        elif action_id == "collect_forensics":
+            result = _cmd_collect_forensics()
+
+        elif action_id == "rotate_ssh_keys":
+            result = _cmd_rotate_ssh_keys(params)
+
+        elif action_id == "restart_service":
+            svc = params.get("service_name", "")
+            if not svc:
+                raise ValueError("service_name is required")
+            subprocess.run(["systemctl", "restart", svc], check=True, timeout=30)
+            result = {"action_id": action_id, "service": svc, "status": "restarted"}
+
+        elif action_id == "apply_patches":
+            result = _cmd_apply_patches(params)
+
+        elif action_id == "check_updates":
+            result = _cmd_check_updates()
+
+        elif action_id == "threat_alert":
+            sev = params.get("severity", "unknown")
+            desc = params.get("description", "Cross-system alert")
+            print(f"[ALERT] ({sev}): {desc}", file=sys.stderr, flush=True)
+            result = {"action_id": action_id, "status": "alert_received"}
+
+        elif action_id == "apply_policy":
+            threshold = params.get("alert_threshold")
+            if threshold is not None:
+                config["alert_threshold"] = int(threshold)
+                save_config(config)
+            result = {"action_id": action_id, "status": f"policy_applied:threshold={threshold}"}
+
+    except Exception as exc:
+        exec_status = "failed"
+        result = {"action_id": action_id, "status": "failed", "error": str(exc)}
+        print(f"[!] Command {action_id} failed: {exc}", file=sys.stderr, flush=True)
+
+    # Report result back to coordinator via ext-agent API
+    if action_uuid:
+        url = f"{config['server_url']}/api/ext-agents/{config['agent_id']}/action-result"
         http_post(url, {
-            "command_id": command_id,
-            "status": "completed",
-            "output": result,
+            "action_uuid": action_uuid,
+            "action_id":   action_id,
+            "status":      exec_status,
+            "result":      result,
+            "forensics":   result.pop("forensics", {}),
+            "timestamp":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, token=config["api_token"])
 
     return result
+
+
+# -- Active Defense Helpers --------------------------------------------------
+
+def _cmd_kill_process(params):
+    """Kill a process by PID, with optional name safety check."""
+    pid = int(params.get("pid", 0))
+    if pid <= 0:
+        raise ValueError("Invalid PID")
+    expected_name = params.get("process_name", "")
+    if expected_name:
+        try:
+            comm_path = f"/proc/{pid}/comm"
+            with open(comm_path) as f:
+                actual = f.read().strip()
+            if actual and expected_name not in actual:
+                raise ValueError(
+                    f"PID {pid} is '{actual}', not '{expected_name}' — refusing kill"
+                )
+        except FileNotFoundError:
+            raise ValueError(f"PID {pid} does not exist")
+    os.kill(pid, signal.SIGTERM)
+    time.sleep(3)
+    try:
+        os.kill(pid, 0)  # check still alive
+        os.kill(pid, signal.SIGKILL)
+        killed_with = "SIGKILL"
+    except ProcessLookupError:
+        killed_with = "SIGTERM"
+    return {"action_id": "kill_process", "pid": pid, "signal": killed_with, "status": "killed"}
+
+
+def _cmd_block_ip(params):
+    """Block a source IP via iptables with timed expiry via `at`."""
+    import re
+    ip = params.get("source_ip", "").strip()
+    if not ip:
+        raise ValueError("source_ip is required")
+    # Validate bare IPv4 — reject CIDR, ranges, hostnames
+    if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip):
+        raise ValueError(f"Invalid IPv4 address: {ip}")
+    parts = ip.split(".")
+    if any(int(p) > 255 for p in parts):
+        raise ValueError(f"Invalid IPv4 address: {ip}")
+    # Refuse to block loopback, unspecified, or broadcast
+    if parts[0] == "127" or ip in ("0.0.0.0", "255.255.255.255"):
+        raise ValueError(f"Refusing to block reserved address: {ip}")
+    hours = min(int(params.get("duration_hours", 24)), 72)
+    reason = params.get("reason", "citadel_block")
+    comment = f"citadel:{reason[:20]}"
+    subprocess.run(
+        ["iptables", "-I", "INPUT", "-s", ip, "-j", "DROP",
+         "-m", "comment", "--comment", comment],
+        check=True, timeout=10,
+    )
+    # Schedule automatic expiry via `at` (best-effort; persists until reboot if `at` unavailable)
+    try:
+        remove_cmd = (
+            f'iptables -D INPUT -s {ip} -j DROP -m comment --comment "{comment}"'
+        )
+        subprocess.run(
+            ["at", f"now + {hours} hours"],
+            input=remove_cmd.encode(),
+            capture_output=True, timeout=5,
+        )
+    except Exception:
+        pass  # `at` may not be installed; rule persists until reboot
+    return {"action_id": "block_ip", "ip": ip, "duration_hours": hours, "status": "blocked"}
+
+
+def _cmd_disable_cron_job(params):
+    """Comment out matching cron entries in /etc/crontab and /etc/cron.d/*."""
+    pattern = params.get("cron_pattern", "").strip()
+    if not pattern:
+        raise ValueError("cron_pattern is required")
+    disabled = []
+    cron_files = ["/etc/crontab"] + [
+        str(p) for p in __import__("pathlib").Path("/etc/cron.d").glob("*")
+        if p.is_file()
+    ]
+    for cron_file in cron_files:
+        try:
+            with open(cron_file) as f:
+                lines = f.readlines()
+            new_lines = []
+            changed = False
+            for line in lines:
+                if pattern in line and not line.strip().startswith("#"):
+                    new_lines.append(f"# [citadel-disabled] {line}")
+                    disabled.append({"file": cron_file, "entry": line.strip()})
+                    changed = True
+                else:
+                    new_lines.append(line)
+            if changed:
+                with open(cron_file, "w") as f:
+                    f.writelines(new_lines)
+        except (OSError, PermissionError):
+            continue
+    return {"action_id": "disable_cron_job", "pattern": pattern, "disabled": disabled}
+
+
+def _cmd_rotate_ssh_keys(params):
+    """Revoke all existing SSH authorized_keys for a user."""
+    username = params.get("username", "root").strip()
+    if not username or "/" in username or username.startswith("."):
+        raise ValueError(f"Invalid username: {username}")
+    # Locate authorized_keys
+    if username == "root":
+        auth_keys = "/root/.ssh/authorized_keys"
+    else:
+        auth_keys = f"/home/{username}/.ssh/authorized_keys"
+    backed_up = False
+    try:
+        if os.path.exists(auth_keys):
+            backup = auth_keys + ".citadel_backup"
+            with open(auth_keys) as f:
+                content = f.read()
+            with open(backup, "w") as f:
+                f.write(content)
+            backed_up = True
+            # Truncate (revoke all keys)
+            with open(auth_keys, "w") as f:
+                f.write("# Cleared by Citadel Archer active defense\n")
+        return {
+            "action_id": "rotate_ssh_keys",
+            "username": username,
+            "keys_file": auth_keys,
+            "backed_up": backed_up,
+            "status": "revoked",
+        }
+    except (OSError, PermissionError) as exc:
+        raise ValueError(f"Failed to rotate SSH keys for {username}: {exc}") from exc
+
+
+def _cmd_collect_forensics():
+    """Collect a forensics snapshot of the current system state."""
+    data = {}
+    cmds = {
+        "processes":    ["ps", "aux", "--no-headers"],
+        "connections":  ["ss", "-tnup"],
+        "logins":       ["last", "-n", "20"],
+        "disk":         ["df", "-h"],
+        "memory":       ["free", "-m"],
+    }
+    for key, cmd in cmds.items():
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            data[key] = r.stdout.strip()
+        except Exception as exc:
+            data[key] = f"error: {exc}"
+    return {"action_id": "collect_forensics", "forensics": data, "status": "collected"}
+
+
+def _cmd_apply_patches(params):
+    """Apply OS security patches."""
+    security_only = params.get("security_only", True)
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    try:
+        if security_only:
+            subprocess.run(
+                ["apt-get", "upgrade", "-y", "--only-upgrade",
+                 "-o", "Dir::Etc::SourceList=/dev/null"],
+                check=True, timeout=300, env=env,
+            )
+        else:
+            subprocess.run(
+                ["apt-get", "upgrade", "-y"],
+                check=True, timeout=300, env=env,
+            )
+        return {"action_id": "apply_patches", "status": "patches_applied", "manager": "apt"}
+    except FileNotFoundError:
+        pass
+    try:
+        args = ["dnf", "update", "-y"]
+        if security_only:
+            args.append("--security")
+        subprocess.run(args, check=True, timeout=300)
+        return {"action_id": "apply_patches", "status": "patches_applied", "manager": "dnf"}
+    except FileNotFoundError:
+        raise ValueError("No supported package manager found (apt/dnf)")
+
+
+def _cmd_check_updates():
+    """Check for available package updates."""
+    try:
+        subprocess.run(
+            ["apt", "update"],
+            capture_output=True, timeout=120,
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+        )
+        return {"action_id": "check_updates", "status": "triggered_apt_update"}
+    except FileNotFoundError:
+        pass
+    try:
+        subprocess.run(["dnf", "check-update"], capture_output=True, timeout=120)
+        return {"action_id": "check_updates", "status": "triggered_dnf_check"}
+    except FileNotFoundError:
+        return {"action_id": "check_updates", "status": "no_package_manager"}
 
 
 # -- Daemon ------------------------------------------------------------------

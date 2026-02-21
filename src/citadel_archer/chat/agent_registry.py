@@ -41,6 +41,11 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+# Absolute default path — computed from this file's location so the DB is
+# always found regardless of the working directory when the app starts.
+_DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "agent_registry.db"
+
+
 class AgentRegistry:
     """SQLite persistence for external AI agent registrations.
 
@@ -49,11 +54,11 @@ class AgentRegistry:
     and never stored.
 
     Args:
-        db_path: Path to SQLite database file. Defaults to data/agent_registry.db.
+        db_path: Path to SQLite database file. Defaults to <project>/data/agent_registry.db.
     """
 
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = Path(db_path) if db_path else Path("data/agent_registry.db")
+        self.db_path = Path(db_path) if db_path else _DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_database()
 
@@ -73,9 +78,19 @@ class AgentRegistry:
                     status TEXT DEFAULT 'active',
                     created_at TEXT,
                     last_message_at TEXT,
-                    message_count INTEGER DEFAULT 0
+                    message_count INTEGER DEFAULT 0,
+                    ip_address TEXT DEFAULT '',
+                    hostname TEXT DEFAULT ''
                 )
             """)
+            # Migration for existing databases that pre-date ip_address/hostname.
+            for col in ("ip_address TEXT DEFAULT ''", "hostname TEXT DEFAULT ''"):
+                col_name = col.split()[0]
+                try:
+                    conn.execute(f"ALTER TABLE external_agents ADD COLUMN {col}")
+                    conn.commit()
+                except Exception:
+                    pass  # Column already exists
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_ext_agents_token_hash
                 ON external_agents(api_token_hash)
@@ -99,8 +114,17 @@ class AgentRegistry:
         name: str,
         agent_type: str,
         rate_limit_per_min: Optional[int] = None,
+        ip_address: str = "",
+        hostname: str = "",
     ) -> Tuple[str, str]:
         """Register a new external agent.
+
+        Args:
+            name: Display name for the agent.
+            agent_type: One of VALID_AGENT_TYPES.
+            rate_limit_per_min: Custom rate limit (default by type).
+            ip_address: Agent's IP address at enrollment time (Tailscale IP preferred).
+            hostname: Agent's self-reported hostname.
 
         Returns:
             (agent_id, raw_api_token) — token is shown once and never stored.
@@ -126,13 +150,17 @@ class AgentRegistry:
             conn.execute(
                 """INSERT INTO external_agents
                    (agent_id, name, agent_type, api_token_hash,
-                    rate_limit_per_min, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, 'active', ?)""",
-                (agent_id, name, agent_type, token_hash, rate_limit_per_min, now),
+                    rate_limit_per_min, status, created_at, ip_address, hostname)
+                   VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)""",
+                (agent_id, name, agent_type, token_hash, rate_limit_per_min, now,
+                 ip_address, hostname),
             )
             conn.commit()
 
-        logger.info("Registered external agent: %s (%s, type=%s)", name, agent_id, agent_type)
+        logger.info(
+            "Registered external agent: %s (%s, type=%s, ip=%s)",
+            name, agent_id, agent_type, ip_address or "unknown",
+        )
         return agent_id, raw_token
 
     # ── Token Verification ────────────────────────────────────────────
@@ -163,7 +191,8 @@ class AgentRegistry:
         with self._conn() as conn:
             row = conn.execute(
                 """SELECT agent_id, name, agent_type, rate_limit_per_min,
-                          status, created_at, last_message_at, message_count
+                          status, created_at, last_message_at, message_count,
+                          ip_address, hostname
                    FROM external_agents WHERE agent_id = ?""",
                 (agent_id,),
             ).fetchone()
@@ -174,10 +203,27 @@ class AgentRegistry:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT agent_id, name, agent_type, rate_limit_per_min,
-                          status, created_at, last_message_at, message_count
+                          status, created_at, last_message_at, message_count,
+                          ip_address, hostname
                    FROM external_agents ORDER BY created_at DESC"""
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def update_ip_address(self, agent_id: str, ip_address: str) -> bool:
+        """Update the stored IP address for an agent.
+
+        Called on heartbeat so the IP stays current even for agents that
+        enrolled before IP capture was added (shows as 'enrolled-api' otherwise).
+
+        Returns True if a row was updated, False if agent not found.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE external_agents SET ip_address = ? WHERE agent_id = ?",
+                (ip_address, agent_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     def revoke_agent(self, agent_id: str) -> bool:
         """Revoke an agent (sets status to 'revoked').

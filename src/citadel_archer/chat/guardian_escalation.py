@@ -210,13 +210,29 @@ class GuardianEscalation:
         # in EVENT messages from PARTICIPANT_CITADEL. Do not change this format
         # without updating the AI Bridge trigger logic.
         count = len(events)
-        summaries = [e.message[:100] for e in events[:3]]
-        if count > 3:
-            summaries.append(f"(+{count - 3} more)")
+
+        def _fmt_event(e: AggregatedEvent) -> str:
+            # Extract UTC time (HH:MM:SS)
+            ts_part = e.timestamp[11:19] if len(e.timestamp) >= 19 else e.timestamp
+            # Pull file path from details if present
+            path = (
+                e.details.get("file_path")
+                or e.details.get("path")
+                or e.details.get("file")
+                or ""
+            )
+            line = f"[{ts_part}] {e.severity.upper()} {e.event_type}: {e.message}"
+            if path:
+                line += f" | {path}"
+            return line
+
+        detail_lines = [_fmt_event(e) for e in events[:5]]
+        if count > 5:
+            detail_lines.append(f"(+{count - 5} more)")
 
         summary = (
-            f"[Local Guardian] {count} critical/high event(s) \u2014 "
-            + "; ".join(summaries)
+            f"[Local Guardian] {count} critical/high event(s)\n"
+            + "\n".join(detail_lines)
         )
 
         # Send to SecureChat as EVENT type (triggers AI Bridge)

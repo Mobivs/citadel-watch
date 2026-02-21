@@ -46,7 +46,7 @@ class CitadelDesktopApp:
 
     def _signal_handler(self, signum, frame):
         """Handle Ctrl+C and other termination signals."""
-        print("\n⚠️  Shutdown signal received...")
+        print("\n[!] Shutdown signal received...")
         self.cleanup()
         sys.exit(0)
 
@@ -67,20 +67,20 @@ class CitadelDesktopApp:
 
         self.is_shutting_down = True
 
-        print("\n🧹 Cleaning up Citadel Archer...")
+        print("\n[*] Cleaning up Citadel Archer...")
 
         # Stop Guardian agents
         if file_monitor and file_monitor.is_running:
-            print("  ⏹️  Stopping file monitor...")
+            print("  [.] Stopping file monitor...")
             file_monitor.stop()
 
         if process_monitor and process_monitor.is_running:
-            print("  ⏹️  Stopping process monitor...")
+            print("  [.] Stopping process monitor...")
             process_monitor.stop()
 
         # Stop backend server
         if self.backend_server:
-            print("  ⏹️  Stopping backend server...")
+            print("  [.] Stopping backend server...")
             self.backend_server.should_exit = True
 
         # Log shutdown
@@ -90,7 +90,7 @@ class CitadelDesktopApp:
             message="Citadel Archer desktop application shutdown (clean exit)"
         )
 
-        print("✅ Cleanup complete. All processes stopped.")
+        print("[OK] Cleanup complete. All processes stopped.")
 
     @staticmethod
     def _is_port_in_use(port):
@@ -155,12 +155,12 @@ class CitadelDesktopApp:
             try:
                 response = httpx.get("http://127.0.0.1:8000/api")
                 if response.status_code == 200:
-                    print("✅ Backend ready!")
+                    print("[OK] Backend ready!")
                     return True
             except:
                 time.sleep(0.5)
 
-        print("❌ Backend failed to start within timeout")
+        print("[X] Backend failed to start within timeout")
         return False
 
     def _start_heartbeat_watchdog(self):
@@ -182,8 +182,12 @@ class CitadelDesktopApp:
 
             print("  Heartbeat watchdog active")
 
-            # Monitor for heartbeat timeout
-            grace_period = 15  # seconds
+            # Monitor for heartbeat timeout.
+            # NOTE: Edge throttles JS timers to ~1/min when the window is
+            # minimized or behind other windows, so we need a generous grace
+            # period to avoid killing the app when the user simply switches
+            # to another application.
+            grace_period = 120  # seconds (2 min — survives Edge timer throttling)
 
             while not self.is_shutting_down:
                 last = get_last_heartbeat()
@@ -191,10 +195,10 @@ class CitadelDesktopApp:
                     from datetime import datetime, timezone
                     elapsed = (datetime.now(timezone.utc) - last).total_seconds()
                     if elapsed > grace_period:
-                        print(f"\n  No heartbeat for {elapsed:.0f}s — window closed.")
+                        print(f"\n  No heartbeat for {elapsed:.0f}s -- window closed.")
                         self.cleanup()
                         sys.exit(0)
-                time.sleep(3)
+                time.sleep(5)
 
         t = threading.Thread(target=watchdog, daemon=True)
         t.start()
@@ -223,11 +227,11 @@ class CitadelDesktopApp:
                 "--disk-cache-size=0",
                 "--aggressive-cache-discard",
             ])
-            print("✅ Desktop window opened!")
+            print("[OK] Desktop window opened!")
             return True
         except FileNotFoundError:
             # Edge not in default location, try webbrowser module
-            print("⚠️  Edge not found at default location, using webbrowser...")
+            print("[!] Edge not found at default location, using webbrowser...")
             webbrowser.open(url)
             return True
 
@@ -247,7 +251,7 @@ class CitadelDesktopApp:
         7. On close: cleanup ALL processes (no ghosts)
         """
         print("=" * 60)
-        print("  🛡️  Citadel Archer Desktop v0.2.3")
+        print("  Citadel Archer Desktop v0.3.45")
         print("  Windows Desktop Application")
         print("=" * 60)
         print("  Philosophy: Proactive protection. Acts first, informs after.")
@@ -256,17 +260,17 @@ class CitadelDesktopApp:
 
         # Kill stale backend if port is occupied
         if self._is_port_in_use(8000):
-            print("⚠️  Port 8000 already in use — cleaning up stale server...")
+            print("[!] Port 8000 already in use -- cleaning up stale server...")
             if not self._kill_stale_server(8000):
-                print("❌ Could not free port 8000. Is another instance running?")
+                print("[X] Could not free port 8000. Is another instance running?")
                 sys.exit(1)
             if self._is_port_in_use(8000):
-                print("❌ Port 8000 still in use after cleanup. Exiting.")
+                print("[X] Port 8000 still in use after cleanup. Exiting.")
                 sys.exit(1)
-            print("✅ Port 8000 freed.")
+            print("[OK] Port 8000 freed.")
 
         # Start backend in background thread
-        print("🔧 Starting backend server...")
+        print("[*] Starting backend server...")
         self.backend_thread = threading.Thread(
             target=self.start_backend,
             daemon=True
@@ -274,19 +278,19 @@ class CitadelDesktopApp:
         self.backend_thread.start()
 
         # Wait for backend to be ready
-        print("⏳ Waiting for backend to start...")
+        print("[*] Waiting for backend to start...")
         if not self.wait_for_backend():
-            print("❌ Failed to start backend. Exiting.")
+            print("[X] Failed to start backend. Exiting.")
             sys.exit(1)
 
         # Open app window
-        print("🪟 Opening desktop window...")
+        print("[*] Opening desktop window...")
         self.open_app_window()
 
-        print("✅ Desktop application ready!")
+        print("[OK] Desktop application ready!")
         print("=" * 60)
         print()
-        print("ℹ️  Close the window to stop Citadel Archer")
+        print("    Close the window to stop Citadel Archer")
         print("   Or press Ctrl+C in this terminal")
         print()
 
@@ -305,7 +309,7 @@ class CitadelDesktopApp:
         except KeyboardInterrupt:
             pass
 
-        print("\n🛑 Desktop application closing...")
+        print("\n[*] Desktop application closing...")
 
 
 def main():

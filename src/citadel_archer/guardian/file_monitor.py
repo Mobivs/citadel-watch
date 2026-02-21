@@ -33,11 +33,47 @@ class SuspiciousFilePatterns:
     PRD: "Detects suspicious binaries (unsigned .exe, double extensions)"
     """
 
-    # Double extensions (e.g., invoice.pdf.exe)
-    DOUBLE_EXTENSIONS = [
-        ".pdf.exe", ".doc.exe", ".xls.exe", ".jpg.exe", ".png.exe",
-        ".txt.exe", ".zip.exe", ".rar.exe", ".scr", ".pif", ".com"
+    # Paths where vendor/OS auto-updates legitimately modify executables.
+    # Executables modified under these prefixes are NOT flagged by Check 3
+    # (executable-in-sensitive-directory) because updates here are expected.
+    # Checks 1 (double extensions) and 2 (suspicious names) still apply.
+    TRUSTED_VENDOR_PATHS = [
+        # Core Windows OS directories — Windows Update modifies these constantly.
+        # Check 3 (executable in sensitive dir) would produce thousands of false
+        # positives during normal OS servicing if these are not trusted.
+        # Checks 1 (double extension) and 2 (suspicious name) still apply here.
+        "\\Windows\\System32\\",
+        "\\Windows\\SysWOW64\\",
+        "\\Program Files\\Microsoft\\",
+        "\\Program Files (x86)\\Microsoft\\",
+        "\\Program Files\\WindowsApps\\",
+        "\\Windows\\SoftwareDistribution\\",
+        "\\Windows\\WinSxS\\",
+        "\\Windows\\System32\\DriverStore\\",
+        "\\Windows\\System32\\winevt\\",
+        "\\Program Files\\NVIDIA Corporation\\",
+        "\\Program Files (x86)\\NVIDIA Corporation\\",
+        "\\Program Files\\Common Files\\Microsoft Shared\\",
+        # Windows Defender / Security Center update paths
+        "\\Program Files\\Windows Defender\\",
+        "\\Program Files (x86)\\Windows Defender\\",
+        "\\ProgramData\\Microsoft\\Windows Defender\\",
+        # Other trusted Microsoft locations
+        "\\ProgramData\\Microsoft\\Windows\\",
     ]
+
+    # True double-extension patterns: document/image masquerading as executable.
+    # These use substring matching so "invoice.pdf.exe" is caught anywhere in the name.
+    DOUBLE_EXTENSION_PATTERNS = [
+        ".pdf.exe", ".doc.exe", ".docx.exe", ".xls.exe", ".xlsx.exe",
+        ".jpg.exe", ".jpeg.exe", ".png.exe", ".gif.exe",
+        ".txt.exe", ".zip.exe", ".rar.exe", ".7z.exe",
+        ".pdf.scr", ".doc.scr", ".jpg.scr",
+    ]
+
+    # Standalone dangerous extensions: only flag if the file name ENDS with them.
+    # Using substring matching here causes ".com" to match ".Common.dll" etc. — avoid.
+    STANDALONE_DANGEROUS_EXTENSIONS = [".scr", ".pif", ".com"]
 
     # Suspicious file names (case-insensitive)
     SUSPICIOUS_NAMES = [
@@ -54,9 +90,20 @@ class SuspiciousFilePatterns:
 
     @classmethod
     def is_suspicious_extension(cls, filename: str) -> bool:
-        """Check if file has double or suspicious extension."""
+        """Check if file has a double extension or standalone dangerous extension.
+
+        Two separate checks with different match strategies:
+        1. Double-extension patterns (e.g. ".pdf.exe") — substring match is fine
+           because the pattern itself is distinctive enough.
+        2. Standalone dangerous extensions (e.g. ".com", ".scr") — must use
+           endswith() to avoid ".com" matching ".Common.dll" via substring.
+        """
         filename_lower = filename.lower()
-        return any(ext in filename_lower for ext in cls.DOUBLE_EXTENSIONS)
+        if any(pat in filename_lower for pat in cls.DOUBLE_EXTENSION_PATTERNS):
+            return True
+        if any(filename_lower.endswith(ext) for ext in cls.STANDALONE_DANGEROUS_EXTENSIONS):
+            return True
+        return False
 
     @classmethod
     def is_suspicious_name(cls, filename: str) -> bool:
@@ -68,6 +115,18 @@ class SuspiciousFilePatterns:
     def is_executable(cls, filename: str) -> bool:
         """Check if file is an executable."""
         return any(filename.lower().endswith(ext) for ext in cls.EXECUTABLE_EXTENSIONS)
+
+    @classmethod
+    def is_trusted_vendor_path(cls, file_path: str) -> bool:
+        """Return True if the path is under a known vendor/OS update directory.
+
+        Executables modified here are expected (auto-updates, driver installs)
+        and should not trigger the executable-in-sensitive-directory alert.
+        """
+        path_upper = file_path.upper()
+        return any(
+            vendor.upper() in path_upper for vendor in cls.TRUSTED_VENDOR_PATHS
+        )
 
 
 class GuardianFileEventHandler(FileSystemEventHandler):
@@ -131,14 +190,28 @@ class GuardianFileEventHandler(FileSystemEventHandler):
             confidence = max(confidence, 0.98)
 
         # Check 2: Suspicious filename keywords
-        if SuspiciousFilePatterns.is_suspicious_name(filename):
+        # Only applied to executable files outside of system/sensitive directories.
+        # Skipped for:
+        #   - Non-executable files (.evtx, .log, .etl, etc.) — can't execute code
+        #   - Files in sensitive system directories (System32, Program Files, etc.) —
+        #     Windows ships thousands of legitimately-named DLLs there (e.g.
+        #     ShellCommonCommonProxyStub.dll, loader.dll). Check 3 already monitors
+        #     those directories for new/unexpected executables.
+        #   - Files in trusted vendor update paths — Microsoft/NVIDIA auto-updates
+        if (SuspiciousFilePatterns.is_executable(filename)
+                and SuspiciousFilePatterns.is_suspicious_name(filename)
+                and not self._is_sensitive_directory(file_path)
+                and not SuspiciousFilePatterns.is_trusted_vendor_path(file_path)):
             is_suspicious = True
             reasons.append("Suspicious filename detected")
             confidence = max(confidence, 0.85)
 
         # Check 3: Executable in sensitive directory
+        # Skip for known vendor/OS update paths — auto-updates legitimately
+        # modify DLLs/EXEs under Microsoft, WindowsApps, DriverStore, etc.
         if SuspiciousFilePatterns.is_executable(filename):
-            if self._is_sensitive_directory(file_path):
+            if (self._is_sensitive_directory(file_path)
+                    and not SuspiciousFilePatterns.is_trusted_vendor_path(file_path)):
                 is_suspicious = True
                 reasons.append("Executable created in sensitive directory")
                 confidence = max(confidence, 0.90)

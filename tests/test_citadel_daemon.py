@@ -298,7 +298,7 @@ class TestEnrollment:
 
         # URL should not have double slash
         call_url = mock_post.call_args[0][0]
-        assert call_url == "http://coordinator:8000/api/agents/enroll"
+        assert call_url == "http://coordinator:8000/api/ext-agents/enroll"
 
 
 # ── Reporting Tests ──────────────────────────────────────────────────
@@ -359,7 +359,7 @@ class TestReporting:
             send_heartbeat(config)
 
         call_url = mock_post.call_args[0][0]
-        assert "/api/agents/abc123/heartbeat" in call_url
+        assert "/api/ext-agents/abc123/heartbeat" in call_url
         assert mock_post.call_args[1].get("token") == "secret-token" or \
                mock_post.call_args[0][2] == "secret-token"
 
@@ -650,3 +650,83 @@ class TestCLI:
         data = json.loads(printed)
         assert data["version"] == VERSION
         assert data["enrolled"] is False
+
+
+# ── Active Defense / _execute_command Tests ─────────────────────────────────
+
+
+class TestExecuteCommand:
+    """Tests for _execute_command, ALLOWED_ACTIONS whitelist, and ack URL."""
+
+    def _make_config(self):
+        return {
+            "server_url": "http://10.0.0.1:8000",
+            "agent_id": "abc123",
+            "api_token": "tok",
+        }
+
+    def test_allowed_actions_whitelist(self):
+        from citadel_archer.agent.citadel_daemon import ALLOWED_ACTIONS
+        for action in ("kill_process", "block_ip", "disable_cron_job",
+                       "collect_forensics", "restart_service", "apply_patches",
+                       "check_updates", "threat_alert", "apply_policy"):
+            assert action in ALLOWED_ACTIONS
+
+    def test_unknown_command_silently_rejected(self):
+        from citadel_archer.agent.citadel_daemon import _execute_command
+        cfg = self._make_config()
+        with patch("citadel_archer.agent.citadel_daemon.http_post") as mock_post:
+            result = _execute_command(cfg, {
+                "action_id": "rm_rf_slash",
+                "action_uuid": "uuid1",
+                "parameters": {},
+            })
+        assert result is None
+        mock_post.assert_not_called()
+
+    def test_kill_process_uses_ext_agents_url(self):
+        """ack must go to /api/ext-agents/, never /api/agents/."""
+        from citadel_archer.agent.citadel_daemon import _execute_command
+        cfg = self._make_config()
+        with patch("citadel_archer.agent.citadel_daemon.http_post") as mock_post, \
+             patch("citadel_archer.agent.citadel_daemon._cmd_kill_process",
+                   return_value={"status": "killed", "action_id": "kill_process"}):
+            _execute_command(cfg, {
+                "action_id": "kill_process",
+                "action_uuid": "deadbeef",
+                "parameters": {"pid": 1234},
+            })
+        assert mock_post.called
+        url_used = mock_post.call_args[0][0]
+        assert "/api/ext-agents/" in url_used
+        assert "/api/agents/" not in url_used
+        assert "action-result" in url_used
+
+    def test_no_ack_when_no_uuid(self):
+        """Commands without an action_uuid do not trigger result reporting."""
+        from citadel_archer.agent.citadel_daemon import _execute_command
+        cfg = self._make_config()
+        with patch("citadel_archer.agent.citadel_daemon.http_post") as mock_post, \
+             patch("citadel_archer.agent.citadel_daemon._cmd_collect_forensics",
+                   return_value={"status": "ok"}):
+            _execute_command(cfg, {
+                "action_id": "collect_forensics",
+                "parameters": {},
+            })
+        mock_post.assert_not_called()
+
+    def test_failed_command_reports_failed_status(self):
+        """When a command raises, exec_status='failed' is reported."""
+        from citadel_archer.agent.citadel_daemon import _execute_command
+        cfg = self._make_config()
+        with patch("citadel_archer.agent.citadel_daemon.http_post") as mock_post, \
+             patch("citadel_archer.agent.citadel_daemon._cmd_block_ip",
+                   side_effect=RuntimeError("iptables missing")):
+            _execute_command(cfg, {
+                "action_id": "block_ip",
+                "action_uuid": "failuuid",
+                "parameters": {"source_ip": "1.2.3.4"},
+            })
+        assert mock_post.called
+        payload = mock_post.call_args[0][1]
+        assert payload["status"] == "failed"

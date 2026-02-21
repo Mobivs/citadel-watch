@@ -73,6 +73,10 @@ class EventType(str, Enum):
     MESH_ESCALATION = "mesh.escalation"
     MESH_RECOVERY = "mesh.recovery"
 
+    # Remote Daemon Events (v0.3.47) — citadel_daemon sensor reports
+    REMOTE_THREAT = "remote.threat"   # auth_log / process / cron / file_integrity
+    REMOTE_PATCH  = "remote.patch"    # pending package updates
+
 
 class EventSeverity(str, Enum):
     """
@@ -450,49 +454,52 @@ class AuditLogger:
 
             try:
                 with open(log_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
+                    lines = f.readlines()
+                # Read newest lines first so that read_cap collects the most
+                # recent matching events rather than the oldest ones.
+                for line in reversed(lines):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    # Only include security_event entries
+                    if entry.get("event") != "security_event":
+                        continue
+
+                    # Filter by event_type
+                    if type_values and entry.get("event_type") not in type_values:
+                        continue
+
+                    # Filter by severity
+                    if severity_value and entry.get("severity") != severity_value:
+                        continue
+
+                    # Filter by time range (strip tzinfo for comparison
+                    # since stored timestamps are naive UTC)
+                    ts = entry.get("timestamp")
+                    if ts:
                         try:
-                            entry = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
+                            event_time = datetime.fromisoformat(ts)
+                            # Normalize to naive UTC for comparison
+                            if event_time.tzinfo is not None:
+                                event_time = event_time.replace(tzinfo=None)
+                            st = start_time.replace(tzinfo=None) if start_time and start_time.tzinfo else start_time
+                            et = end_time.replace(tzinfo=None) if end_time and end_time.tzinfo else end_time
+                            if st and event_time < st:
+                                continue
+                            if et and event_time > et:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
 
-                        # Only include security_event entries
-                        if entry.get("event") != "security_event":
-                            continue
+                    results.append(entry)
 
-                        # Filter by event_type
-                        if type_values and entry.get("event_type") not in type_values:
-                            continue
-
-                        # Filter by severity
-                        if severity_value and entry.get("severity") != severity_value:
-                            continue
-
-                        # Filter by time range (strip tzinfo for comparison
-                        # since stored timestamps are naive UTC)
-                        ts = entry.get("timestamp")
-                        if ts:
-                            try:
-                                event_time = datetime.fromisoformat(ts)
-                                # Normalize to naive UTC for comparison
-                                if event_time.tzinfo is not None:
-                                    event_time = event_time.replace(tzinfo=None)
-                                st = start_time.replace(tzinfo=None) if start_time and start_time.tzinfo else start_time
-                                et = end_time.replace(tzinfo=None) if end_time and end_time.tzinfo else end_time
-                                if st and event_time < st:
-                                    continue
-                                if et and event_time > et:
-                                    continue
-                            except (ValueError, TypeError):
-                                pass
-
-                        results.append(entry)
-
-                        if len(results) >= read_cap:
-                            break
+                    if len(results) >= read_cap:
+                        break
             except OSError:
                 continue
 

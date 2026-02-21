@@ -150,33 +150,96 @@ class StartupCatchup:
     # ── Offline Window Detection ─────────────────────────────────────
 
     def _find_last_stop(self) -> Optional[datetime]:
-        """Find the most recent SYSTEM_STOP event from the audit log.
+        """Find the effective end of the previous session.
 
-        Returns the timestamp as a tz-aware UTC datetime, or None if no
-        SYSTEM_STOP event exists.
+        Strategy (in priority order):
+
+        1. Clean shutdown: SYSTEM_STOP exists and is *after* the previous
+           session's SYSTEM_START → use SYSTEM_STOP (most reliable).
+
+        2. Crash / hard-reboot: no SYSTEM_STOP after prev_start.
+           Query the most recent audit event logged *before* the current
+           session started — that timestamp is the actual last-alive time
+           and gives an accurate offline window regardless of how long the
+           previous session ran.
+
+        3. Last-resort fallback: use the previous SYSTEM_START. This will
+           overestimate the offline window but is better than nothing.
+
+        Returns a tz-aware UTC datetime, or None on first run.
         """
         if not self._audit:
             return None
 
+        def _parse_ts(evt: dict) -> Optional[datetime]:
+            ts_str = evt.get("timestamp")
+            if not ts_str:
+                return None
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                return ts
+            except ValueError:
+                return None
+
         try:
             from ..core.audit_log import EventType
 
-            events = self._audit.query_events(
-                event_types=[EventType.SYSTEM_STOP],
-                limit=1,
+            # Most recent clean shutdown (checked first for backward compatibility).
+            stop_events = self._audit.query_events(
+                event_types=[EventType.SYSTEM_STOP], limit=1
             )
-            if events:
-                ts_str = events[0].get("timestamp")
-                if ts_str:
-                    ts = datetime.fromisoformat(
-                        ts_str.replace("Z", "+00:00")
-                    )
-                    # Normalize to tz-aware UTC
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                    return ts
+            last_stop = _parse_ts(stop_events[0]) if stop_events else None
+
+            # FileMonitor.add_monitored_path() logs one SYSTEM_START per
+            # watched directory (~11 events per session startup).  To reliably
+            # identify session boundaries we filter to the single main startup
+            # message that is logged exactly once per session by api/main.py.
+            start_events = self._audit.query_events(
+                event_types=[EventType.SYSTEM_START], limit=20
+            )
+            # "server starting" appears only in the main app startup log line.
+            app_starts = [
+                e for e in start_events
+                if "server starting" in e.get("message", "").lower()
+            ]
+            current_start = _parse_ts(app_starts[0]) if app_starts else None
+            prev_start = _parse_ts(app_starts[1]) if len(app_starts) >= 2 else None
+
+            # Case 1: Clean shutdown — SYSTEM_STOP exists AND it occurred after
+            # the previous session started (or we have no session start info at
+            # all, so we trust the SYSTEM_STOP unconditionally).
+            if last_stop is not None and (prev_start is None or last_stop > prev_start):
+                return last_stop
+
+            # Case 2: Crash / hard-reboot — SYSTEM_STOP is missing or predates
+            # the previous session (the previous session never had a clean exit).
+            # Query the most recent audit event from before the current session
+            # start — that timestamp is the actual last-alive time and gives an
+            # accurate offline window regardless of how long the session ran.
+            if current_start is not None:
+                before_current = (
+                    current_start.replace(tzinfo=None)
+                    if current_start.tzinfo else current_start
+                )
+                recent = self._audit.query_events(
+                    end_time=before_current - timedelta(seconds=1),
+                    limit=1,
+                )
+                if recent:
+                    last_alive = _parse_ts(recent[0])
+                    if last_alive:
+                        return last_alive
+
+            # Case 3: Last-resort fallback — previous session's start time.
+            # Overestimates the offline window for long-running sessions that
+            # crashed, but is correct for first-ever crash on a fresh install.
+            if prev_start:
+                return prev_start
+
         except Exception:
-            logger.debug("Failed to find last SYSTEM_STOP", exc_info=True)
+            logger.debug("Failed to find last session end", exc_info=True)
 
         return None
 

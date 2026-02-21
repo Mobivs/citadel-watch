@@ -63,6 +63,68 @@ def _is_localhost_url(url: str) -> bool:
         return False
 
 
+# ── Inference Tiers ────────────────────────────────────────────────────
+#
+# Tier 0 — zero inference: template responses from cached state (no API call)
+# Tier 1 — Haiku: simple single-event queries, status summaries, explanations
+# Tier 2 — Sonnet: multi-event correlation, incident investigation, complex analysis
+#
+# Cost targets: Tier 0 70-80%, Tier 1 15-20%, Tier 2 5-10%, Opus never.
+
+import re as _re
+
+_MODEL_HAIKU = "claude-haiku-4-5-20251001"
+_MODEL_SONNET = "claude-sonnet-4-5-20250929"
+
+# Keywords that signal complex analysis requiring Sonnet.
+_SONNET_KEYWORDS = (
+    "investigat", "correlat", "attack chain", "posture", "threat hunt",
+    "incident", "compromise", "breach", "malware", "intrusion",
+    "privilege escalat", "lateral movement", "persistence", "root cause",
+    "pattern", "timeline", "forensic", "audit trail", "compare",
+)
+
+# Tier 0 patterns: pure data-retrieval queries, no AI judgment needed.
+# Each entry is (compiled_regex, handler_fn(state) -> str).
+# Only fire if the ENTIRE query is clearly a data lookup — conservative list.
+def _t0_status(s: dict) -> str:
+    threat = s.get("threat_level", "unknown").upper()
+    uptime = s.get("uptime", "unknown")
+    assets = s.get("assets", [])
+    online = sum(1 for a in assets if a.get("status") in ("online", "active"))
+    level = s.get("security_level", "guardian").title()
+    return (
+        f"**System Status**\n"
+        f"Threat Level: {threat}\n"
+        f"Security Mode: {level}\n"
+        f"Assets: {len(assets)} managed ({online} online)\n"
+        f"Uptime: {uptime}"
+    )
+
+def _t0_threat(s: dict) -> str:
+    return f"Current threat level: **{s.get('threat_level', 'unknown').upper()}**"
+
+def _t0_asset_count(s: dict) -> str:
+    assets = s.get("assets", [])
+    online = sum(1 for a in assets if a.get("status") in ("online", "active"))
+    return f"{len(assets)} managed asset(s), {online} online."
+
+_TIER0_RULES = [
+    (_re.compile(
+        r"^\s*(what('?s| is) (the )?)?(system |current )?status\??\s*$",
+        _re.IGNORECASE,
+    ), _t0_status),
+    (_re.compile(
+        r"^\s*(what('?s| is) (the )?)?(current )?threat.?level\??\s*$",
+        _re.IGNORECASE,
+    ), _t0_threat),
+    (_re.compile(
+        r"^\s*(how many (assets?|machines?|devices?)|asset count)\??\s*$",
+        _re.IGNORECASE,
+    ), _t0_asset_count),
+]
+
+
 # ── System Prompt ──────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
@@ -116,8 +178,11 @@ TOOLS = [
     {
         "name": "get_asset_list",
         "description": (
-            "Get all managed assets (VPS servers, local machine) with their "
-            "current status, IP address, and whether an agent is deployed."
+            "Get all managed assets (machines in the asset inventory). Each entry "
+            "represents one physical or virtual machine. has_shield_daemon=True means "
+            "a Citadel Shield daemon is running on that machine (deployed via the "
+            "Assets tab one-liner). Use get_vps_summary() to see enrolled AI agents "
+            "and Shield daemon details together."
         ),
         "input_schema": {
             "type": "object",
@@ -167,13 +232,180 @@ TOOLS = [
     {
         "name": "get_vps_summary",
         "description": (
-            "Get an overview of all VPS agents: health status, open threat counts, "
-            "severity breakdown. Use this for a bird's-eye view before drilling into "
-            "specific assets."
+            "Get an overview of all enrolled security agents: citadel_daemon agents "
+            "(vps/cloud type enrolled via one-liner) appear under enrolled_agents. "
+            "Use get_daemon_threats() to see what those daemons have actually found. "
+            "SSH-deployed Shield agents appear under shield_daemon_agents."
         ),
         "input_schema": {
             "type": "object",
             "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "get_daemon_threats",
+        "description": (
+            "Get security findings reported by enrolled Citadel Daemon agents "
+            "(Linux VPS/cloud machines running citadel_daemon.py). Covers all "
+            "daemon sensors: auth_log (SSH brute force, failed logins), processes "
+            "(crypto miners, high CPU, suspicious ports), cron (tampered jobs), "
+            "file_integrity (changed system files), patches (pending updates). "
+            "Use this whenever the user asks about VPS security, what the daemon "
+            "found, remote threats, or patch status. Optionally filter by agent_id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Filter to one daemon's agent_id (optional).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max events to return (default 30).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "execute_defensive_action",
+        "description": (
+            "Execute a pre-approved defensive response on one or more enrolled daemon agents. "
+            "Low-risk actions (kill_process, block_ip, disable_cron_job, collect_forensics) "
+            "execute automatically on the next heartbeat. Medium-risk actions "
+            "(rotate_ssh_keys, restart_service, apply_patches) are queued for user "
+            "approval first. Supports distributed response via the 'assets' parameter — "
+            "use assets=[\"all\"] to target every enrolled daemon at once (e.g. block an "
+            "attacker IP across all machines). Use get_defensive_playbook() first. "
+            "NEVER use this for offensive operations."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "asset_id": {
+                    "type": "string",
+                    "description": (
+                        "Single target: daemon agent_id, hostname, or asset name. "
+                        "Use get_vps_summary() to list valid agents. "
+                        "Omit when using 'assets' for multi-target dispatch."
+                    ),
+                },
+                "assets": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Multi-target list: array of agent_ids, hostnames, or names. "
+                        "Use [\"all\"] to target every enrolled daemon. "
+                        "Ideal for distributed blocks (block attacker IP everywhere). "
+                        "If provided, takes precedence over asset_id."
+                    ),
+                },
+                "action_id": {
+                    "type": "string",
+                    "description": (
+                        "Action to execute. One of: kill_process, block_ip, "
+                        "disable_cron_job, collect_forensics, rotate_ssh_keys, "
+                        "restart_service, apply_patches."
+                    ),
+                },
+                "parameters": {
+                    "type": "object",
+                    "description": "Action parameters (e.g. {pid: 1234} for kill_process).",
+                },
+                "threat_id": {
+                    "type": "string",
+                    "description": "Optional: the threat event that triggered this action.",
+                },
+                "require_approval": {
+                    "type": "boolean",
+                    "description": (
+                        "Override approval requirement. Cannot disable approval "
+                        "for medium-risk actions."
+                    ),
+                },
+            },
+            "required": ["action_id"],
+        },
+    },
+    {
+        "name": "get_defensive_playbook",
+        "description": (
+            "Get the list of all pre-approved defensive actions with their risk "
+            "levels, approval requirements, and parameter definitions. Use this "
+            "before execute_defensive_action to confirm the action exists and check "
+            "what parameters are needed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_id": {
+                    "type": "string",
+                    "description": "Return details for a specific action only (optional).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_action_history",
+        "description": (
+            "Get the audit trail of defensive actions executed (or pending/denied) "
+            "on daemon agents. Shows action_id, status (queued/sent/success/failed/"
+            "pending_approval/denied), target agent, parameters, timestamps, and "
+            "execution results. Use this to check if a previous action succeeded."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "asset_id": {
+                    "type": "string",
+                    "description": "Filter to a specific agent_id (optional).",
+                },
+                "action_id": {
+                    "type": "string",
+                    "description": "Filter to a specific action type (optional).",
+                },
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "Filter by status: queued, sent, success, failed, "
+                        "pending_approval, denied (optional)."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 20).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_local_events",
+        "description": (
+            "Get recent security events from the local Guardian (file monitor, "
+            "process monitor) on this Windows machine. Returns event type, "
+            "severity, timestamp, message, and file path when available. "
+            "Use this when the user asks about local file changes, process "
+            "activity, or when a Local Guardian alert has been escalated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max events to return (default 20, max 100).",
+                },
+                "severity": {
+                    "type": "string",
+                    "description": (
+                        "Filter by minimum severity: 'info', 'warning', 'alert', "
+                        "'critical'. Omit to return all severities."
+                    ),
+                },
+            },
             "required": [],
         },
     },
@@ -370,6 +602,9 @@ class AIBridge:
                 pass  # best-effort notification
             return
 
+        # Show thinking indicator immediately — response may take 5-30s
+        self._broadcast_thinking(True, "Analyzing...")
+
         # Process in background to avoid blocking the listener pipeline
         asyncio.create_task(self._process(msg))
 
@@ -392,6 +627,20 @@ class AIBridge:
                 trigger_text = f"[System escalation — {trigger.msg_type.value}] {trigger_text}"
             history.append({"role": "user", "content": trigger_text})
 
+            # 3b. Tier 0 — zero-inference fast path (user messages only).
+            # System escalations and agent messages always need AI reasoning.
+            if trigger.from_id == PARTICIPANT_USER:
+                t0 = self._tier0_response(trigger.text or "", state)
+                if t0 is not None:
+                    ai_msg = ChatMessage(
+                        from_id=PARTICIPANT_ASSISTANT,
+                        to_id=PARTICIPANT_USER,
+                        msg_type=MessageType.RESPONSE,
+                        payload={"text": t0},
+                    )
+                    await self._chat.send(ai_msg)
+                    return  # no API call
+
             # 4. Build system prompt
             security_level = state.get("security_level", "guardian")
             system = SYSTEM_PROMPT.format(
@@ -399,18 +648,27 @@ class AIBridge:
                 system_state=self._format_state(state),
             )
 
-            # 5. Determine trigger type for audit logging
+            # 5. Determine trigger type for audit logging + select inference tier
+            selected_model: Optional[str] = None
             if trigger.from_id == PARTICIPANT_USER:
                 trigger_type = "user_text"
+                selected_model = self._select_model(trigger.text or "", state)
+                logger.debug("Inference tier: %s", selected_model)
+                # Refine the thinking indicator with the actual tier being used
+                if selected_model == _MODEL_SONNET:
+                    self._broadcast_thinking(True, "Running deep analysis (Sonnet)...")
+                else:
+                    self._broadcast_thinking(True, "Analyzing (Haiku)...")
             elif trigger.from_id.startswith("ext-agent:"):
                 trigger_type = "agent_text"
             else:
                 trigger_type = "citadel_event"
 
-            # 6. Call Claude with tool loop
+            # 6. Call Claude with tool loop (model=None → Sonnet for escalations/agents)
             final_text = await self._call_with_tools(
                 system, history, trigger_type, trigger.id,
                 participant_id=trigger.from_id,
+                model=selected_model,
             )
 
             # 7. Send AI response to chat
@@ -441,6 +699,7 @@ class AIBridge:
                 pass
         finally:
             self._processing = False
+            self._broadcast_thinking(False)
             # Process any queued message
             pending = self._pending_msg
             self._pending_msg = None
@@ -472,23 +731,47 @@ class AIBridge:
             state["uptime"] = "unknown"
 
         # Managed assets (summary only — details available via tools)
+        asset_list = []
         try:
             from ..api.asset_routes import get_inventory
 
-            assets = get_inventory().all()
-            state["assets"] = [
-                {
+            for a in get_inventory().all():
+                asset_list.append({
                     "id": a.asset_id,
                     "name": a.name,
                     "ip": a.ip_address,
-                    "type": a.asset_type,
-                    "status": a.status,
-                    "has_agent": bool(a.remote_shield_agent_id),
+                    "type": getattr(a, "asset_type", "unknown"),
+                    "status": getattr(a.status, "value", str(a.status)),
+                    "has_shield_daemon": bool(getattr(a, "remote_shield_agent_id", None)),
+                    "source": "inventory",
+                })
+        except Exception:
+            pass
+
+        # AI agents (AgentRegistry) are NOT assets — they are participants.
+        # Per PRD: one asset = one managed_assets record. AI agents appear in
+        # get_vps_summary() under enrolled_agents, not in the asset list.
+
+        state["assets"] = asset_list
+
+        # Enrolled citadel_daemon agents (Shield type: vps/cloud/workstation)
+        # shown here so the AI knows about remote machines without a tool call.
+        try:
+            from ..api.agent_api_routes import get_agent_registry
+            _shield_types = {"vps", "cloud", "workstation"}
+            state["enrolled_daemons"] = [
+                {
+                    "name":     a.get("name", a["agent_id"]),
+                    "hostname": a.get("hostname") or "",
+                    "type":     a.get("agent_type"),
+                    "last_seen": a.get("last_seen") or a.get("enrolled_at", ""),
                 }
-                for a in assets
+                for a in get_agent_registry().list_agents()
+                if a.get("agent_type") in _shield_types
+                and a.get("status") != "revoked"
             ]
         except Exception:
-            state["assets"] = []
+            state["enrolled_daemons"] = []
 
         return state
 
@@ -563,7 +846,73 @@ class AIBridge:
         else:
             lines.append("Managed Assets: none")
 
+        daemons = state.get("enrolled_daemons", [])
+        if daemons:
+            lines.append(f"Enrolled Citadel Daemons ({len(daemons)}):")
+            for d in daemons:
+                lines.append(
+                    f"  - {d['name']} ({d.get('type', 'vps')}) "
+                    f"hostname={d.get('hostname', '?')} "
+                    f"last_seen={d.get('last_seen', 'never')}"
+                )
+            lines.append(
+                "  Use get_daemon_threats() to see what these daemons have found."
+            )
+
         return "\n".join(lines)
+
+    # ── Inference Tier Routing ───────────────────────────────────────────
+
+    def _tier0_response(self, text: str, state: dict) -> Optional[str]:
+        """Try to answer with a template response (no AI inference).
+
+        Returns a formatted string if the query matches a Tier 0 pattern,
+        or None if the query needs AI reasoning.
+        """
+        for pattern, handler in _TIER0_RULES:
+            if pattern.match(text):
+                return handler(state)
+        return None
+
+    def _broadcast_thinking(self, active: bool, detail: str = "") -> None:
+        """Push a chat_thinking event to all WebSocket clients.
+
+        active=True  — show thinking indicator with optional detail text.
+        active=False — hide indicator (analysis complete or failed).
+
+        Best-effort: never raises, never blocks.
+        """
+        if not self._chat._ws_broadcast:
+            return
+        try:
+            payload = {"type": "chat_thinking", "active": active, "detail": detail}
+            result = self._chat._ws_broadcast(payload)
+            if asyncio.iscoroutine(result):
+                asyncio.ensure_future(result)
+        except Exception:
+            pass
+
+    def _select_model(self, text: str, state: dict) -> str:
+        """Choose Haiku or Sonnet based on query complexity.
+
+        Tier 2 (Sonnet) — complex multi-event analysis, investigation keywords,
+            or high-severity escalations with active threat context.
+        Tier 1 (Haiku) — everything else that reaches the AI.
+        """
+        text_lower = text.lower()
+
+        # Sonnet for queries with investigation / correlation keywords
+        if any(kw in text_lower for kw in _SONNET_KEYWORDS):
+            return _MODEL_SONNET
+
+        # Sonnet when the system is under active threat and user is asking
+        # about alerts, events, or threats — context matters
+        if state.get("threat_level") in ("critical", "high") and any(
+            kw in text_lower for kw in ("alert", "threat", "critical", "high", "event")
+        ):
+            return _MODEL_SONNET
+
+        return _MODEL_HAIKU
 
     # ── Claude API Call with Tool Loop ──────────────────────────────────
 
@@ -574,6 +923,7 @@ class AIBridge:
         trigger_type: str = "unknown",
         trigger_message_id: str = "",
         participant_id: str = "user",
+        model: Optional[str] = None,
     ) -> Optional[str]:
         """Call AI backend with tool loop. Tries Claude first, falls back to Ollama.
 
@@ -595,6 +945,7 @@ class AIBridge:
             result = await self._call_claude(
                 system, messages, trigger_type, trigger_message_id,
                 participant_id, audit, quota,
+                model=model,
             )
             if result is not None:
                 return result
@@ -621,20 +972,27 @@ class AIBridge:
         participant_id: str,
         audit,
         quota,
+        model: Optional[str] = None,
     ) -> Optional[str]:
-        """Call Claude API with tool loop. Returns text or None on failure."""
+        """Call Claude API with tool loop. Returns text or None on failure.
+
+        Args:
+            model: Override the default model for this call. None → self._model.
+                   Pass _MODEL_HAIKU for Tier 1 or _MODEL_SONNET for Tier 2.
+        """
+        _model = model or self._model
         try:
-            ctx = audit.start_call(trigger_type, trigger_message_id, self._model, 0)
+            ctx = audit.start_call(trigger_type, trigger_message_id, _model, 0)
             try:
                 response = await asyncio.wait_for(
                     self._client.messages.create(
-                        model=self._model,
-                        max_tokens=1024,
+                        model=_model,
+                        max_tokens=8192,
                         system=system,
                         messages=messages,
                         tools=TOOLS,
                     ),
-                    timeout=30,
+                    timeout=90,
                 )
                 record = audit.finish_call(ctx, response=response)
                 if record:
@@ -682,18 +1040,18 @@ class AIBridge:
                 ]
 
                 ctx = audit.start_call(
-                    "tool_loop", trigger_message_id, self._model, iteration
+                    "tool_loop", trigger_message_id, _model, iteration
                 )
                 try:
                     response = await asyncio.wait_for(
                         self._client.messages.create(
-                            model=self._model,
-                            max_tokens=1024,
+                            model=_model,
+                            max_tokens=8192,
                             system=system,
                             messages=messages,
                             tools=TOOLS,
                         ),
-                        timeout=30,
+                        timeout=90,
                     )
                     record = audit.finish_call(ctx, response=response)
                     if record:
@@ -769,7 +1127,7 @@ class AIBridge:
                 tools=TOOLS,
                 tool_executor=tool_executor,
                 max_iterations=5,
-                max_tokens=1024,
+                max_tokens=8192,
                 temperature=0.3,
             )
 
@@ -796,14 +1154,34 @@ class AIBridge:
 
     # ── Tool Execution ─────────────────────────────────────────────────
 
+    # Human-readable status text for each tool (shown in thinking indicator).
+    _TOOL_LABELS: Dict[str, str] = {
+        "get_system_status":        "Checking system status...",
+        "get_asset_list":           "Fetching asset inventory...",
+        "get_agent_events":         "Pulling security events...",
+        "deploy_agent":             "Deploying agent...",
+        "get_vps_summary":          "Gathering VPS summary...",
+        "get_daemon_threats":       "Pulling daemon threat reports...",
+        "execute_defensive_action": "Executing defensive action...",
+        "get_defensive_playbook":   "Loading defensive playbook...",
+        "get_action_history":       "Pulling action history...",
+        "get_local_events":         "Reading local event log...",
+    }
+
     async def _execute_tool(self, name: str, tool_input: Dict) -> Any:
         """Dispatch a tool call to the appropriate handler."""
+        self._broadcast_thinking(True, self._TOOL_LABELS.get(name, f"Running {name}..."))
         handlers = {
-            "get_system_status": self._tool_system_status,
-            "get_asset_list": self._tool_asset_list,
-            "get_agent_events": self._tool_agent_events,
-            "deploy_agent": self._tool_deploy_agent,
-            "get_vps_summary": self._tool_vps_summary,
+            "get_system_status":        self._tool_system_status,
+            "get_asset_list":           self._tool_asset_list,
+            "get_agent_events":         self._tool_agent_events,
+            "deploy_agent":             self._tool_deploy_agent,
+            "get_vps_summary":          self._tool_vps_summary,
+            "get_daemon_threats":       self._tool_daemon_threats,
+            "execute_defensive_action": self._tool_execute_defensive_action,
+            "get_defensive_playbook":   self._tool_get_defensive_playbook,
+            "get_action_history":       self._tool_get_action_history,
+            "get_local_events":         self._tool_local_events,
         }
 
         handler = handlers.get(name)
@@ -896,6 +1274,36 @@ class AIBridge:
         inv = get_inventory()
         asset = inv.get(asset_id)
         if not asset:
+            # Check if this is an enrolled AI agent (Tailscale / API-enrolled).
+            # Those aren't SSH-managed so AgentDeployer can't reach them, but
+            # the user can still deploy the citadel daemon via the one-liner.
+            try:
+                from ..api.agent_api_routes import get_agent_registry
+                enrolled = get_agent_registry().get_agent(asset_id)
+                if enrolled:
+                    ip = enrolled.get("ip_address") or "unknown"
+                    name = enrolled.get("name", asset_id)
+                    return {
+                        "action": "one_liner_required",
+                        "reason": (
+                            f"{name} is an API-enrolled AI agent, not an "
+                            "SSH-managed asset. To deploy the citadel daemon "
+                            "on it, use the one-liner setup script."
+                        ),
+                        "agent_name": name,
+                        "agent_ip": ip,
+                        "steps": [
+                            "1. Open the Assets tab and create a new invitation "
+                            "with type=vps (or workstation) for this machine.",
+                            "2. Copy the one-liner command from the invitation modal.",
+                            "3. SSH to the machine (or run directly on it) and "
+                            "paste the one-liner. It installs and starts the "
+                            "citadel daemon automatically.",
+                            "4. Verify with: systemctl status citadel-daemon",
+                        ],
+                    }
+            except Exception:
+                pass
             return {"error": f"Asset not found: {asset_id}"}
 
         if not asset.ssh_credential_id:
@@ -912,16 +1320,17 @@ class AIBridge:
 
     async def _tool_vps_summary(self, _input: Dict) -> Dict:
         db = self._get_shield_db()
-        agents = db.list_agents()
+        shield_agents = db.list_agents()
         all_threats = db.list_threats(status="open", limit=200)
 
-        # Group threats by agent
+        # Group threats by shield daemon agent
         per_agent = {}
-        for a in agents:
+        for a in shield_agents:
             agent_id = a["agent_id"]
             agent_threats = [t for t in all_threats if t.get("agent_id") == agent_id]
             per_agent[a.get("hostname", agent_id)] = {
                 "agent_id": agent_id,
+                "type": "shield_daemon",
                 "last_heartbeat": a.get("last_heartbeat", ""),
                 "version": a.get("version", ""),
                 "open_threats": len(agent_threats),
@@ -929,8 +1338,433 @@ class AIBridge:
                 "high": sum(1 for t in agent_threats if 7 <= t.get("severity", 0) < 9),
             }
 
+        # Also include enrolled AI agents (claude_code, forge, custom) from
+        # AgentRegistry.  These live in a separate store from shield daemons
+        # but represent real connected machines the user cares about.
+        enrolled: list = []
+        try:
+            from ..api.agent_api_routes import get_agent_registry
+            for agent in get_agent_registry().list_agents():
+                if agent.get("status") == "revoked":
+                    continue
+                enrolled.append({
+                    "agent_id": agent["agent_id"],
+                    "name": agent.get("name", agent["agent_id"]),
+                    "type": agent.get("agent_type", "enrolled"),
+                    "status": agent.get("status", "enrolled"),
+                    "ip": agent.get("ip_address") or "",
+                    "hostname": agent.get("hostname") or "",
+                })
+        except Exception:
+            pass
+
         return {
-            "total_agents": len(agents),
+            "total_agents": len(shield_agents) + len(enrolled),
+            "shield_daemon_agents": len(shield_agents),
+            "enrolled_ai_agents": len(enrolled),
             "total_open_threats": len(all_threats),
             "agents": per_agent,
+            "enrolled_agents": enrolled,
+        }
+
+    async def _tool_daemon_threats(self, tool_input: Dict) -> Dict:
+        """Return threat reports from enrolled citadel_daemon agents."""
+        limit = min(int(tool_input.get("limit", 30)), 100)
+        agent_id_filter = tool_input.get("agent_id", "")
+
+        try:
+            from ..core.audit_log import get_audit_logger, EventType
+            audit = get_audit_logger()
+            raw = audit.query_events(
+                event_types=[EventType.REMOTE_THREAT, EventType.REMOTE_PATCH],
+                limit=limit * 3,
+            )
+        except Exception as exc:
+            return {"error": str(exc), "threats": [], "total": 0}
+
+        threats = []
+        for entry in raw:
+            details = entry.get("details", {})
+            if details.get("source") != "citadel_daemon":
+                continue
+            if agent_id_filter and details.get("agent_id") != agent_id_filter:
+                continue
+            host = details.get("hostname", "unknown")
+            threats.append({
+                "hostname":    host,
+                "agent_id":    details.get("agent_id"),
+                "agent_name":  details.get("agent_name", host),
+                "type":        details.get("threat_type", entry.get("event_type")),
+                "severity":    entry.get("severity"),
+                "title":       entry.get("message", "").replace(f"[daemon:{host}] ", ""),
+                "timestamp":   entry.get("timestamp"),
+                "details":     {k: v for k, v in details.items()
+                                if k not in ("source", "agent_id", "agent_name",
+                                             "hostname", "threat_type", "severity",
+                                             "timestamp")},
+            })
+            if len(threats) >= limit:
+                break
+
+        # Per-host summary
+        by_host: Dict[str, Dict] = {}
+        for t in threats:
+            h = t["hostname"]
+            if h not in by_host:
+                by_host[h] = {
+                    "hostname":    h,
+                    "agent_id":    t.get("agent_id"),
+                    "agent_name":  t.get("agent_name", h),
+                    "total":       0,
+                    "critical":    0,
+                    "alert":       0,
+                    "investigate": 0,
+                    "info":        0,
+                }
+            by_host[h]["total"] += 1
+            sev = t.get("severity", "")
+            if sev in by_host[h]:
+                by_host[h][sev] += 1
+
+        if not threats:
+            return {
+                "total": 0,
+                "by_host": [],
+                "threats": [],
+                "note": "No daemon threats reported yet — daemon may be running clean "
+                        "or hasn't completed its first scan cycle.",
+            }
+
+        return {
+            "total":    len(threats),
+            "by_host":  list(by_host.values()),
+            "threats":  threats,
+        }
+
+    async def _tool_execute_defensive_action(self, tool_input: Dict) -> Dict:
+        """Queue a defensive action for one or more enrolled daemons."""
+        asset_id = tool_input.get("asset_id", "").strip()
+        assets_list = tool_input.get("assets")          # list or None
+        action_id = tool_input.get("action_id", "").strip()
+        parameters = tool_input.get("parameters") or {}
+        threat_id = tool_input.get("threat_id", "")
+        approval_override = tool_input.get("require_approval")
+
+        from ..agent.defensive_playbook import PLAYBOOK, is_allowed, requires_approval
+        from ..agent.actions_database import queue_action, init_db
+
+        if not is_allowed(action_id):
+            return {
+                "error": f"Unknown action '{action_id}'. "
+                         f"Available: {sorted(PLAYBOOK.keys())}",
+            }
+
+        entry = PLAYBOOK[action_id]
+        needs_approval = requires_approval(action_id, approval_override)
+
+        try:
+            from ..api.agent_api_routes import get_agent_registry
+            all_agents = get_agent_registry().list_agents()
+        except Exception:
+            all_agents = []
+
+        targets = self._resolve_targets(asset_id, assets_list, all_agents)
+        if not targets:
+            if not asset_id and not assets_list:
+                return {
+                    "error": "No target specified. Provide 'asset_id' for a single daemon "
+                             "or 'assets' (e.g. [\"all\"]) for multiple daemons.",
+                }
+            return {
+                "error": f"No enrolled daemon matched {asset_id or assets_list!r}. "
+                         "Use get_vps_summary() to list enrolled agents.",
+            }
+
+        init_db()
+
+        if len(targets) == 1:
+            agent_id, agent_name = targets[0]
+            return await self._queue_single_action(
+                agent_id, agent_name, action_id, entry, parameters, needs_approval, threat_id,
+            )
+
+        return await self._queue_distributed_action(
+            targets, action_id, entry, parameters, needs_approval, threat_id,
+        )
+
+    def _resolve_targets(
+        self, asset_id: str, assets_list, all_agents: List[Dict]
+    ) -> List[tuple]:
+        """Return [(agent_id, agent_name)] for the requested targets.
+
+        Priority: assets_list > asset_id.
+        Only daemon agents (vps/cloud/workstation) are valid targets.
+        """
+        daemon_agents = [
+            a for a in all_agents
+            if a.get("agent_type") in ("vps", "cloud", "workstation")
+            and a.get("status") != "revoked"
+        ]
+
+        if assets_list is not None:
+            # Normalise: accept string "all" or list ["all"]
+            if assets_list == "all" or assets_list == ["all"]:
+                return [
+                    (a["agent_id"], a.get("name", a["agent_id"]))
+                    for a in daemon_agents
+                ]
+            seen: set = set()
+            targets = []
+            for identifier in assets_list:
+                identifier = str(identifier).strip()
+                for a in daemon_agents:
+                    if (
+                        a.get("agent_id") == identifier
+                        or a.get("hostname", "").lower() == identifier.lower()
+                        or a.get("name", "").lower() == identifier.lower()
+                    ):
+                        aid = a["agent_id"]
+                        if aid not in seen:
+                            seen.add(aid)
+                            targets.append((aid, a.get("name", identifier)))
+                        break
+            return targets
+
+        if asset_id:
+            for a in daemon_agents:
+                if (
+                    a.get("agent_id") == asset_id
+                    or a.get("hostname", "").lower() == asset_id.lower()
+                    or a.get("name", "").lower() == asset_id.lower()
+                ):
+                    return [(a["agent_id"], a.get("name", asset_id))]
+            return []  # No match — do not fabricate a target for an unknown ID
+
+        return []
+
+    async def _queue_single_action(
+        self, agent_id: str, agent_name: str, action_id: str,
+        entry: Dict, parameters: Dict, needs_approval: bool, threat_id: str,
+    ) -> Dict:
+        """Queue action on one agent and return standard response dict."""
+        from ..agent.actions_database import queue_action
+        uuid = queue_action(
+            agent_id=agent_id,
+            action_id=action_id,
+            parameters=parameters,
+            require_approval=needs_approval,
+            risk_level=entry.get("risk", "low"),
+            description=entry.get("description", action_id),
+            threat_id=threat_id,
+        )
+        if needs_approval:
+            await self._send_approval_request(uuid, action_id, entry, parameters, agent_name)
+            return {
+                "status": "pending_approval",
+                "action_uuid": uuid,
+                "agent": agent_name,
+                "message": (
+                    "Approval request sent. The user must approve before the command "
+                    "is delivered to the daemon."
+                ),
+            }
+        return {
+            "status": "queued",
+            "action_uuid": uuid,
+            "agent": agent_name,
+            "action_id": action_id,
+            "message": (
+                "Command queued. It will be delivered on the daemon's next heartbeat "
+                "(up to 5 minutes). Use get_action_history() to check the result."
+            ),
+        }
+
+    async def _queue_distributed_action(
+        self, targets: List[tuple], action_id: str, entry: Dict,
+        parameters: Dict, needs_approval: bool, threat_id: str,
+    ) -> Dict:
+        """Queue the same action on multiple agents and return a summary."""
+        from ..agent.actions_database import queue_action
+        results = []
+        for agent_id, agent_name in targets:
+            uuid = queue_action(
+                agent_id=agent_id,
+                action_id=action_id,
+                parameters=parameters,
+                require_approval=needs_approval,
+                risk_level=entry.get("risk", "low"),
+                description=entry.get("description", action_id),
+                threat_id=threat_id,
+            )
+            if needs_approval:
+                await self._send_approval_request(
+                    uuid, action_id, entry, parameters, agent_name,
+                )
+            results.append({
+                "agent":       agent_name,
+                "agent_id":    agent_id,
+                "action_uuid": uuid,
+                "status":      "pending_approval" if needs_approval else "queued",
+            })
+
+        deliver_note = (
+            "Approval cards sent — one per agent. Approve each to authorize execution."
+            if needs_approval else
+            "Commands will be delivered to each daemon on its next heartbeat (up to 5 min)."
+        )
+        return {
+            "status":       "distributed",
+            "action_id":    action_id,
+            "target_count": len(targets),
+            "actions":      results,
+            "message":      f"Queued {action_id} on {len(targets)} daemon(s). {deliver_note}",
+        }
+
+    async def _send_approval_request(
+        self,
+        action_uuid: str,
+        action_id: str,
+        playbook_entry: Dict,
+        parameters: Dict,
+        agent_name: str,
+    ) -> None:
+        """Broadcast an approval-request message into the chat sidebar."""
+        try:
+            from ..chat.message import ChatMessage, MessageType, PARTICIPANT_CITADEL
+            desc = playbook_entry.get("description", action_id)
+            risk = playbook_entry.get("risk", "medium").upper()
+            param_lines = "\n".join(
+                f"  - **{k}**: `{v}`" for k, v in parameters.items()
+            ) or "  *(no parameters)*"
+            text = (
+                f"**Action Approval Required** ({risk} RISK)\n\n"
+                f"**Action:** {action_id}\n"
+                f"**Target:** {agent_name}\n"
+                f"**Description:** {desc}\n\n"
+                f"**Parameters:**\n{param_lines}\n\n"
+                f"*This action requires your approval before it is sent to the daemon.*"
+            )
+            msg = ChatMessage(
+                from_id=PARTICIPANT_CITADEL,
+                msg_type=MessageType.RESPONSE,
+                payload={
+                    "text": text,
+                    "action_type": "approval_request",
+                    "action_uuid": action_uuid,
+                    "action_id": action_id,
+                    "agent_name": agent_name,
+                },
+            )
+            await self._chat.send(msg)
+        except Exception:
+            logger.exception("Failed to send approval request message")
+
+    async def _tool_get_defensive_playbook(self, tool_input: Dict) -> Dict:
+        """Return the defensive action playbook."""
+        from ..agent.defensive_playbook import PLAYBOOK
+        action_id = tool_input.get("action_id", "").strip()
+        if action_id:
+            entry = PLAYBOOK.get(action_id)
+            if not entry:
+                return {"error": f"Unknown action '{action_id}'"}
+            return {action_id: entry}
+        return {
+            "playbook": PLAYBOOK,
+            "summary": {
+                "auto_execute": [k for k, v in PLAYBOOK.items() if not v["require_approval"]],
+                "require_approval": [k for k, v in PLAYBOOK.items() if v["require_approval"]],
+            },
+        }
+
+    async def _tool_get_action_history(self, tool_input: Dict) -> Dict:
+        """Return the audit trail of defensive actions."""
+        from ..agent.actions_database import list_actions, init_db
+        init_db()
+        agent_id = tool_input.get("asset_id", "")
+        action_id_filter = tool_input.get("action_id", "")
+        status_filter = tool_input.get("status", "")
+        limit = min(int(tool_input.get("limit", 20)), 100)
+
+        actions = list_actions(
+            agent_id=agent_id,
+            action_id=action_id_filter,
+            status=status_filter,
+            limit=limit,
+        )
+        summary: Dict[str, int] = {}
+        for a in actions:
+            s = a.get("status", "unknown")
+            summary[s] = summary.get(s, 0) + 1
+
+        return {
+            "total": len(actions),
+            "status_summary": summary,
+            "actions": [
+                {
+                    "action_uuid": a["action_uuid"],
+                    "agent_id":    a["agent_id"],
+                    "action_id":   a["action_id"],
+                    "status":      a["status"],
+                    "risk":        a["risk_level"],
+                    "created_at":  a["created_at"],
+                    "executed_at": a.get("executed_at"),
+                    "result":      a.get("result"),
+                }
+                for a in actions
+            ],
+        }
+
+    async def _tool_local_events(self, tool_input: Dict) -> Dict:
+        """Return recent local Guardian events from the audit log."""
+        limit = min(int(tool_input.get("limit", 20)), 100)
+        severity_filter = tool_input.get("severity", "").lower()
+
+        # Severity ordering for minimum-severity filtering
+        _SEV_ORDER = {"info": 0, "warning": 1, "alert": 2, "critical": 3}
+        min_sev = _SEV_ORDER.get(severity_filter, -1)
+
+        try:
+            from ..core.audit_log import get_audit_logger, EventType
+            audit = get_audit_logger()
+            # Query guardian-related event types (file + process sensor events)
+            guardian_types = [
+                EventType.FILE_CREATED,
+                EventType.FILE_MODIFIED,
+                EventType.FILE_DELETED,
+                EventType.FILE_QUARANTINED,
+                EventType.PROCESS_STARTED,
+                EventType.PROCESS_KILLED,
+                EventType.PROCESS_SUSPICIOUS,
+            ]
+            raw_events = audit.query_events(event_types=guardian_types, limit=limit * 3)
+        except Exception as exc:
+            logger.warning("get_local_events: audit query failed: %s", exc)
+            return {"error": str(exc), "events": []}
+
+        events_out = []
+        for ev in raw_events:
+            sev = ev.get("severity", "info").lower()
+            if min_sev >= 0 and _SEV_ORDER.get(sev, 0) < min_sev:
+                continue
+
+            details = ev.get("details", {}) or {}
+            events_out.append({
+                "timestamp": ev.get("timestamp", ""),
+                "event_type": ev.get("event_type", ""),
+                "severity": sev,
+                "message": ev.get("message", ""),
+                "file_path": (
+                    details.get("file_path")
+                    or details.get("path")
+                    or details.get("file")
+                    or ""
+                ),
+                "details": details,
+            })
+            if len(events_out) >= limit:
+                break
+
+        return {
+            "total": len(events_out),
+            "events": events_out,
         }

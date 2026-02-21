@@ -315,7 +315,9 @@ async def startup_event():
     app.state.ai_bridge = ai_bridge
     dashboard_services._ai_bridge = ai_bridge
 
-    # Send a welcome message so the sidebar isn't empty on first run
+    # Send a welcome message so the sidebar isn't empty on first run.
+    # Purge any previous startup banners first so restarts don't accumulate copies.
+    chat_mgr.store.delete_matching_payload("Citadel Archer online")
     if ai_bridge.enabled:
         backend = ai_bridge.active_backend
         backend_msg = f"AI assistant active (backend: {backend})."
@@ -997,29 +999,46 @@ async def api_info():
 
 
 def _calculate_threat_level() -> str:
-    """Calculate current threat level from recent audit events.
+    """Calculate current threat level from recent audit events and VPS agent threats.
 
     Returns 'green', 'yellow', or 'red'.
     """
+    critical_count = 0
+    alert_count = 0
+
+    # Local Guardian events (last hour from audit log)
     try:
-        logger = get_audit_logger()
-        # Look at events from the last hour
+        audit = get_audit_logger()
         one_hour_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
-        recent = logger.query_events(start_time=one_hour_ago, limit=200)
-
-        critical_count = sum(1 for e in recent if e.get("severity") == "critical")
-        alert_count = sum(1 for e in recent if e.get("severity") == "alert")
-
-        if critical_count >= 1:
-            return "red"
-        if alert_count >= 3:
-            return "red"
-        if alert_count >= 1:
-            return "yellow"
-        return "green"
+        recent = audit.query_events(start_time=one_hour_ago, limit=200)
+        critical_count += sum(1 for e in recent if e.get("severity") == "critical")
+        alert_count += sum(1 for e in recent if e.get("severity") == "alert")
     except Exception:
-        # On error, assume elevated risk rather than falsely reporting green
+        pass
+
+    # Open threats from VPS Shield agents (reported to RemoteShieldDatabase,
+    # not to the local audit log — without this check, VPS critical threats
+    # are invisible to the dashboard threat level).
+    try:
+        from ..remote.shield_database import RemoteShieldDatabase
+        sdb = RemoteShieldDatabase()
+        open_threats = sdb.list_threats(status="open", limit=100)
+        for t in open_threats:
+            sev = t.get("severity", 0)
+            if sev >= 9:
+                critical_count += 1
+            elif sev >= 7:
+                alert_count += 1
+    except Exception:
+        pass
+
+    if critical_count >= 1:
+        return "red"
+    if alert_count >= 3:
+        return "red"
+    if alert_count >= 1:
         return "yellow"
+    return "green"
 
 
 def _format_uptime() -> str:

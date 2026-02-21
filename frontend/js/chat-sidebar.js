@@ -43,23 +43,52 @@ let _collapsed = false;
 let _messages = [];
 let _unreadCount = 0;
 let _wsUnsub = null;
+let _wsThinkingUnsub = null;
 let _initialized = false;
 
 // ── DOM references ─────────────────────────────────────────────────
 
-let $sidebar, $messageList, $input, $sendBtn, $toggleBtn, $unreadBadge, $header;
+let $sidebar, $messageList, $input, $sendBtn, $toggleBtn, $unreadBadge, $header,
+    $thinkingIndicator, $thinkingDetail;
 
 function cacheDom() {
-    $sidebar     = document.getElementById('chat-sidebar');
-    $messageList = document.getElementById('chat-message-list');
-    $input       = document.getElementById('chat-input');
-    $sendBtn     = document.getElementById('chat-send-btn');
-    $toggleBtn   = document.getElementById('chat-toggle-btn');
-    $unreadBadge = document.getElementById('chat-unread-badge');
-    $header      = document.getElementById('chat-sidebar-header');
+    $sidebar           = document.getElementById('chat-sidebar');
+    $messageList       = document.getElementById('chat-message-list');
+    $input             = document.getElementById('chat-input');
+    $sendBtn           = document.getElementById('chat-send-btn');
+    $toggleBtn         = document.getElementById('chat-toggle-btn');
+    $unreadBadge       = document.getElementById('chat-unread-badge');
+    $header            = document.getElementById('chat-sidebar-header');
+    $thinkingIndicator = document.getElementById('chat-thinking-indicator');
+    $thinkingDetail    = document.getElementById('chat-thinking-detail');
 }
 
 // ── Rendering ──────────────────────────────────────────────────────
+
+/**
+ * Convert markdown text to HTML, handling Mermaid fenced blocks specially.
+ * Mermaid blocks become <div class="mermaid"> containers; mermaid.run()
+ * is called after DOM insertion to render them asynchronously.
+ */
+function renderWithMermaid(rawText) {
+    // Replace ```mermaid ... ``` blocks with mermaid div placeholders
+    // before marked processes the text (marked would turn them into <pre><code>).
+    const MERMAID_RE = /```mermaid\s*\n([\s\S]*?)```/g;
+    let hasMermaid = false;
+    const withPlaceholders = rawText.replace(MERMAID_RE, (_match, diagram) => {
+        hasMermaid = true;
+        return `<div class="mermaid">${escapeHtml(diagram.trim())}</div>`;
+    });
+
+    const html = marked.parse(withPlaceholders, { breaks: true, gfm: true });
+
+    if (hasMermaid && typeof mermaid !== 'undefined') {
+        // Schedule rendering after the element is appended to the DOM
+        setTimeout(() => mermaid.run(), 50);
+    }
+
+    return html;
+}
 
 function renderMessage(msg) {
     const div = document.createElement('div');
@@ -71,7 +100,14 @@ function renderMessage(msg) {
     const fromColor = getParticipantColor(msg.from_id);
     const typeColor = TYPE_COLORS[msg.msg_type] || '#E5E7EB';
     const time = formatTimestamp(msg.timestamp);
-    const text = escapeHtml(msg.payload?.text || JSON.stringify(msg.payload));
+    const rawText = msg.payload?.text || JSON.stringify(msg.payload);
+    // Render markdown when available (marked.js loaded in index.html),
+    // fall back to plain escaped text so the sidebar degrades gracefully.
+    // Mermaid fenced code blocks are replaced with diagram containers before
+    // marked processes the rest; mermaid.run() renders them asynchronously.
+    const text = (typeof marked !== 'undefined')
+        ? renderWithMermaid(rawText)
+        : escapeHtml(rawText);
 
     // Check for copy-able content (install commands)
     const hasCopyable = msg.payload?.copyable;
@@ -95,6 +131,66 @@ function renderMessage(msg) {
             ` : ''}
         </div>
     `;
+
+    // Approval request: render Approve / Deny buttons
+    if (msg.payload?.action_type === 'approval_request') {
+        const actionUuid = msg.payload?.action_uuid || '';
+        const actionId   = msg.payload?.action_id   || '';
+        const agentName  = msg.payload?.agent_name  || '';
+
+        const bar = document.createElement('div');
+        bar.className = 'msg-action-bar';
+        bar.dataset.uuid = actionUuid;
+        bar.innerHTML = `
+            <span class="action-bar-label">
+                Action: <strong>${escapeHtml(actionId)}</strong>
+                ${agentName ? `on <strong>${escapeHtml(agentName)}</strong>` : ''}
+            </span>
+            <div class="action-bar-btns">
+                <button class="btn-action-approve" data-uuid="${escapeAttr(actionUuid)}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    Approve
+                </button>
+                <button class="btn-action-deny" data-uuid="${escapeAttr(actionUuid)}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    Deny
+                </button>
+            </div>
+        `;
+
+        const approveBtn = bar.querySelector('.btn-action-approve');
+        const denyBtn    = bar.querySelector('.btn-action-deny');
+
+        approveBtn.addEventListener('click', async () => {
+            approveBtn.disabled = true;
+            denyBtn.disabled    = true;
+            try {
+                const resp = await apiClient.post(`/api/ext-agents/actions/${actionUuid}/approve`, {});
+                if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
+                bar.innerHTML = '<span class="action-result action-approved">Approved — queued for next heartbeat</span>';
+            } catch (e) {
+                approveBtn.disabled = false;
+                denyBtn.disabled    = false;
+                bar.insertAdjacentHTML('beforeend', `<span class="action-error">Error: ${escapeHtml(String(e))}</span>`);
+            }
+        });
+
+        denyBtn.addEventListener('click', async () => {
+            approveBtn.disabled = true;
+            denyBtn.disabled    = true;
+            try {
+                const resp = await apiClient.post(`/api/ext-agents/actions/${actionUuid}/deny`, {});
+                if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
+                bar.innerHTML = '<span class="action-result action-denied">Denied</span>';
+            } catch (e) {
+                approveBtn.disabled = false;
+                denyBtn.disabled    = false;
+                bar.insertAdjacentHTML('beforeend', `<span class="action-error">Error: ${escapeHtml(String(e))}</span>`);
+            }
+        });
+
+        div.querySelector('.chat-msg-body').appendChild(bar);
+    }
 
     return div;
 }
@@ -146,6 +242,16 @@ function updateUnreadBadge() {
     }
 }
 
+function showThinking(active, detail = 'Analyzing...') {
+    if (!$thinkingIndicator) return;
+    if (active) {
+        if ($thinkingDetail) $thinkingDetail.textContent = detail;
+        $thinkingIndicator.hidden = false;
+    } else {
+        $thinkingIndicator.hidden = true;
+    }
+}
+
 // ── Collapse / Expand ──────────────────────────────────────────────
 
 function setCollapsed(collapsed) {
@@ -158,8 +264,11 @@ function setCollapsed(collapsed) {
         $sidebar.classList.remove('chat-collapsed');
         _unreadCount = 0;
         updateUnreadBadge();
-        // Re-scroll after expand
-        requestAnimationFrame(scrollToBottom);
+        // Re-scroll and re-measure textarea after expand (input was display:none)
+        requestAnimationFrame(() => {
+            scrollToBottom();
+            autoResizeInput();
+        });
     }
 
     try {
@@ -175,6 +284,19 @@ function loadCollapsedState() {
     }
 }
 
+// ── Textarea auto-resize ───────────────────────────────────────────
+
+function autoResizeInput() {
+    if (!$input) return;
+    // Collapse to auto so scrollHeight reflects actual content height
+    $input.style.height = 'auto';
+    const maxHeight = 87; // matches CSS max-height (5 lines × ~15px + 12px padding)
+    const newHeight = Math.min($input.scrollHeight, maxHeight);
+    $input.style.height = newHeight + 'px';
+    // Use 'scroll' (not 'auto') to avoid scrollbar-flicker in the narrow sidebar
+    $input.style.overflowY = $input.scrollHeight > maxHeight ? 'scroll' : 'hidden';
+}
+
 // ── Sending messages ───────────────────────────────────────────────
 
 async function sendMessage() {
@@ -183,10 +305,12 @@ async function sendMessage() {
     if (!text) return;
 
     $input.value = '';
+    autoResizeInput(); // reset height back to single line
     $input.focus();
 
     try {
-        await apiClient.post('/api/chat/send', { text });
+        const resp = await apiClient.post('/api/chat/send', { text });
+        if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
     } catch (err) {
         console.error('[chat] Send failed:', err);
         // Show error inline
@@ -204,7 +328,15 @@ async function sendMessage() {
 // ── WebSocket ──────────────────────────────────────────────────────
 
 function onWsMessage(data) {
+    if (data.type === 'chat_thinking') {
+        showThinking(data.active, data.detail || 'Analyzing...');
+        return;
+    }
     if (data.type === 'chat_message' && data.message) {
+        // Clear thinking indicator when a real response arrives
+        if (data.message.from_id === 'assistant') {
+            showThinking(false);
+        }
         appendMessage(data.message);
     }
 }
@@ -299,11 +431,12 @@ async function init() {
     }
     if ($input) {
         $input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
                 e.preventDefault();
                 sendMessage();
             }
         });
+        $input.addEventListener('input', autoResizeInput);
     }
     if ($toggleBtn) {
         $toggleBtn.addEventListener('click', () => setCollapsed(!_collapsed));
@@ -314,15 +447,19 @@ async function init() {
         $messageList.addEventListener('click', handleCopyClick);
     }
 
-    // Subscribe to WebSocket for real-time messages
+    // Subscribe to WebSocket for real-time messages and thinking indicator
     _wsUnsub = wsHandler.subscribe('chat_message', onWsMessage);
+    _wsThinkingUnsub = wsHandler.subscribe('chat_thinking', onWsMessage);
 
     // Load message history
     try {
-        const res = await apiClient.get('/api/chat/messages?limit=50');
-        if (res && res.messages) {
-            _messages = res.messages;
-            renderAllMessages();
+        const resp = await apiClient.get('/api/chat/messages?limit=50');
+        if (resp && resp.ok) {
+            const res = await resp.json();
+            if (res && res.messages) {
+                _messages = res.messages;
+                renderAllMessages();
+            }
         }
     } catch (err) {
         console.warn('[chat] Failed to load history:', err);
@@ -336,6 +473,11 @@ function destroy() {
         _wsUnsub();
         _wsUnsub = null;
     }
+    if (_wsThinkingUnsub) {
+        _wsThinkingUnsub();
+        _wsThinkingUnsub = null;
+    }
+    showThinking(false);
     _initialized = false;
     _messages = [];
     _unreadCount = 0;

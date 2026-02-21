@@ -37,7 +37,9 @@ class TestToolDefinitions:
     def test_all_tools_present(self):
         names = {t["name"] for t in TOOLS}
         expected = {"get_system_status", "get_asset_list", "get_agent_events",
-                    "deploy_agent", "get_vps_summary"}
+                    "deploy_agent", "get_vps_summary", "get_daemon_threats",
+                    "get_local_events", "execute_defensive_action",
+                    "get_defensive_playbook", "get_action_history"}
         assert expected == names
 
 

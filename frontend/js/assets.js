@@ -309,7 +309,10 @@ function openSimplifiedDetail(assetId) {
     let iconColor = '#00cc66';
     let statusMsg = 'This device is protected and running normally.';
     let actionMsg = 'No action needed.';
-    if (asset.status === 'offline') {
+    if (asset.asset_source === 'enrolled') {
+        iconColor = '#00D9FF'; statusMsg = 'This agent is enrolled and reporting to Citadel.';
+        actionMsg = 'No action needed. The agent will send security findings automatically.';
+    } else if (asset.status === 'offline') {
         iconColor = '#6B7280'; statusMsg = 'This device is currently offline.';
         actionMsg = 'Check that the device is powered on and connected to the internet.';
     } else if (threat === 'critical') {
@@ -538,6 +541,7 @@ let _onelinerCommand = '';
 let _inviteStatusInterval = null;
 let _copyFeedbackTimer = null;
 let _onelinerFeedbackTimer = null;
+let _detectedCoordinatorUrl = '';
 
 function openInviteModal() {
     _invitationString = '';
@@ -559,6 +563,11 @@ function openInviteModal() {
     if (recipientName) recipientName.value = '';
     const recipientEmail = document.getElementById('invite-recipient-email');
     if (recipientEmail) recipientEmail.value = '';
+    // Pre-populate coordinator URL with server's detected external IP
+    const coordInput = document.getElementById('invite-coordinator-url');
+    if (coordInput && !coordInput.value && _detectedCoordinatorUrl) {
+        coordInput.value = _detectedCoordinatorUrl;
+    }
     const errEl = document.getElementById('invite-generate-error');
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
     // Reset status badge
@@ -593,6 +602,18 @@ async function handleGenerateInvitation() {
     const coordinatorUrl = document.getElementById('invite-coordinator-url')?.value.trim() || '';
     const recipientName = document.getElementById('invite-recipient-name')?.value.trim() || '';
     const recipientEmail = document.getElementById('invite-recipient-email')?.value.trim() || '';
+
+    // Linux Shield agents need a reachable coordinator URL — the local origin is never correct
+    const isLinuxShield = agentType === 'vps' || agentType === 'cloud';
+    const resolvedCoordinatorUrl = coordinatorUrl || _detectedCoordinatorUrl;
+    if (isLinuxShield && !resolvedCoordinatorUrl) {
+        if (errEl) {
+            errEl.textContent = 'Enter the coordinator URL (your Tailscale IP, e.g. http://100.68.75.8:8000)';
+            errEl.style.display = 'block';
+        }
+        return;
+    }
+
     if (genBtn) genBtn.disabled = true;
     if (errEl) errEl.style.display = 'none';
 
@@ -689,7 +710,7 @@ async function handleGenerateInvitation() {
         const onelinerSection = document.getElementById('invite-oneliner-section');
         const onelinerBox = document.getElementById('invite-oneliner-box');
         if (onelinerSection && onelinerBox && isLinuxShield) {
-            const baseUrl = coordinatorUrl || window.location.origin;
+            const baseUrl = resolvedCoordinatorUrl;
             _onelinerCommand = `curl -fsSL ${baseUrl}/api/ext-agents/setup.sh | sudo bash -s -- ${_invitationString} ${baseUrl}`;
             onelinerBox.textContent = _onelinerCommand;
             onelinerSection.style.display = 'block';
@@ -860,6 +881,7 @@ function openDetail(assetId) {
 
     const threat = assetThreatLevel(asset);
     const eventCount = asset.event_count ?? 0;
+    const isEnrolled = asset.asset_source === 'enrolled';
 
     content.innerHTML = `
         <!-- Asset header -->
@@ -888,6 +910,16 @@ function openDetail(assetId) {
                 <p class="text-xs text-gray-500 mb-1">Hostname</p>
                 <p class="text-sm text-gray-300">${escapeHtml(asset.hostname || '—')}</p>
             </div>
+            ${isEnrolled ? `
+            <div>
+                <p class="text-xs text-gray-500 mb-1">Agent Type</p>
+                <p class="text-sm text-gray-300">${escapeHtml(asset.agent_type || '—')}</p>
+            </div>
+            <div>
+                <p class="text-xs text-gray-500 mb-1">Source</p>
+                <p class="text-sm text-neon-blue">Enrolled Agent</p>
+            </div>
+            ` : `
             <div>
                 <p class="text-xs text-gray-500 mb-1">IP Address</p>
                 <p class="text-sm text-gray-300 font-mono">${escapeHtml(asset.ip_address || '—')}</p>
@@ -900,6 +932,7 @@ function openDetail(assetId) {
                 <p class="text-xs text-gray-500 mb-1">SSH</p>
                 <p class="text-sm text-gray-300 font-mono">${escapeHtml(asset.ssh_username || 'root')}@:${asset.ssh_port || 22}</p>
             </div>
+            `}
             <div>
                 <p class="text-xs text-gray-500 mb-1">Guardian</p>
                 <p class="text-sm ${asset.guardian_active ? 'text-green-400' : 'text-gray-500'}">${asset.guardian_active ? 'Active' : 'Inactive'}</p>
@@ -939,18 +972,22 @@ function openDetail(assetId) {
                 <a href="timeline.html" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-neon-blue/10 border border-neon-blue/20 text-neon-blue hover:bg-neon-blue/20 transition-colors">
                     View Timeline
                 </a>
+                ${isEnrolled ? '' : `
                 <button id="test-conn-btn" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500/20 transition-colors" onclick="window._testConnectionFromDetail && window._testConnectionFromDetail('${escapeHtml(asset.asset_id)}')">
                     Test Connection
                 </button>
                 <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-neon-blue/10 border border-neon-blue/20 text-neon-blue hover:bg-neon-blue/20 transition-colors" onclick="window._editAssetFromDetail && window._editAssetFromDetail('${escapeHtml(asset.asset_id)}')">
                     Edit Asset
                 </button>
+                `}
                 <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors" onclick="window._deleteAssetFromDetail && window._deleteAssetFromDetail('${escapeHtml(asset.asset_id)}')">
-                    Delete Asset
+                    ${isEnrolled ? 'Revoke Agent' : 'Delete Asset'}
                 </button>
+                ${isEnrolled ? '' : `
                 <button id="onboard-btn" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/10 border border-purple-500/20 text-purple-400 hover:bg-purple-500/20 transition-colors" onclick="window._onboardAssetFromDetail && window._onboardAssetFromDetail('${escapeHtml(asset.asset_id)}')">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:3px;"><path d="M12 5v14"/><path d="M5 12h14"/><circle cx="12" cy="12" r="10"/></svg>Onboard Node
                 </button>
+                `}
             </div>
         </div>
 
@@ -1367,6 +1404,12 @@ async function init() {
     } catch (err) {
         console.error('API client init failed:', err);
     }
+
+    // Pre-fetch coordinator URL so one-liner is correct even if user opens
+    // modal immediately (eliminates race condition from on-modal-open fetch)
+    apiClient.get('/api/ext-agents/coordinator-url').then(data => {
+        if (data?.coordinator_url) _detectedCoordinatorUrl = data.coordinator_url;
+    }).catch(() => {});
 
     await refreshData();
 
