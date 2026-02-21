@@ -177,6 +177,16 @@ class GuardianEscalation:
 
     async def _flush_batch(self):
         """Send one summary message for all buffered events."""
+        # Check if Guardian messages are muted (Do Not Disturb mode)
+        try:
+            from ..core.user_preferences import get_user_preferences
+            if get_user_preferences().get("guardian_muted", "false") == "true":
+                with self._buffer_lock:
+                    self._buffer.clear()
+                return
+        except Exception:
+            pass  # Preferences unavailable — proceed normally
+
         # Reset rate limit counter if the hour window has elapsed
         now = time.monotonic()
         if now - self._hour_start >= RATE_LIMIT_WINDOW:

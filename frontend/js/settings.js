@@ -104,6 +104,7 @@ class SettingsManager {
 
         // Load current mode and highlight correct button
         this.loadCurrentMode();
+        this.loadDndState();
     }
 
     closeGeneralSettings() {
@@ -111,6 +112,69 @@ class SettingsManager {
         const panel = document.getElementById('settings-general-panel');
         if (panel) panel.style.display = 'none';
         if (menuList) menuList.style.display = '';
+    }
+
+    async loadDndState() {
+        // Read from localStorage instantly, then confirm with API
+        const cached = localStorage.getItem('citadel_guardian_muted') === 'true';
+        this._applyDndUI(cached);
+
+        try {
+            const resp = await window.apiClient?.get('/api/preferences/guardian_muted');
+            if (resp && resp.ok) {
+                const data = await resp.json();
+                const muted = data.value === 'true';
+                this._applyDndUI(muted);
+                localStorage.setItem('citadel_guardian_muted', String(muted));
+            }
+        } catch (_) {}
+    }
+
+    async toggleDnd() {
+        const current = localStorage.getItem('citadel_guardian_muted') === 'true';
+        const next = !current;
+        this._applyDndUI(next);
+        localStorage.setItem('citadel_guardian_muted', String(next));
+
+        try {
+            await window.apiClient?.put('/api/preferences/guardian_muted', { value: String(next) });
+        } catch (_) {}
+    }
+
+    _applyDndUI(muted) {
+        const btn = document.getElementById('dnd-toggle-btn');
+        const label = document.getElementById('dnd-label');
+        if (!btn || !label) return;
+
+        if (muted) {
+            btn.style.border = '1px solid rgba(255,153,0,0.4)';
+            btn.style.background = 'rgba(255,153,0,0.1)';
+            btn.style.color = '#ff9900';
+            label.textContent = 'Do Not Disturb: ON — click to resume';
+        } else {
+            btn.style.border = '1px solid rgba(255,255,255,0.1)';
+            btn.style.background = 'transparent';
+            btn.style.color = '#9CA3AF';
+            label.textContent = 'Enable Do Not Disturb';
+        }
+
+        // Update header indicator
+        this._updateHeaderDndBadge(muted);
+    }
+
+    _updateHeaderDndBadge(muted) {
+        let badge = document.getElementById('dnd-header-badge');
+        if (muted && !badge) {
+            badge = document.createElement('span');
+            badge.id = 'dnd-header-badge';
+            badge.title = 'Do Not Disturb active — Guardian messages paused';
+            badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(255,153,0,0.15);color:#ff9900;border:1px solid rgba(255,153,0,0.3);margin-left:8px;';
+            badge.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><line x1="1" y1="1" x2="23" y2="23"/></svg>DND';
+            const header = document.querySelector('.app-header') || document.querySelector('header');
+            if (header) header.appendChild(badge);
+        } else if (!muted && badge) {
+            badge.remove();
+        }
     }
 
     async loadCurrentMode() {
