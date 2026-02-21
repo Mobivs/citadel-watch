@@ -571,22 +571,24 @@ class AIBridge:
         if msg.from_id == PARTICIPANT_USER and msg.msg_type == MessageType.TEXT:
             needs_ai = True
 
+        # Check Do Not Disturb once — applies to all non-user triggers
+        try:
+            from ..core.user_preferences import get_user_preferences
+            _dnd_muted = get_user_preferences().get("guardian_muted", "false") == "true"
+        except Exception:
+            _dnd_muted = False
+
         # 2. Agent escalation event (critical/high posted by poller)
-        # Skip if Guardian messages are muted (Do Not Disturb mode)
         if msg.from_id == PARTICIPANT_CITADEL and msg.msg_type == MessageType.EVENT:
-            try:
-                from ..core.user_preferences import get_user_preferences
-                muted = get_user_preferences().get("guardian_muted", "false") == "true"
-            except Exception:
-                muted = False
-            if not muted:
+            if not _dnd_muted:
                 text = (msg.text or "").lower()
                 if "critical" in text or "high" in text:
                     needs_ai = True
 
         # 3. External AI agent sent a text message (Trigger 1b)
         if msg.from_id.startswith("ext-agent:") and msg.msg_type == MessageType.TEXT:
-            needs_ai = True
+            if not _dnd_muted:
+                needs_ai = True
 
         if not needs_ai:
             return
