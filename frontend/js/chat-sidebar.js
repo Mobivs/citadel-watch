@@ -101,6 +101,12 @@ function renderMessage(msg) {
     const typeColor = TYPE_COLORS[msg.msg_type] || '#E5E7EB';
     const time = formatTimestamp(msg.timestamp);
     const rawText = msg.payload?.text || JSON.stringify(msg.payload);
+
+    // Model name + token count badge for AI assistant messages
+    const modelName   = (msg.from_id === 'assistant') ? formatModel(msg.payload?.model) : '';
+    const tokenCount  = (msg.from_id === 'assistant') ? formatTokens(msg.payload?.input_tokens) : '';
+    const modelSuffix = modelName ? ` <span class="chat-msg-model">(${escapeHtml(modelName)})</span>` : '';
+    const tokenBadge  = tokenCount ? `<span class="chat-msg-tokens">${escapeHtml(tokenCount)}</span>` : '';
     // Render markdown when available (marked.js loaded in index.html),
     // fall back to plain escaped text so the sidebar degrades gracefully.
     // Mermaid fenced code blocks are replaced with diagram containers before
@@ -115,7 +121,8 @@ function renderMessage(msg) {
 
     div.innerHTML = `
         <div class="chat-msg-header">
-            <span class="chat-msg-from" style="color: ${fromColor}">${fromLabel}</span>
+            <span class="chat-msg-from" style="color: ${fromColor}">${fromLabel}${modelSuffix}</span>
+            ${tokenBadge}
             <span class="chat-msg-time">${time}</span>
         </div>
         <div class="chat-msg-body" style="border-left: 2px solid ${typeColor}">
@@ -167,7 +174,33 @@ function renderMessage(msg) {
             try {
                 const resp = await apiClient.post(`/api/ext-agents/actions/${actionUuid}/approve`, {});
                 if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
-                bar.innerHTML = '<span class="action-result action-approved">Approved — queued for next heartbeat</span>';
+                bar.innerHTML = '<span class="action-result action-approved">Approved — waiting for agent...</span>';
+                // Poll for completion (every 3s, timeout 2min)
+                const POLL_INTERVAL = 3000;
+                const POLL_TIMEOUT  = 120_000;
+                const pollStart = Date.now();
+                const poll = setInterval(async () => {
+                    try {
+                        if (Date.now() - pollStart > POLL_TIMEOUT) {
+                            clearInterval(poll);
+                            bar.innerHTML = '<span class="action-result action-approved">Approved — timed out waiting for agent response</span>';
+                            return;
+                        }
+                        const sr = await apiClient.get(`/api/ext-agents/actions/${actionUuid}/status`);
+                        if (!sr.ok) return; // transient error, keep polling
+                        const data = await sr.json();
+                        const st = data.status;
+                        if (st === 'success') {
+                            clearInterval(poll);
+                            bar.innerHTML = '<span class="action-result action-approved">Completed successfully</span>';
+                        } else if (st === 'failed') {
+                            clearInterval(poll);
+                            const msg = data.result?.message || 'Agent reported failure';
+                            bar.innerHTML = `<span class="action-result action-denied">Failed: ${escapeHtml(msg)}</span>`;
+                        }
+                        // status queued/sent: keep polling
+                    } catch (_) { /* network hiccup, keep polling */ }
+                }, POLL_INTERVAL);
             } catch (e) {
                 approveBtn.disabled = false;
                 denyBtn.disabled    = false;
@@ -192,6 +225,86 @@ function renderMessage(msg) {
         div.querySelector('.chat-msg-body').appendChild(bar);
     }
 
+    // SSH approval request: render Approve / Deny with inline terminal output
+    if (msg.payload?.action_type === 'ssh_approval_request') {
+        const approvalUuid = msg.payload?.approval_uuid || '';
+        const assetId      = msg.payload?.asset_id      || '';
+        const assetLabel   = msg.payload?.asset_label   || assetId;
+        const command      = msg.payload?.command        || '';
+
+        const bar = document.createElement('div');
+        bar.className = 'msg-action-bar';
+        bar.dataset.uuid = approvalUuid;
+        bar.innerHTML = `
+            <span class="action-bar-label">
+                SSH on <strong>${escapeHtml(assetLabel)}</strong>: <code>${escapeHtml(command)}</code>
+            </span>
+            <div class="action-bar-btns">
+                <button class="btn-action-approve" data-uuid="${escapeAttr(approvalUuid)}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    Approve
+                </button>
+                <button class="btn-action-deny" data-uuid="${escapeAttr(approvalUuid)}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    Deny
+                </button>
+            </div>
+        `;
+
+        const approveBtn = bar.querySelector('.btn-action-approve');
+        const denyBtn    = bar.querySelector('.btn-action-deny');
+
+        approveBtn.addEventListener('click', async () => {
+            approveBtn.disabled = true;
+            denyBtn.disabled    = true;
+            bar.innerHTML = '<span class="action-result action-approved">Executing...</span>';
+            try {
+                const resp = await apiClient.post(
+                    `/api/assets/${encodeURIComponent(assetId)}/execute-ssh`,
+                    { approval_uuid: approvalUuid }
+                );
+                const data = await resp.json();
+                if (!resp.ok) {
+                    const errMsg = data.detail || data.error || `HTTP ${resp.status}`;
+                    bar.innerHTML = `<span class="action-result action-denied">Failed: ${escapeHtml(errMsg)}</span>`;
+                    return;
+                }
+                const exitBadge = data.exit_code === 0
+                    ? `<span style="color:#00cc66;font-size:11px">exit 0</span>`
+                    : `<span style="color:#ff9900;font-size:11px">exit ${data.exit_code}</span>`;
+                const stdout = (data.stdout || '').trim();
+                const stderr = (data.stderr || '').trim();
+                bar.innerHTML = `
+                    <div style="width:100%">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                            <span class="action-result action-approved" style="margin:0">Executed</span>
+                            ${exitBadge}
+                            <span style="color:#888;font-size:11px">${data.execution_time_ms || 0}ms</span>
+                        </div>
+                        ${stdout ? `<pre class="ssh-output">${escapeHtml(stdout)}</pre>` : ''}
+                        ${stderr ? `<pre class="ssh-output ssh-stderr">${escapeHtml(stderr)}</pre>` : ''}
+                    </div>
+                `;
+            } catch (e) {
+                bar.innerHTML = `<span class="action-result action-denied">Error: ${escapeHtml(String(e))}</span>`;
+            }
+        });
+
+        denyBtn.addEventListener('click', async () => {
+            approveBtn.disabled = true;
+            denyBtn.disabled    = true;
+            try {
+                await apiClient.post(
+                    `/api/assets/${encodeURIComponent(assetId)}/execute-ssh/deny`,
+                    { approval_uuid: approvalUuid }
+                );
+            } catch (_) { /* best-effort */ }
+            bar.innerHTML = '<span class="action-result action-denied">Denied</span>';
+        });
+
+        div.querySelector('.chat-msg-body').appendChild(bar);
+    }
+
     return div;
 }
 
@@ -211,7 +324,17 @@ function appendMessage(msg) {
     }
 
     if ($messageList) {
-        $messageList.appendChild(renderMessage(msg));
+        try {
+            $messageList.appendChild(renderMessage(msg));
+        } catch (err) {
+            console.error('[chat] renderMessage failed for msg', msg?.from_id, msg?.payload?.action_type, err);
+            // Fallback: show raw text so the message isn't silently lost
+            const fallback = document.createElement('div');
+            fallback.className = 'chat-msg';
+            fallback.style.cssText = 'border-left:2px solid #ff9900;padding:4px 8px;color:#ff9900;font-size:11px';
+            fallback.textContent = `[render error] ${msg?.payload?.text || JSON.stringify(msg?.payload)}`;
+            $messageList.appendChild(fallback);
+        }
         // Trim DOM to match
         while ($messageList.children.length > MAX_DISPLAY_MESSAGES) {
             $messageList.removeChild($messageList.firstChild);
@@ -295,6 +418,18 @@ function autoResizeInput() {
     $input.style.height = newHeight + 'px';
     // Use 'scroll' (not 'auto') to avoid scrollbar-flicker in the narrow sidebar
     $input.style.overflowY = $input.scrollHeight > maxHeight ? 'scroll' : 'hidden';
+}
+
+// ── Interrupt (stop AI mid-response) ───────────────────────────────
+
+async function interrupt() {
+    // Optimistically hide the indicator immediately
+    showThinking(false);
+    try {
+        await apiClient.post('/api/chat/interrupt', {});
+    } catch (err) {
+        console.error('[chat] Interrupt failed:', err);
+    }
 }
 
 // ── Sending messages ───────────────────────────────────────────────
@@ -382,6 +517,25 @@ function escapeAttr(str) {
     return escapeHtml(str).replace(/'/g, '&#39;');
 }
 
+/** Convert a Claude model ID to a short display name. */
+function formatModel(modelId) {
+    if (!modelId) return '';
+    const m = modelId.match(/claude-(opus|sonnet|haiku)-(\d+(?:[\.\-]\d+)?)/i);
+    if (m) {
+        const tier = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+        const ver  = m[2].replace('-', '.');
+        return `${tier} ${ver}`;
+    }
+    // Ollama or unknown — show as-is, truncated
+    return modelId.split(':')[0].substring(0, 20);
+}
+
+/** Format a token count as "24.5K" or "800". */
+function formatTokens(count) {
+    if (!count) return '';
+    return count >= 1000 ? `${(count / 1000).toFixed(1)}K` : String(count);
+}
+
 // ── Copy button handler ────────────────────────────────────────────
 
 function handleCopyClick(e) {
@@ -409,6 +563,44 @@ function handleCopyClick(e) {
         setTimeout(() => { btn.innerHTML = orig; }, 1500);
     });
 }
+
+// ── Pending approval recovery ───────────────────────────────────────
+// If the user reloaded the page or missed a WS notification while the AI is
+// blocked waiting for approval, this injects synthetic approval cards so the
+// user can always act on them.  Called once at init time.
+
+async function _checkPendingApprovals() {
+    try {
+        const resp = await apiClient.get('/api/assets/pending-approvals');
+        if (!resp || !resp.ok) return;
+        const data = await resp.json();
+        if (!data.pending || data.pending.length === 0) return;
+
+        for (const p of data.pending) {
+            // Don't duplicate — skip if an approval card for this UUID is already in the DOM
+            if (document.querySelector(`[data-uuid="${CSS.escape(p.approval_uuid)}"]`)) continue;
+
+            // Inject a synthetic approval message so the user sees the card
+            const syntheticMsg = {
+                from_id: '__system__',
+                timestamp: new Date().toISOString(),
+                payload: {
+                    action_type: 'ssh_approval_request',
+                    approval_uuid: p.approval_uuid,
+                    asset_id: p.asset_id,
+                    asset_label: p.asset_id,
+                    command: p.command,
+                    text: `**SSH Command Approval Required** *(recovered — approval was pending)*\n\nAsset: \`${p.asset_id}\`\nCommand: \`${p.command}\``,
+                },
+            };
+            appendMessage(syntheticMsg);
+            console.warn('[chat] Recovered pending approval for asset', p.asset_id, '— injected approval card');
+        }
+    } catch (err) {
+        console.warn('[chat] Failed to check pending approvals:', err);
+    }
+}
+
 
 // ── Init / Destroy ─────────────────────────────────────────────────
 
@@ -442,6 +634,12 @@ async function init() {
         $toggleBtn.addEventListener('click', () => setCollapsed(!_collapsed));
     }
 
+    // Interrupt button
+    const $interruptBtn = document.getElementById('chat-interrupt-btn');
+    if ($interruptBtn) {
+        $interruptBtn.addEventListener('click', interrupt);
+    }
+
     // Copy button delegation
     if ($messageList) {
         $messageList.addEventListener('click', handleCopyClick);
@@ -464,6 +662,11 @@ async function init() {
     } catch (err) {
         console.warn('[chat] Failed to load history:', err);
     }
+
+    // Recover any approval cards missed during page load / WS gap.
+    // If the AI is blocked waiting for an approval, the user MUST be able to see
+    // the approval button — even if the WebSocket notification was never received.
+    _checkPendingApprovals();
 
     console.log('[chat] Sidebar initialized');
 }

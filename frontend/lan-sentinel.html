@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citadel Archer — LAN Sentinel</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'neon-blue': '#00D9FF',
+                        'dark-bg': '#0A0E27',
+                        'card-bg': 'rgba(15, 23, 42, 0.6)',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="css/styles.css">
+
+    <style>
+        .lan-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .lan-header-title {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #e2e8f0;
+        }
+        .stat-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .stat-pill.new { background: rgba(255,51,51,0.15); color: #ff3333; border: 1px solid rgba(255,51,51,0.3); }
+        .stat-pill.total { background: rgba(0,217,255,0.1); color: #00D9FF; border: 1px solid rgba(0,217,255,0.2); }
+        .stat-pill.clean { background: rgba(0,204,102,0.1); color: #00cc66; border: 1px solid rgba(0,204,102,0.25); }
+
+        .btn-scan {
+            padding: 0.3rem 0.9rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #00D9FF;
+            background: rgba(0,217,255,0.08);
+            border: 1px solid rgba(0,217,255,0.3);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .btn-scan:hover { background: rgba(0,217,255,0.15); }
+        .btn-scan:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* Device table */
+        .lan-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 0.78rem;
+        }
+        .lan-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: rgba(10,14,39,0.97);
+            padding: 0.55rem 0.75rem;
+            text-align: left;
+            font-size: 0.65rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            color: #6B7280;
+            text-transform: uppercase;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .lan-table tbody tr {
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            transition: background 0.12s;
+        }
+        .lan-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+        .lan-table tbody tr.is-new {
+            border-left: 2px solid #ff3333;
+            background: rgba(255,51,51,0.04);
+        }
+        .lan-table tbody td {
+            padding: 0.5rem 0.75rem;
+            color: #cbd5e1;
+            vertical-align: middle;
+        }
+
+        /* Status badges */
+        .device-status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 8px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .device-status-badge.known {
+            background: rgba(0,204,102,0.1);
+            color: #00cc66;
+            border: 1px solid rgba(0,204,102,0.25);
+        }
+        .device-status-badge.new-device {
+            background: rgba(255,51,51,0.12);
+            color: #ff3333;
+            border: 1px solid rgba(255,51,51,0.3);
+            animation: pulse-badge 2s infinite;
+        }
+        @keyframes pulse-badge {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .btn-mark-known {
+            padding: 2px 10px;
+            border-radius: 5px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            cursor: pointer;
+            background: rgba(0,204,102,0.08);
+            color: #00cc66;
+            border: 1px solid rgba(0,204,102,0.25);
+            transition: background 0.12s;
+        }
+        .btn-mark-known:hover { background: rgba(0,204,102,0.18); }
+
+        .mac-mono { font-family: monospace; font-size: 0.72rem; color: #94a3b8; }
+        .ip-mono  { font-family: monospace; font-size: 0.78rem; color: #e2e8f0; }
+
+        /* Footer status bar */
+        .lan-footer {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            margin-top: 0.75rem;
+            font-size: 0.65rem;
+            color: #6B7280;
+        }
+        .lan-footer span { display: flex; align-items: center; gap: 0.3rem; }
+
+        /* Live dot */
+        .live-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            display: inline-block;
+            background: #6B7280;
+        }
+        .live-dot.connected { background: #00cc66; box-shadow: 0 0 4px rgba(0,204,102,0.5); }
+
+        /* Toast */
+        .lan-toast {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            background: rgba(15,23,42,0.95);
+            border: 1px solid rgba(255,51,51,0.4);
+            color: #ff3333;
+            font-size: 0.75rem;
+            font-weight: 600;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 9999;
+            display: none;
+        }
+        .lan-toast.show { display: block; animation: slide-in 0.2s ease; }
+        @keyframes slide-in {
+            from { transform: translateY(1rem); opacity: 0; }
+            to   { transform: translateY(0);    opacity: 1; }
+        }
+    </style>
+</head>
+<body class="dark">
+<div class="p-4" style="font-size: 13px;">
+
+    <!-- Header -->
+    <div class="lan-header">
+        <div class="lan-header-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00D9FF"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="6" height="6" rx="1"/>
+                <rect x="16" y="2" width="6" height="6" rx="1"/>
+                <rect x="9" y="16" width="6" height="6" rx="1"/>
+                <line x1="5" y1="8" x2="12" y2="16"/>
+                <line x1="19" y1="8" x2="12" y2="16"/>
+            </svg>
+            LAN Sentinel
+        </div>
+        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+            <span class="stat-pill total" id="lan-total-pill">-- devices</span>
+            <span class="stat-pill new"   id="lan-new-pill"   style="display:none">-- unknown</span>
+            <span class="stat-pill clean" id="lan-clean-pill" style="display:none">All known</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.65rem;color:#6B7280;">
+                <span class="live-dot" id="lan-live-dot"></span>
+                <span id="lan-live-text">Offline</span>
+            </span>
+            <button class="btn-scan" id="lan-scan-btn" onclick="window._lanScanNow && window._lanScanNow()">
+                Scan Now
+            </button>
+        </div>
+    </div>
+
+    <!-- Device table -->
+    <div class="rounded-lg overflow-hidden" style="background: rgba(15,23,42,0.5); border: 1px solid rgba(255,255,255,0.07);">
+        <table class="lan-table">
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>IP Address</th>
+                    <th>MAC Address</th>
+                    <th>Hostname</th>
+                    <th>Manufacturer</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                    <th>Label</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="lan-tbody">
+                <tr>
+                    <td colspan="9" style="text-align:center; padding: 3rem; color: #6B7280;">
+                        Loading LAN devices...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Footer status -->
+    <div class="lan-footer">
+        <span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+            Last scan: <span id="lan-last-scan">—</span>
+        </span>
+        <span>Subnet: <span id="lan-subnet">—</span></span>
+        <span>Mode: <span id="lan-mode">—</span></span>
+        <span>Interval: <span id="lan-interval">—</span></span>
+    </div>
+
+</div>
+
+<!-- New device toast -->
+<div class="lan-toast" id="lan-toast"></div>
+
+<script type="module" src="js/lan-sentinel.js"></script>
+</body>
+</html>

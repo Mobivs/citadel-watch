@@ -77,6 +77,18 @@ class EventType(str, Enum):
     REMOTE_THREAT = "remote.threat"   # auth_log / process / cron / file_integrity
     REMOTE_PATCH  = "remote.patch"    # pending package updates
 
+    # SSH Remote Execution Events (Phase 1 SSH tool)
+    SSH_COMMAND_EXECUTED = "ssh.command.executed"
+    SSH_COMMAND_BLOCKED  = "ssh.command.blocked"
+
+    # SSH Key Rotation Events
+    SSH_KEY_ROTATION_STARTED  = "ssh.key.rotation.started"
+    SSH_KEY_ROTATION_COMPLETED = "ssh.key.rotation.completed"
+    SSH_KEY_ROTATION_FAILED   = "ssh.key.rotation.failed"
+    SSH_KEY_ROTATION_ROLLBACK = "ssh.key.rotation.rollback"
+    SSH_KEY_RECOVERY_STARTED  = "ssh.key.recovery.started"
+    SSH_KEY_RECOVERY_COMPLETED = "ssh.key.recovery.completed"
+
 
 class EventSeverity(str, Enum):
     """

@@ -163,7 +163,9 @@ class SSHConnectionManager:
                 "Link one via PUT /api/assets/{id} with ssh_credential_id."
             )
 
-        # 3. Pull credential from Vault
+        # 3. Pull credential from Vault — auto-unlock if configured
+        if not self.vault.is_unlocked:
+            self.vault.attempt_auto_unlock()
         if not self.vault.is_unlocked:
             raise VaultLockedError("Vault is locked. Unlock the vault before connecting.")
 

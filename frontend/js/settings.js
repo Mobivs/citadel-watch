@@ -1,3 +1,5 @@
+import { apiClient } from './utils/api-client.js';
+
 // PRD: Settings & Developer Tools Management
 // Reference: Phase 2 - Settings Panel & Dev Tools
 //
@@ -48,6 +50,8 @@ class SettingsManager {
         // Settings menu buttons
         document.getElementById('settings-general')?.addEventListener('click', () => this.openGeneralSettings());
         document.getElementById('settings-notifications')?.addEventListener('click', () => this.openNotifications());
+        document.getElementById('settings-integrations')?.addEventListener('click', () => this.openIntegrations());
+        document.getElementById('settings-ai-context')?.addEventListener('click', () => this.openAiContext());
         document.getElementById('settings-dev-tools')?.addEventListener('click', () => this.openDevTools());
 
         // Keyboard escape to close modals
@@ -74,6 +78,8 @@ class SettingsManager {
         }
         // Reset to menu view for next open
         this.closeGeneralSettings();
+        this.closeIntegrations();
+        this.closeAiContext();
     }
 
     openGeneralSettings() {
@@ -114,13 +120,148 @@ class SettingsManager {
         if (menuList) menuList.style.display = '';
     }
 
+    _renderHostingerChip(verifiedOk, verifiedAt) {
+        const el = document.getElementById('hostinger-key-verified');
+        if (!el) return;
+        if (!verifiedAt) {
+            el.innerHTML = '<span style="font-size:0.72rem;color:#6B7280;">Not yet tested — click Test Connection to validate your key</span>';
+            return;
+        }
+        const ageMs   = Date.now() - new Date(verifiedAt).getTime();
+        const ageMin  = Math.floor(ageMs / 60000);
+        const ageHr   = Math.floor(ageMs / 3600000);
+        const ageDays = Math.floor(ageMs / 86400000);
+        const ageStr  = ageMin < 2 ? 'just now'
+                      : ageMin < 60 ? `${ageMin}m ago`
+                      : ageHr  < 24 ? `${ageHr}h ago`
+                      : `${ageDays}d ago`;
+        if (verifiedOk === 'true') {
+            const stale = ageDays >= 7;
+            el.innerHTML = stale
+                ? `<span style="font-size:0.72rem;color:#e6b800;">&#x26A0; Verified ${ageStr} — re-test recommended</span>`
+                : `<span style="font-size:0.72rem;color:#00cc66;">&#x2713; Verified ${ageStr}</span>`;
+        } else {
+            el.innerHTML = '<span style="font-size:0.72rem;color:#ff3333;">&#x2717; Last test failed — update key and re-test</span>';
+        }
+    }
+
+    openIntegrations() {
+        const menuList = document.getElementById('settings-menu-list');
+        const panel    = document.getElementById('settings-integrations-panel');
+        if (menuList) menuList.style.display = 'none';
+        if (panel)    panel.style.display    = '';
+
+        const backBtn = document.getElementById('settings-integrations-back');
+        if (backBtn && !backBtn._wired) {
+            backBtn._wired = true;
+            backBtn.addEventListener('click', () => this.closeIntegrations());
+        }
+
+        const showBtn  = document.getElementById('hostinger-key-show-btn');
+        const saveBtn  = document.getElementById('hostinger-key-save-btn');
+        const testBtn  = document.getElementById('hostinger-key-test-btn');
+        const input    = document.getElementById('hostinger-api-key-input');
+        const statusEl = document.getElementById('hostinger-key-status');
+
+        if (showBtn && !showBtn._wired) {
+            showBtn._wired = true;
+            showBtn.addEventListener('click', () => {
+                if (!input) return;
+                const hidden = input.type === 'password';
+                input.type = hidden ? 'text' : 'password';
+                showBtn.textContent = hidden ? 'Hide' : 'Show';
+            });
+        }
+
+        if (saveBtn && !saveBtn._wired) {
+            saveBtn._wired = true;
+            saveBtn.addEventListener('click', async () => {
+                if (!input || !input.value.trim()) return;
+                saveBtn.disabled = true;
+                try {
+                    const resp = await apiClient.put(
+                        '/api/preferences/hostinger_api_key',
+                        { value: input.value.trim() }
+                    );
+                    if (resp && resp.ok) {
+                        if (statusEl) { statusEl.textContent = 'Saved'; statusEl.style.color = '#00cc66'; }
+                        input.value = '';
+                        input.placeholder = 'Key saved (paste to replace)';
+                        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+                        // New key — clear stale verification chip
+                        this._renderHostingerChip(null, null);
+                    } else {
+                        if (statusEl) { statusEl.textContent = 'Save failed'; statusEl.style.color = '#ff3333'; }
+                    }
+                } catch (e) {
+                    if (statusEl) { statusEl.textContent = `Error: ${e}`; statusEl.style.color = '#ff3333'; }
+                } finally {
+                    saveBtn.disabled = false;
+                }
+            });
+        }
+
+        if (testBtn && !testBtn._wired) {
+            testBtn._wired = true;
+            testBtn.addEventListener('click', async () => {
+                testBtn.disabled = true;
+                if (statusEl) { statusEl.textContent = 'Testing...'; statusEl.style.color = '#9CA3AF'; }
+                try {
+                    // Pass unsaved input value so users can test before saving
+                    const keyToTest = input?.value.trim() || '';
+                    const resp = await apiClient.post('/api/integrations/hostinger/test', { api_key: keyToTest });
+                    if (!resp || !resp.ok) throw new Error(`HTTP ${resp?.status}`);
+                    const data = await resp.json();
+                    if (data.ok) {
+                        const names = (data.hostnames || []).slice(0, 3).join(', ');
+                        if (statusEl) {
+                            statusEl.textContent = `Connected — ${data.vps_count} VPS${names ? `: ${names}` : ''}`;
+                            statusEl.style.color = '#00cc66';
+                        }
+                        // Update chip only when testing the saved key (no unsaved key in input)
+                        if (!keyToTest && data.verified_at) this._renderHostingerChip('true', data.verified_at);
+                    } else {
+                        if (statusEl) { statusEl.textContent = `Failed: ${data.error}`; statusEl.style.color = '#ff3333'; }
+                        if (!keyToTest && data.verified_at) this._renderHostingerChip('false', data.verified_at);
+                    }
+                } catch (e) {
+                    if (statusEl) { statusEl.textContent = `Error: ${e}`; statusEl.style.color = '#ff3333'; }
+                } finally {
+                    testBtn.disabled = false;
+                }
+            });
+        }
+
+        // Check if a key is already set, update placeholder, and render verification chip
+        (async () => {
+            try {
+                const resp = await apiClient.get('/api/preferences/hostinger_api_key');
+                if (resp && resp.ok) {
+                    const data = await resp.json();
+                    if (data.is_set && input) {
+                        input.placeholder = 'Key saved — paste to replace';
+                        if (testBtn) testBtn.style.color = '#00D9FF';
+                    }
+                    this._renderHostingerChip(data.verified_ok ?? null, data.verified_at ?? null);
+                }
+            } catch (_) {}
+        })();
+    }
+
+    closeIntegrations() {
+        const menuList = document.getElementById('settings-menu-list');
+        const panel    = document.getElementById('settings-integrations-panel');
+        if (panel)    panel.style.display    = 'none';
+        if (menuList) menuList.style.display = '';
+    }
+
     async loadDndState() {
         // Read from localStorage instantly, then confirm with API
         const cached = localStorage.getItem('citadel_guardian_muted') === 'true';
         this._applyDndUI(cached);
 
         try {
-            const resp = await window.apiClient?.get('/api/preferences/guardian_muted');
+            const resp = await apiClient.get('/api/preferences/guardian_muted');
             if (resp && resp.ok) {
                 const data = await resp.json();
                 const muted = data.value === 'true';
@@ -137,7 +278,7 @@ class SettingsManager {
         localStorage.setItem('citadel_guardian_muted', String(next));
 
         try {
-            await window.apiClient?.put('/api/preferences/guardian_muted', { value: String(next) });
+            await apiClient.put('/api/preferences/guardian_muted', { value: String(next) });
         } catch (_) {}
     }
 
@@ -184,7 +325,7 @@ class SettingsManager {
 
         // Authoritative: fetch from API
         try {
-            const resp = await window.apiClient?.get('/api/preferences/dashboard_mode');
+            const resp = await apiClient.get('/api/preferences/dashboard_mode');
             if (resp && resp.ok) {
                 const data = await resp.json();
                 const mode = data.value || 'technical';
@@ -202,7 +343,7 @@ class SettingsManager {
 
         // Persist to API
         try {
-            await window.apiClient?.put('/api/preferences/dashboard_mode', { value: mode });
+            await apiClient.put('/api/preferences/dashboard_mode', { value: mode });
         } catch (_) {
             // Best-effort persistence
         }
@@ -234,6 +375,152 @@ class SettingsManager {
             simpBtn.style.border = '1px solid rgba(255, 255, 255, 0.1)';
             simpBtn.style.background = 'transparent';
             simpBtn.style.color = '#9CA3AF';
+        }
+    }
+
+    openAiContext() {
+        const menuList = document.getElementById('settings-menu-list');
+        const panel = document.getElementById('settings-ai-context-panel');
+        if (menuList) menuList.style.display = 'none';
+        if (panel) panel.style.display = '';
+
+        const backBtn = document.getElementById('settings-ai-context-back');
+        if (backBtn && !backBtn._wired) {
+            backBtn._wired = true;
+            backBtn.addEventListener('click', () => this.closeAiContext());
+        }
+
+        this._wireAiContextControls();
+        this.loadAiContextSettings();
+    }
+
+    closeAiContext() {
+        const menuList = document.getElementById('settings-menu-list');
+        const panel = document.getElementById('settings-ai-context-panel');
+        if (panel) panel.style.display = 'none';
+        if (menuList) menuList.style.display = '';
+    }
+
+    async loadAiContextSettings() {
+        // Load number inputs
+        const numberFields = [
+            { key: 'ai.history_chars',       id: 'ai-history-chars-input',    def: 100000 },
+            { key: 'ai.compaction_tokens',   id: 'ai-compaction-tokens-input', def: 100000 },
+        ];
+        for (const f of numberFields) {
+            try {
+                const resp = await apiClient.get(`/api/preferences/${encodeURIComponent(f.key)}`);
+                if (resp && resp.ok) {
+                    const data = await resp.json();
+                    const input = document.getElementById(f.id);
+                    if (input && data.value) input.value = data.value;
+                }
+            } catch (_) {}
+        }
+        this._updateAiCharDisplays();
+
+        // Load toggle buttons
+        const toggleFields = [
+            { key: 'ai.posture_enabled',         id: 'ai-posture-enabled-btn',      def: true },
+            { key: 'ai.catchup_enabled',          id: 'ai-catchup-enabled-btn',      def: true },
+            { key: 'ai.investigate_triggers_ai',  id: 'ai-investigate-triggers-btn', def: true },
+            { key: 'ai.stale_triggers_ai',        id: 'ai-stale-triggers-btn',       def: true },
+        ];
+        for (const t of toggleFields) {
+            try {
+                const resp = await apiClient.get(`/api/preferences/${encodeURIComponent(t.key)}`);
+                if (resp && resp.ok) {
+                    const data = await resp.json();
+                    const val = (data.value !== null && data.value !== undefined) ? data.value === 'true' : t.def;
+                    this._applyAiToggle(t.id, val);
+                } else {
+                    this._applyAiToggle(t.id, t.def);
+                }
+            } catch (_) {
+                this._applyAiToggle(t.id, t.def);
+            }
+        }
+    }
+
+    _wireAiContextControls() {
+        // Toggle buttons (one-time wiring)
+        const toggleDefs = [
+            { id: 'ai-posture-enabled-btn',      key: 'ai.posture_enabled' },
+            { id: 'ai-catchup-enabled-btn',      key: 'ai.catchup_enabled' },
+            { id: 'ai-investigate-triggers-btn', key: 'ai.investigate_triggers_ai' },
+            { id: 'ai-stale-triggers-btn',       key: 'ai.stale_triggers_ai' },
+        ];
+        for (const t of toggleDefs) {
+            const btn = document.getElementById(t.id);
+            if (btn && !btn._wired) {
+                btn._wired = true;
+                btn.addEventListener('click', async () => {
+                    const isOn = btn.dataset.value === 'true';
+                    const next = !isOn;
+                    this._applyAiToggle(t.id, next);
+                    try {
+                        await apiClient.put(`/api/preferences/${encodeURIComponent(t.key)}`, { value: String(next) });
+                    } catch (_) {}
+                });
+            }
+        }
+
+        // Number inputs — save on blur, update display on input
+        const numberDefs = [
+            { id: 'ai-history-chars-input',    key: 'ai.history_chars',     min: 10000,  max: 500000 },
+            { id: 'ai-compaction-tokens-input', key: 'ai.compaction_tokens', min: 20000, max: 500000 },
+        ];
+        for (const n of numberDefs) {
+            const input = document.getElementById(n.id);
+            if (input && !input._wired) {
+                input._wired = true;
+                input.addEventListener('input', () => this._updateAiCharDisplays());
+                input.addEventListener('change', async () => {
+                    let val = parseInt(input.value, 10);
+                    if (isNaN(val)) val = parseInt(input.min, 10);
+                    val = Math.max(n.min, Math.min(n.max, val));
+                    input.value = val;
+                    this._updateAiCharDisplays();
+                    try {
+                        await apiClient.put(`/api/preferences/${encodeURIComponent(n.key)}`, { value: String(val) });
+                    } catch (_) {}
+                });
+            }
+        }
+    }
+
+    _updateAiCharDisplays() {
+        const histInput = document.getElementById('ai-history-chars-input');
+        const histDisplay = document.getElementById('ai-history-chars-display');
+        if (histInput && histDisplay) {
+            const chars = parseInt(histInput.value, 10) || 100000;
+            const tokens = Math.round(chars / 3.8 / 1000 * 10) / 10;
+            histDisplay.textContent = `~${tokens}K tokens`;
+        }
+
+        const compInput = document.getElementById('ai-compaction-tokens-input');
+        const compDisplay = document.getElementById('ai-compaction-display');
+        if (compInput && compDisplay) {
+            const tokens = parseInt(compInput.value, 10) || 100000;
+            const tokensK = Math.round(tokens / 1000);
+            compDisplay.textContent = `${tokensK}K tokens`;
+        }
+    }
+
+    _applyAiToggle(id, isOn) {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.dataset.value = String(isOn);
+        if (isOn) {
+            btn.style.border = '1px solid rgba(0,217,255,0.3)';
+            btn.style.background = 'rgba(0,217,255,0.12)';
+            btn.style.color = '#00D9FF';
+            btn.textContent = 'Enabled';
+        } else {
+            btn.style.border = '1px solid rgba(255,255,255,0.1)';
+            btn.style.background = 'transparent';
+            btn.style.color = '#9CA3AF';
+            btn.textContent = 'Disabled';
         }
     }
 

@@ -8,6 +8,29 @@
 import { apiClient } from './utils/api-client.js';
 import { wsHandler } from './websocket-handler.js';
 
+// ── Toast notifications ─────────────────────────────────────────────
+
+function showToast(message, type = 'success') {
+    const colors = { success: '#00cc66', error: '#ff3333', info: '#00D9FF' };
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    Object.assign(toast.style, {
+        position: 'fixed', bottom: '24px', right: '24px', zIndex: '9999',
+        background: '#1a1f2e', border: `1px solid ${colors[type] || colors.info}`,
+        color: colors[type] || colors.info, padding: '10px 16px',
+        borderRadius: '8px', fontSize: '13px', fontWeight: '500',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+        opacity: '0', transition: 'opacity 0.2s',
+        maxWidth: '360px', wordBreak: 'break-word',
+    });
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => { toast.style.opacity = '1'; });
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 200);
+    }, 4000);
+}
+
 // ── Constants ───────────────────────────────────────────────────────
 
 const THREAT_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
@@ -404,7 +427,52 @@ async function testConnection(assetId) {
 
 let _editingAssetId = null;
 
-function openAssetModal(asset = null) {
+async function _loadSshCredentialOptions(selectedId = '') {
+    const sel  = document.getElementById('asset-form-ssh-cred');
+    const hint = document.getElementById('asset-form-ssh-cred-hint');
+    if (!sel) return;
+
+    // Reset to default
+    sel.innerHTML = '<option value="">— None —</option>';
+    if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
+
+    try {
+        const resp = await apiClient.get('/api/vault/ssh-credentials');
+        if (resp.status === 403) {
+            // Vault is locked — show hint but don't block form
+            sel.disabled = true;
+            if (hint) {
+                hint.textContent = 'Vault is locked. Unlock it in the Vault tab to link an SSH key.';
+                hint.style.display = 'block';
+                hint.style.color = '#ff9900';
+            }
+            return;
+        }
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const creds = data.credentials || [];
+
+        sel.disabled = false;
+        if (creds.length === 0) {
+            if (hint) {
+                hint.textContent = 'No SSH keys in Vault yet. Click "+ Add Key" to add one.';
+                hint.style.display = 'block';
+                hint.style.color = '#888';
+            }
+        }
+        for (const c of creds) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.title + (c.username ? ` (${c.username})` : '');
+            if (c.id === selectedId) opt.selected = true;
+            sel.appendChild(opt);
+        }
+    } catch (_) {
+        // Network error — silently leave as disabled
+    }
+}
+
+async function openAssetModal(asset = null) {  // async: fetches vault creds on open
     _editingAssetId = asset ? asset.asset_id : null;
 
     const title = document.getElementById('asset-modal-title');
@@ -421,6 +489,26 @@ function openAssetModal(asset = null) {
     document.getElementById('asset-form-type').value = asset?.asset_type || 'vps';
     document.getElementById('asset-form-ssh-port').value = asset?.ssh_port || 22;
     document.getElementById('asset-form-ssh-user').value = asset?.ssh_username || 'root';
+
+    // Populate SSH credential dropdown from Vault
+    await _loadSshCredentialOptions(asset?.ssh_credential_id || '');
+
+    // Show/hide rotation controls based on whether a credential is linked
+    const rotCtrl = document.getElementById('ssh-rotation-controls');
+    if (rotCtrl) {
+        rotCtrl.style.display = asset?.ssh_credential_id ? 'block' : 'none';
+    }
+
+    // Wire up rotation buttons (safe to call multiple times — uses onclick assignment)
+    const btnRotate = document.getElementById('btn-rotate-ssh');
+    const btnRecover = document.getElementById('btn-recover-ssh');
+    if (btnRotate && asset?.asset_id) {
+        btnRotate.onclick = () => startSshRotation(asset.asset_id);
+    }
+    if (btnRecover && asset?.asset_id) {
+        btnRecover.onclick = () => promptSshRecovery(asset.asset_id);
+    }
+
     document.getElementById('asset-form-tags').value = (asset?.tags || []).join(', ');
     document.getElementById('asset-form-notes').value = asset?.notes || '';
 
@@ -467,11 +555,21 @@ async function handleAssetFormSubmit(e) {
     if (errEl) { errEl.style.display = 'none'; }
 
     try {
+        let savedId = _editingAssetId;
         if (_editingAssetId) {
             await updateAsset(_editingAssetId, payload);
         } else {
-            await createAsset(payload);
+            const created = await createAsset(payload);
+            savedId = created?.asset_id || _editingAssetId;
         }
+
+        // Link SSH credential if one was selected
+        const credSel = document.getElementById('asset-form-ssh-cred');
+        const credId  = credSel?.value || '';
+        if (savedId && credId) {
+            await apiClient.post(`/api/assets/${savedId}/link-credential`, { credential_id: credId });
+        }
+
         closeAssetModal();
         await refreshData();
     } catch (err) {
@@ -491,7 +589,7 @@ async function handleDeleteAsset(assetId) {
         closeDetail();
         await refreshData();
     } catch (err) {
-        alert('Failed to delete asset: ' + (err.message || 'Unknown error'));
+        showToast('Failed to delete asset: ' + (err.message || 'Unknown error'), 'error');
     }
 }
 
@@ -521,6 +619,7 @@ function setupModal() {
     });
     _trackListener(document.getElementById('invite-generate-btn'), 'click', handleGenerateInvitation);
     _trackListener(document.getElementById('invite-copy-btn'), 'click', handleCopyInvitation);
+    _trackListener(document.getElementById('invite-tailscale-cmd-copy-btn'), 'click', handleCopyTailscaleCmd);
     _trackListener(document.getElementById('invite-oneliner-copy-btn'), 'click', handleCopyOneliner);
     _trackListener(document.getElementById('invite-share-email-btn'), 'click', handleShareViaEmail);
     _trackListener(document.getElementById('invite-open-page-btn'), 'click', handleOpenEnrollmentPage);
@@ -538,10 +637,49 @@ let _enrollmentUrl = '';
 let _mailtoUrl = '';
 let _agentPrompt = '';
 let _onelinerCommand = '';
+let _tailscaleCommand = '';
 let _inviteStatusInterval = null;
 let _copyFeedbackTimer = null;
 let _onelinerFeedbackTimer = null;
+let _tailscaleCmdFeedbackTimer = null;
 let _detectedCoordinatorUrl = '';
+
+function _updateInviteTypeFields() {
+    const agentType = document.getElementById('invite-agent-type')?.value || 'vps';
+    const isLinuxShield = agentType === 'vps' || agentType === 'cloud';
+
+    // Show/hide Tailscale section
+    const tsSection = document.getElementById('invite-tailscale-section');
+    if (tsSection) tsSection.style.display = isLinuxShield ? 'block' : 'none';
+
+    // Update intro text to match agent type
+    const introEl = document.getElementById('invite-intro-text');
+    if (introEl) {
+        if (isLinuxShield) {
+            introEl.textContent = 'Citadel will generate a one-time setup command. Run it on the remote server via SSH — it installs Tailscale, locks down the firewall, and starts the security daemon automatically.';
+        } else if (agentType === 'workstation') {
+            introEl.textContent = 'Generate a one-time invitation for a Windows PC. The recipient opens the enrollment link and follows the one-click install.';
+        } else {
+            introEl.textContent = 'Generate a one-time invitation code for a remote AI agent to join the Citadel network.';
+        }
+    }
+
+    // Wire radio buttons (safe to call multiple times — onchange replaces itself)
+    document.querySelectorAll('input[name="ts-auth-mode"]').forEach(radio => {
+        radio.onchange = () => {
+            const keyInput = document.getElementById('invite-ts-key-input');
+            if (keyInput) keyInput.style.display = radio.value === 'key' ? 'block' : 'none';
+            if (radio.value === 'browser') {
+                const k = document.getElementById('invite-tailscale-key');
+                if (k) k.value = '';
+            }
+        };
+    });
+
+    // Re-attach listener for next type change
+    const typeSelect = document.getElementById('invite-agent-type');
+    if (typeSelect) typeSelect.addEventListener('change', _updateInviteTypeFields, { once: true });
+}
 
 function openInviteModal() {
     _invitationString = '';
@@ -558,7 +696,18 @@ function openInviteModal() {
     const nameInput = document.getElementById('invite-agent-name');
     if (nameInput) nameInput.value = '';
     const typeSelect = document.getElementById('invite-agent-type');
-    if (typeSelect) typeSelect.value = 'vps';
+    if (typeSelect) {
+        typeSelect.value = 'vps';
+        typeSelect.addEventListener('change', _updateInviteTypeFields, { once: true });
+    }
+    // Reset Tailscale radio to "browser" mode, hide key input, clear key value
+    const browserRadio = document.querySelector('input[name="ts-auth-mode"][value="browser"]');
+    if (browserRadio) browserRadio.checked = true;
+    const tsKeyContainer = document.getElementById('invite-ts-key-input');
+    if (tsKeyContainer) tsKeyContainer.style.display = 'none';
+    const tsKeyInput = document.getElementById('invite-tailscale-key');
+    if (tsKeyInput) tsKeyInput.value = '';
+    _updateInviteTypeFields();
     const recipientName = document.getElementById('invite-recipient-name');
     if (recipientName) recipientName.value = '';
     const recipientEmail = document.getElementById('invite-recipient-email');
@@ -600,6 +749,7 @@ async function handleGenerateInvitation() {
 
     const agentType = document.getElementById('invite-agent-type')?.value || 'vps';
     const coordinatorUrl = document.getElementById('invite-coordinator-url')?.value.trim() || '';
+    const tailscaleKey = document.getElementById('invite-tailscale-key')?.value.trim() || '';
     const recipientName = document.getElementById('invite-recipient-name')?.value.trim() || '';
     const recipientEmail = document.getElementById('invite-recipient-email')?.value.trim() || '';
 
@@ -694,8 +844,8 @@ async function handleGenerateInvitation() {
             } else if (isLinuxShield) {
                 instructionsList.innerHTML = `
                     <li data-step="1.">SSH into the remote Linux server</li>
-                    <li data-step="2.">Copy and run the one-liner command below</li>
-                    <li data-step="3.">The daemon installs and starts automatically</li>
+                    <li data-step="2.">Run <strong>Step 1</strong> to install Tailscale and join your network</li>
+                    <li data-step="3.">Run <strong>Step 2</strong> to install and start the Citadel daemon</li>
                 `;
             } else {
                 instructionsList.innerHTML = `
@@ -706,17 +856,32 @@ async function handleGenerateInvitation() {
             }
         }
 
-        // Show one-liner for Linux Shield agent types (vps, cloud)
+        // Show two-step commands for Linux Shield agent types (vps, cloud)
         const onelinerSection = document.getElementById('invite-oneliner-section');
         const onelinerBox = document.getElementById('invite-oneliner-box');
+        const tsCmdBox = document.getElementById('invite-tailscale-cmd-box');
+        const tsBrowserNote = document.getElementById('invite-ts-browser-note');
         if (onelinerSection && onelinerBox && isLinuxShield) {
             const baseUrl = resolvedCoordinatorUrl;
-            _onelinerCommand = `curl -fsSL ${baseUrl}/api/ext-agents/setup.sh | sudo bash -s -- ${_invitationString} ${baseUrl}`;
+
+            // Step 1: Tailscale install + join (uses public tailscale.com — works on any fresh VPS)
+            if (tailscaleKey) {
+                _tailscaleCommand = `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --authkey=${tailscaleKey}`;
+                if (tsBrowserNote) tsBrowserNote.style.display = 'none';
+            } else {
+                _tailscaleCommand = `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`;
+                if (tsBrowserNote) tsBrowserNote.style.display = 'block';
+            }
+            if (tsCmdBox) tsCmdBox.textContent = _tailscaleCommand;
+
+            // Step 2: Citadel daemon install (uses Tailscale IP — works after Step 1)
+            _onelinerCommand = `curl -fsSL ${baseUrl}/api/ext-agents/setup.sh | sudo bash -s -- ${_invitationString} ${baseUrl} --skip-tailscale`;
             onelinerBox.textContent = _onelinerCommand;
             onelinerSection.style.display = 'block';
         } else if (onelinerSection) {
             onelinerSection.style.display = 'none';
             _onelinerCommand = '';
+            _tailscaleCommand = '';
         }
 
         // Start status polling
@@ -758,6 +923,30 @@ async function handleCopyInvitation() {
             feedback.classList.remove('show');
             _copyFeedbackTimer = null;
         }, 1500);
+    }
+}
+
+async function handleCopyTailscaleCmd() {
+    if (!_tailscaleCommand) return;
+    try {
+        await navigator.clipboard.writeText(_tailscaleCommand);
+    } catch {
+        const ta = document.createElement('textarea');
+        ta.value = _tailscaleCommand;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+    }
+    const feedback = document.getElementById('invite-tailscale-cmd-feedback');
+    if (feedback) {
+        feedback.classList.add('show');
+        if (_tailscaleCmdFeedbackTimer) clearTimeout(_tailscaleCmdFeedbackTimer);
+        _tailscaleCmdFeedbackTimer = setTimeout(() => {
+            feedback.classList.remove('show');
+        }, 2000);
     }
 }
 
@@ -976,10 +1165,10 @@ function openDetail(assetId) {
                 <button id="test-conn-btn" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500/20 transition-colors" onclick="window._testConnectionFromDetail && window._testConnectionFromDetail('${escapeHtml(asset.asset_id)}')">
                     Test Connection
                 </button>
+                `}
                 <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-neon-blue/10 border border-neon-blue/20 text-neon-blue hover:bg-neon-blue/20 transition-colors" onclick="window._editAssetFromDetail && window._editAssetFromDetail('${escapeHtml(asset.asset_id)}')">
                     Edit Asset
                 </button>
-                `}
                 <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors" onclick="window._deleteAssetFromDetail && window._deleteAssetFromDetail('${escapeHtml(asset.asset_id)}')">
                     ${isEnrolled ? 'Revoke Agent' : 'Delete Asset'}
                 </button>
@@ -1010,17 +1199,20 @@ function openDetail(assetId) {
         try {
             const result = await testConnection(id);
             if (result.connection_status === 'success') {
-                if (btn) { btn.textContent = 'Connected'; btn.style.color = '#00cc66'; }
+                const parts = ['SSH connection successful'];
+                if (result.remote_os)  parts.push(result.remote_os);
+                if (result.uptime)     parts.push(result.uptime);
+                if (result.latency_ms) parts.push(`${result.latency_ms}ms`);
+                showToast(parts.join(' · '), 'success');
                 await refreshData();
-                // Re-open detail to show updated status
                 openDetail(id);
             } else {
-                if (btn) { btn.textContent = 'Failed'; btn.style.color = '#ff3333'; }
-                alert('Connection failed: ' + (result.error || 'Unknown error'));
+                if (btn) { btn.disabled = false; btn.textContent = 'Test Connection'; }
+                showToast('Connection failed: ' + (result.error || 'Unknown error'), 'error');
             }
         } catch (err) {
-            if (btn) { btn.textContent = 'Error'; btn.style.color = '#ff3333'; }
-            alert('Test connection error: ' + (err.message || 'Unknown error'));
+            if (btn) { btn.disabled = false; btn.textContent = 'Test Connection'; }
+            showToast('Test connection error: ' + (err.message || 'Unknown error'), 'error');
         }
     };
 
@@ -1120,7 +1312,7 @@ window._retryOnboardStep = async (step) => {
         const statusData = await statusResp.json();
         if (statusData.steps) renderOnboardingSteps(statusData.steps);
     } catch (err) {
-        alert('Retry failed: ' + (err.message || 'Unknown error'));
+        showToast('Retry failed: ' + (err.message || 'Unknown error'), 'error');
     }
 };
 
@@ -1363,6 +1555,10 @@ function destroy() {
     _boundCleanups.forEach(fn => fn());
     _boundCleanups = [];
 
+    // Clean up rotation poll timer
+    if (_rotationPollTimer) { clearInterval(_rotationPollTimer); _rotationPollTimer = null; }
+    _closeRotationModal();
+
     // Clean up window globals set by openDetail()
     delete window._editAssetFromDetail;
     delete window._deleteAssetFromDetail;
@@ -1411,6 +1607,16 @@ async function init() {
         if (data?.coordinator_url) _detectedCoordinatorUrl = data.coordinator_url;
     }).catch(() => {});
 
+    // Clear search box — Chrome autofills aggressively; readonly in HTML blocks
+    // initial fill, delayed clear handles any late autofill burst
+    const searchEl = document.getElementById('search-input');
+    if (searchEl) {
+        searchEl.value = '';
+        setTimeout(() => {
+            if (document.activeElement !== searchEl) searchEl.value = '';
+        }, 300);
+    }
+
     await refreshData();
 
     setupSortHeaders();
@@ -1425,6 +1631,232 @@ async function init() {
 }
 
 // Note: init() is called by tab-loader, not self-invoked (prevents double-init)
+
+// ── SSH Key Rotation UI ──────────────────────────────────────────────
+
+const _STATUS_LABELS = {
+    pending:            '1/7 — Preparing rotation...',
+    generating:         '1/7 — Generating new SSH key pair...',
+    key_written:        '2/7 — New key written to server',
+    asset_updated:      '3/7 — Vault updated with new credential',
+    cache_invalidated:  '4/7 — Connection cache cleared',
+    verified:           '5/7 — New key verified via SSH',
+    old_key_removed:    '6/7 — Old key removed from server',
+    old_vault_cleared:  '7/7 — Old credential purged from vault',
+    completed:          'Rotation complete',
+    failed:             'Rotation failed',
+    rolled_back:        'Rotation reversed — original key is active',
+    recovery_pending:        'Recovery — generating new key...',
+    recovery_key_uploaded:   'Recovery — key uploaded to Hostinger',
+    recovery_password_set:   'Recovery — temporary password set',
+    recovery_manual_pending: 'Recovery — waiting for manual console step',
+};
+
+const _TERMINAL_STATUSES = new Set([
+    'completed', 'rolled_back', 'failed', 'recovery_manual_pending',
+]);
+
+const _ROLLBACK_ALLOWED = new Set([
+    'generating', 'key_written', 'asset_updated', 'cache_invalidated', 'verified',
+]);
+
+let _rotationPollTimer = null;
+
+function _openRotationModal(title = 'Rotating SSH Key...') {
+    const overlay = document.getElementById('rotation-modal-overlay');
+    if (!overlay) return;
+    document.getElementById('rotation-modal-title').textContent = title;
+    document.getElementById('rotation-steps').innerHTML = '';
+    document.getElementById('rotation-error').style.display = 'none';
+    document.getElementById('rotation-error').textContent = '';
+    document.getElementById('rotation-actions').style.display = 'none';
+    document.getElementById('btn-rotation-rollback').style.display = 'none';
+    document.getElementById('btn-rotation-close').style.display = 'inline-block';
+    document.getElementById('recovery-section').style.display = 'none';
+    overlay.style.display = 'flex';
+}
+
+function _closeRotationModal() {
+    const overlay = document.getElementById('rotation-modal-overlay');
+    if (overlay) overlay.style.display = 'none';
+    if (_rotationPollTimer) { clearInterval(_rotationPollTimer); _rotationPollTimer = null; }
+}
+
+function _renderRotationStep(status) {
+    const stepsEl = document.getElementById('rotation-steps');
+    if (!stepsEl) return;
+    const label = _STATUS_LABELS[status] || status;
+    const isTerminal = _TERMINAL_STATUSES.has(status);
+    const isFailed = status === 'failed';
+    const color = isFailed ? '#ff5050' : isTerminal ? '#00cc66' : '#94a3b8';
+    const icon = isFailed ? '✗' : isTerminal ? '✓' : '...';
+    stepsEl.innerHTML = `<span style="color:${color};font-size:13px;">${icon} ${escapeHtml(label)}</span>`;
+}
+
+async function _pollRotationStatus(assetId, rotationId) {
+    if (_rotationPollTimer) clearInterval(_rotationPollTimer);
+    _rotationPollTimer = setInterval(async () => {
+        try {
+            const resp = await apiClient.get(`/api/assets/${assetId}/ssh/rotate/status`);
+            if (!resp.ok) { clearInterval(_rotationPollTimer); return; }
+            const data = await resp.json();
+            _renderRotationStep(data.status);
+
+            if (data.status === 'failed') {
+                clearInterval(_rotationPollTimer);
+                const errEl = document.getElementById('rotation-error');
+                if (errEl) { errEl.style.display = 'block'; errEl.textContent = data.error || 'Unknown error'; }
+                const actEl = document.getElementById('rotation-actions');
+                if (actEl) actEl.style.display = 'flex';
+                // Always show rollback on failure — backend rejects if past the point of no return
+                const rollbackBtn = document.getElementById('btn-rotation-rollback');
+                if (rollbackBtn) rollbackBtn.style.display = 'inline-block';
+            } else if (data.status === 'completed') {
+                clearInterval(_rotationPollTimer);
+                const actEl = document.getElementById('rotation-actions');
+                if (actEl) actEl.style.display = 'flex';
+                await refreshData();
+            } else if (data.status === 'rolled_back') {
+                clearInterval(_rotationPollTimer);
+                const actEl = document.getElementById('rotation-actions');
+                if (actEl) actEl.style.display = 'flex';
+            }
+        } catch (err) {
+            console.error('[rotation-poll] Error:', err);
+        }
+    }, 2000);
+}
+
+async function startSshRotation(assetId) {
+    _openRotationModal('Rotating SSH Key...');
+    _renderRotationStep('generating');
+
+    // Wire close button
+    const closeBtn = document.getElementById('btn-rotation-close');
+    if (closeBtn) closeBtn.onclick = _closeRotationModal;
+
+    // Wire rollback button
+    const rollbackBtn = document.getElementById('btn-rotation-rollback');
+    if (rollbackBtn) rollbackBtn.onclick = async () => {
+        rollbackBtn.disabled = true;
+        rollbackBtn.textContent = 'Undoing...';
+        try {
+            const resp = await apiClient.post(`/api/assets/${assetId}/ssh/rotate/rollback`, {});
+            if (resp.ok) {
+                _renderRotationStep('rolled_back');
+            } else {
+                const d = await resp.json().catch(() => ({}));
+                const errEl = document.getElementById('rotation-error');
+                if (errEl) { errEl.style.display = 'block'; errEl.textContent = d.detail || 'Rollback failed'; }
+            }
+        } catch (err) {
+            console.error('[rollback] Error:', err);
+        }
+        rollbackBtn.disabled = false;
+        rollbackBtn.textContent = 'Undo Rotation';
+    };
+
+    try {
+        const resp = await apiClient.post(`/api/assets/${assetId}/ssh/rotate`, {});
+        const data = await resp.json();
+        if (!resp.ok) {
+            const errEl = document.getElementById('rotation-error');
+            if (errEl) { errEl.style.display = 'block'; errEl.textContent = data.detail || 'Failed to start rotation'; }
+            return;
+        }
+        _pollRotationStatus(assetId, data.rotation_id);
+    } catch (err) {
+        const errEl = document.getElementById('rotation-error');
+        if (errEl) { errEl.style.display = 'block'; errEl.textContent = String(err); }
+    }
+}
+
+async function promptSshRecovery(assetId) {
+    const vpsId = window.prompt(
+        'Enter the Hostinger VPS ID for this asset.\n' +
+        '(Find it in hPanel — it\'s in the VPS URL, e.g. hpanel.hostinger.com/vps/1234567)'
+    );
+    if (!vpsId || isNaN(parseInt(vpsId))) {
+        if (vpsId !== null) alert('Invalid VPS ID — please enter a number.');
+        return;
+    }
+    await startSshRecovery(assetId, parseInt(vpsId));
+}
+
+async function startSshRecovery(assetId, hostingerVpsId) {
+    _openRotationModal('Emergency SSH Recovery...');
+    _renderRotationStep('recovery_pending');
+
+    const closeBtn = document.getElementById('btn-rotation-close');
+    if (closeBtn) closeBtn.onclick = _closeRotationModal;
+
+    try {
+        const resp = await apiClient.post(`/api/assets/${assetId}/ssh/recover`, {
+            hostinger_vps_id: hostingerVpsId,
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            const errEl = document.getElementById('rotation-error');
+            if (errEl) { errEl.style.display = 'block'; errEl.textContent = data.detail || 'Recovery failed to start'; }
+            return;
+        }
+
+        _renderRotationStep(data.status || 'recovery_manual_pending');
+
+        // Show recovery section with instructions and public key
+        const recSection = document.getElementById('recovery-section');
+        if (recSection) recSection.style.display = 'block';
+
+        const instrEl = document.getElementById('recovery-instructions');
+        if (instrEl) instrEl.textContent = data.instructions || '';
+
+        // Render temp password in its own element (separate from instructions)
+        const pwEl = document.getElementById('recovery-tmp-password');
+        if (pwEl) {
+            if (data.tmp_password) {
+                pwEl.textContent = data.tmp_password;
+                pwEl.parentElement && (pwEl.parentElement.style.display = 'block');
+            } else {
+                pwEl.parentElement && (pwEl.parentElement.style.display = 'none');
+            }
+        }
+
+        const pubkeyEl = document.getElementById('recovery-pubkey');
+        if (pubkeyEl) pubkeyEl.textContent = data.new_pub_key || '(key not available)';
+
+        const consoleLink = document.getElementById('recovery-console-link');
+        if (consoleLink && data.console_url) consoleLink.href = data.console_url;
+
+        // Wire Done button
+        const doneBtn = document.getElementById('btn-recovery-done');
+        if (doneBtn) doneBtn.onclick = async () => {
+            doneBtn.disabled = true;
+            doneBtn.textContent = 'Testing...';
+            try {
+                const r = await apiClient.post(`/api/assets/${assetId}/ssh/recover/complete`, {});
+                const d = await r.json();
+                if (d.success) {
+                    _renderRotationStep('completed');
+                    recSection.style.display = 'none';
+                    const actEl = document.getElementById('rotation-actions');
+                    if (actEl) actEl.style.display = 'flex';
+                    await refreshData();
+                } else {
+                    const errEl = document.getElementById('rotation-error');
+                    if (errEl) { errEl.style.display = 'block'; errEl.textContent = d.error || 'Test failed — check the key was pasted correctly'; }
+                }
+            } catch (err) {
+                console.error('[recovery-done] Error:', err);
+            }
+            doneBtn.disabled = false;
+            doneBtn.textContent = 'Done — Test Connection';
+        };
+
+    } catch (err) {
+        const errEl = document.getElementById('rotation-error');
+        if (errEl) { errEl.style.display = 'block'; errEl.textContent = String(err); }
+    }
+}
 
 // ── Exports ─────────────────────────────────────────────────────────
 

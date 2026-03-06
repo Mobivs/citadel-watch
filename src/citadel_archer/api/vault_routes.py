@@ -142,6 +142,80 @@ async def lock_vault(token: str = Depends(verify_session_token)):
     return {"success": True, "message": "Vault locked"}
 
 
+# ── Auto-unlock endpoints ─────────────────────────────────────────────────────
+
+@router.get("/auto-unlock/status")
+async def get_auto_unlock_status(token: str = Depends(verify_session_token)):
+    """Return whether auto-unlock is configured and if the env var is set."""
+    return {
+        "configured": vault_manager.is_auto_unlock_configured,
+        "env_var_set": bool(__import__("os").environ.get("CITADEL_VAULT_PASSWORD")),
+    }
+
+
+class EnableAutoUnlockRequest(BaseModel):
+    master_password: str = Field(..., min_length=1)
+
+
+@router.post("/auto-unlock/enable")
+async def enable_auto_unlock(
+    request: EnableAutoUnlockRequest,
+    token: str = Depends(verify_session_token),
+):
+    """Save the master password for startup auto-unlock.
+
+    The password is encrypted with a machine-specific key stored in
+    data/machine.key — both files must be present to decrypt.
+
+    Security note: This stores the vault password (encrypted) on disk.
+    Anyone with filesystem access to data/ can decrypt the vault.
+    Only enable this on machines you trust.
+    """
+    if not vault_manager.is_unlocked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unlock the vault first before enabling auto-unlock",
+        )
+    # Verify the supplied password is actually correct before storing it
+    success, _msg = vault_manager.unlock_vault(request.master_password)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect master password — auto-unlock not saved",
+        )
+    ok = vault_manager.store_auto_unlock_credential(request.master_password)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to store auto-unlock credential")
+
+    try:
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+        log_security_event(
+            EventType.AI_DECISION, EventSeverity.INFO,
+            "Vault auto-unlock enabled — startup credential stored"
+        )
+    except Exception:
+        pass
+
+    return {"success": True, "message": "Auto-unlock enabled — vault will unlock automatically on next startup"}
+
+
+@router.delete("/auto-unlock")
+async def disable_auto_unlock(token: str = Depends(verify_session_token)):
+    """Remove the stored auto-unlock credential."""
+    ok = vault_manager.clear_auto_unlock_credential()
+
+    try:
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+        log_security_event(
+            EventType.AI_DECISION, EventSeverity.INFO,
+            "Vault auto-unlock disabled — startup credential removed"
+        )
+    except Exception:
+        pass
+
+    return {"success": ok, "message": "Auto-unlock disabled" if ok else "Failed to remove credential"}
+
+
 @router.post("/passwords")
 async def add_password(
     request: AddPasswordRequest,
@@ -297,6 +371,46 @@ async def add_ssh_credential(
     return {"success": True, "credential_id": result}
 
 
+@router.post("/ssh-credentials/generate")
+async def generate_ssh_keypair(
+    token: str = Depends(verify_session_token),
+):
+    """Generate a new Ed25519 SSH keypair and save the private key to the vault.
+
+    Returns the public key so the user can install it on the target server.
+    Requires vault to be unlocked.
+    """
+    if not vault_manager.is_unlocked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vault is locked. Unlock vault first.",
+        )
+
+    try:
+        import asyncssh
+        key = asyncssh.generate_private_key("ssh-ed25519")
+        private_key_str = key.export_private_key().decode()
+        public_key_str = key.export_public_key().decode().strip()
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="asyncssh not installed. Run: pip install asyncssh",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Key generation failed: {exc}",
+        )
+
+    # Return both keys — the caller saves via POST /ssh-credentials so the
+    # user's chosen name is used. Private key is shown once; user should back it up.
+    return {
+        "public_key": public_key_str,
+        "private_key": private_key_str,
+        "key_type": "ed25519",
+    }
+
+
 @router.get("/ssh-credentials")
 async def list_ssh_credentials(
     token: str = Depends(verify_session_token),
@@ -329,5 +443,14 @@ async def get_ssh_credential(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="SSH credential not found",
         )
+
+    # Derive public key from private key so the UI can display it
+    if cred.get("auth_type") == "key" and cred.get("private_key"):
+        try:
+            import asyncssh
+            _key = asyncssh.import_private_key(cred["private_key"])
+            cred["public_key"] = _key.export_public_key().decode().strip()
+        except Exception:
+            pass
 
     return cred

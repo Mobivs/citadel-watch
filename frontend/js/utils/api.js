@@ -3,7 +3,7 @@
 // Reference: docs/PRD.md v0.2.3, Section: Technical Architecture
 
 class CitadelAPI {
-    constructor(baseURL = 'http://127.0.0.1:8000') {
+    constructor(baseURL = window.location.origin) {
         this.baseURL = baseURL;
         this.ws = null;
         this.eventHandlers = new Map();

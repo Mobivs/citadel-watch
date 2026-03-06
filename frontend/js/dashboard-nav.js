@@ -28,21 +28,23 @@ import { wsHandler } from './websocket-handler.js';
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const TAB_IDS = ['intelligence', 'charts', 'timeline', 'risk-metrics', 'assets', 'remote-shield', 'backup', 'performance', 'panic-room', 'vault'];
+const TAB_IDS = ['intelligence', 'ops-center', 'charts', 'timeline', 'risk-metrics', 'assets', 'remote-shield', 'lan-sentinel', 'backup', 'performance', 'panic-room', 'vault'];
 
 const STORAGE_KEY = 'citadel_active_tab';
 const MODE_STORAGE_KEY = 'citadel_dashboard_mode';
 
 // Tabs visible in simplified mode (non-technical users)
-const SIMPLIFIED_TABS = ['intelligence', 'assets', 'remote-shield'];
+const SIMPLIFIED_TABS = ['intelligence', 'ops-center', 'assets', 'remote-shield'];
 
 const TAB_CONFIG = {
     intelligence:    { label: 'Intelligence',  src: null },
+    'ops-center':    { label: 'Ops Center',    src: 'ops-center.html' },
     charts:          { label: 'Charts',        src: 'charts.html' },
     timeline:        { label: 'Timeline',      src: 'timeline.html' },
     'risk-metrics':  { label: 'Risk',          src: 'risk-metrics.html' },
     assets:          { label: 'Assets',        src: 'assets.html' },
     'remote-shield': { label: 'Remote Shield', src: 'remote-shield.html' },
+    'lan-sentinel':  { label: 'LAN',            src: 'lan-sentinel.html' },
     backup:          { label: 'Backups',        src: 'backup.html' },
     performance:     { label: 'Performance',   src: 'performance.html' },
     'panic-room':    { label: 'Panic Room',    src: 'panic-room.html' },

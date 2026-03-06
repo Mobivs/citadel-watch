@@ -27,6 +27,7 @@ from ..core import (
 )
 from ..guardian import FileMonitor, ProcessMonitor
 from .vault_routes import router as vault_router
+from .ops_routes import router as ops_router, audit_ops_callback
 from .dashboard_ext import router as dashboard_ext_router, services as dashboard_services
 from .remote_shield_routes import router as remote_shield_router
 from .panic_routes import router as panic_router
@@ -45,6 +46,8 @@ from .enrollment_routes import router as enrollment_router
 from .backup_routes import router as backup_router
 from .performance_routes import router as performance_router
 from .mesh_routes import router as mesh_router
+from .resolution_routes import router as resolution_router
+from .lan_routes import router as lan_router
 from .security import initialize_session_token, get_session_token
 
 logger = logging.getLogger(__name__)
@@ -136,6 +139,9 @@ app.include_router(enrollment_router)
 app.include_router(backup_router)
 app.include_router(performance_router)
 app.include_router(mesh_router)
+app.include_router(resolution_router)
+app.include_router(lan_router)
+app.include_router(ops_router)
 
 # No-cache headers for HTML responses — prevents Edge --app from serving stale pages
 _NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
@@ -277,11 +283,26 @@ async def startup_event():
     # Forward all future audit events into the aggregator
     audit_logger.on_event(aggregator.ingest_bus_event)
 
+    # Forward daemon threat / patch events to the Ops Center WS stream
+    audit_logger.on_event(audit_ops_callback)
+
     audit_logger.log_event(
         event_type=EventType.SYSTEM_START,
         severity=EventSeverity.INFO,
         message="Citadel Archer API server starting (session token initialized)"
     )
+
+    # Attempt vault auto-unlock (env var or stored credential)
+    try:
+        from .vault_routes import vault_manager as _vault_manager
+        if _vault_manager.attempt_auto_unlock():
+            audit_logger.log_event(
+                event_type=EventType.SYSTEM_START,
+                severity=EventSeverity.INFO,
+                message="Vault auto-unlocked on startup — SSH and credential tools ready"
+            )
+    except Exception:
+        pass  # vault auto-unlock is best-effort; manual unlock still works
 
     # Initialize monitors (don't start yet - wait for user)
     file_monitor = FileMonitor()
@@ -291,9 +312,22 @@ async def startup_event():
     file_monitor.start()
     process_monitor.start()
 
+    # Auto-register the local machine as Asset #1 (localhost) — idempotent
+    try:
+        from ..local.local_defender import ensure_localhost_asset
+        from .asset_routes import get_inventory as _get_inv
+        if ensure_localhost_asset(_get_inv()):
+            audit_logger.log_event(
+                event_type=EventType.SYSTEM_START,
+                severity=EventSeverity.INFO,
+                message="Local host auto-registered as protected asset (localhost)",
+            )
+    except Exception:
+        pass  # best-effort; don't block startup
+
     # Initialize SecureChat manager and wire to WebSocket broadcast
     from ..chat import ChatManager, ChatStore
-    from .chat_routes import set_chat_manager
+    from .chat_routes import set_chat_manager, set_ai_bridge
     chat_mgr = ChatManager(ChatStore())
     chat_mgr.set_ws_broadcast(manager.broadcast)
     set_chat_manager(chat_mgr)
@@ -314,10 +348,14 @@ async def startup_event():
     ai_bridge.register()
     app.state.ai_bridge = ai_bridge
     dashboard_services._ai_bridge = ai_bridge
+    set_ai_bridge(ai_bridge)
 
     # Send a welcome message so the sidebar isn't empty on first run.
     # Purge any previous startup banners first so restarts don't accumulate copies.
     chat_mgr.store.delete_matching_payload("Citadel Archer online")
+    # Purge stale approval cards left over from a previous session/crash.
+    # Their approval_uuids no longer exist in _PENDING_SSH so they're unresolvable.
+    chat_mgr.store.delete_matching_payload("ssh_approval_request")
     if ai_bridge.enabled:
         backend = ai_bridge.active_backend
         backend_msg = f"AI assistant active (backend: {backend})."
@@ -355,6 +393,20 @@ async def startup_event():
     )
     guardian_esc.start()
     app.state.guardian_escalation = guardian_esc
+
+    # Start LAN Sentinel background scanner
+    try:
+        from ..local.lan_scanner import LanScanner, get_lan_device_store
+        lan_scanner = LanScanner(
+            device_store=get_lan_device_store(),
+            aggregator=aggregator,
+            broadcast=manager.broadcast,
+            loop=asyncio.get_running_loop(),
+        )
+        lan_scanner.start()
+        app.state.lan_scanner = lan_scanner
+    except Exception as _lan_exc:
+        logger.warning("LAN scanner failed to start: %s", _lan_exc)
 
     # Wire Remote Shield VPS escalation to AI via SecureChat (Trigger 2d)
     from ..chat.remote_shield_escalation import RemoteShieldEscalation
@@ -530,6 +582,87 @@ async def startup_event():
     except Exception:
         logger.warning("Extension scanner/watcher failed on startup", exc_info=True)
 
+    # Action completion monitor — proactively notifies Guardian chat when daemon
+    # actions finish (success or failure), without requiring user to ask.
+    async def _action_completion_monitor() -> None:
+        from ..agent.actions_database import list_actions, init_db as _init_adb
+        from ..chat.message import ChatMessage, MessageType, PARTICIPANT_CITADEL, PARTICIPANT_USER
+        from ..api.agent_api_routes import get_agent_registry
+        _init_adb()
+        # Pre-seed with already-completed actions so we don't re-report on restart
+        _notified: set = {
+            a["action_uuid"]
+            for a in list_actions(limit=200)
+            if a.get("status") in ("success", "failed", "denied")
+        }
+        while True:
+            await asyncio.sleep(10)
+            try:
+                registry = get_agent_registry()
+                for action in list_actions(limit=50):
+                    uuid = action.get("action_uuid", "")
+                    status = action.get("status", "")
+                    if not uuid or uuid in _notified:
+                        continue
+                    if status not in ("success", "failed"):
+                        continue
+                    _notified.add(uuid)
+                    # Cap _notified to avoid unbounded growth
+                    if len(_notified) > 1000:
+                        _notified.clear()
+                        _notified.update(
+                            a["action_uuid"]
+                            for a in list_actions(limit=500)
+                            if a.get("status") in ("success", "failed", "denied")
+                        )
+
+                    # Resolve human-readable agent name from registry
+                    agent_id_val = action.get("agent_id", "")
+                    agent_name = (action.get("agent_id") or "")[:8]
+                    try:
+                        info = registry.get_agent(agent_id_val)
+                        if info:
+                            agent_name = info.get("name") or info.get("hostname") or agent_name
+                    except Exception:
+                        pass
+
+                    icon = "[OK]" if status == "success" else "[FAIL]"
+                    action_id = action.get("action_id", "unknown")
+                    text = f"{icon} **{action_id}** on **{agent_name}**: {status}"
+                    result = action.get("result") or {}
+                    if isinstance(result, dict):
+                        detail = result.get("message") or result.get("error", "")
+                        if detail:
+                            text += f" — {detail}"
+
+                    notif = ChatMessage(
+                        from_id=PARTICIPANT_CITADEL,
+                        to_id=PARTICIPANT_USER,
+                        msg_type=MessageType.RESPONSE,
+                        payload={"text": text},
+                    )
+                    await chat_mgr.send(notif)
+
+                    # On failure: trigger Guardian AI analysis via EVENT type
+                    # (MessageType.EVENT from PARTICIPANT_CITADEL triggers AI bridge)
+                    if status == "failed":
+                        escalation_text = (
+                            f"Daemon action FAILED: {action_id} on {agent_name}. "
+                            f"Error: {result.get('error', 'unknown')}. "
+                            f"Please diagnose and suggest next steps."
+                        )
+                        escalation = ChatMessage(
+                            from_id=PARTICIPANT_CITADEL,
+                            to_id=PARTICIPANT_USER,
+                            msg_type=MessageType.EVENT,
+                            payload={"text": escalation_text, "severity": "high"},
+                        )
+                        await chat_mgr.send(escalation)
+            except Exception:
+                logger.warning("Action completion monitor error", exc_info=True)
+
+    asyncio.create_task(_action_completion_monitor())
+
     # Defense Mesh heartbeat protocol (v0.3.36)
     # HMAC-signed heartbeats with pre-shared keys.
     # Pure automation at NORMAL phase (zero AI tokens).
@@ -701,6 +834,31 @@ async def startup_event():
     except Exception:
         logger.warning("Defense Mesh failed to start", exc_info=True)
 
+    # Resume any SSH key rotations that were in progress before shutdown/crash.
+    # This ensures a half-applied rotation (new key on server, old key still valid)
+    # is always driven to completion rather than left in an ambiguous state.
+    try:
+        from ..remote.ssh_rotation import get_rotation_store, SSHKeyRotator
+        from .asset_routes import get_inventory as _get_inv, get_ssh_manager as _get_ssh
+        from .vault_routes import vault_manager as _vm
+        _rot_store = get_rotation_store()
+        _in_progress = _rot_store.get_all_in_progress()
+        if _in_progress:
+            _rotator = SSHKeyRotator(
+                vault=_vm,
+                ssh=_get_ssh(),
+                assets=_get_inv(),
+                store=_rot_store,
+            )
+            for _rec in _in_progress:
+                logger.info(
+                    f"[startup] Resuming SSH rotation {_rec['rotation_id']} "
+                    f"for asset {_rec['asset_id']} (status: {_rec['status']})"
+                )
+                asyncio.ensure_future(_rotator.resume_rotation(_rec["rotation_id"]))
+    except Exception:
+        logger.warning("Failed to resume in-progress SSH rotations", exc_info=True)
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -715,6 +873,11 @@ async def shutdown_event():
     poller = getattr(app.state, "agent_poller", None)
     if poller:
         await poller.stop()
+
+    # Stop LAN scanner
+    lan_scanner = getattr(app.state, "lan_scanner", None)
+    if lan_scanner:
+        lan_scanner.stop()
 
     # Stop Guardian escalation
     guardian_esc = getattr(app.state, "guardian_escalation", None)
@@ -854,6 +1017,16 @@ async def serve_timeline_redirect():
         return FileResponse(timeline_path, headers=_NO_CACHE)
     else:
         raise HTTPException(status_code=404, detail="Timeline page not found")
+
+
+@app.get("/ops-center.html")
+async def serve_ops_center():
+    """Serve Ops Center HMI page."""
+    path = FRONTEND_DIR / "ops-center.html"
+    if path.exists():
+        return FileResponse(path, headers=_NO_CACHE)
+    else:
+        raise HTTPException(status_code=404, detail="Ops Center page not found")
 
 
 @app.get("/charts.html")
@@ -1734,12 +1907,12 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
-def start_api_server(host: str = "127.0.0.1", port: int = 8000):
+def start_api_server(host: str = "0.0.0.0", port: int = 8000):
     """
     Start FastAPI server.
 
     Args:
-        host: Host to bind to (default: localhost only for security)
+        host: Host to bind to (default: all interfaces for Tailscale/VPN access)
         port: Port to listen on
     """
     uvicorn.run(app, host=host, port=port, log_level="info")

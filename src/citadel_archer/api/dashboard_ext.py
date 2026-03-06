@@ -844,15 +844,23 @@ async def get_extension_watcher_status(
 # ---------------------------------------------------------------------------
 
 
+# Keys whose values are never returned in plaintext to the frontend.
+_SENSITIVE_PREF_KEYS: frozenset = frozenset({"hostinger_api_key"})
+
+
 @router.get("/preferences")
 async def get_all_preferences(
     _token: str = Depends(verify_session_token),
 ):
-    """Return all user preferences as a dict."""
+    """Return all user preferences as a dict (sensitive keys masked)."""
     from ..core.user_preferences import get_user_preferences
 
     prefs = get_user_preferences()
-    return prefs.get_all()
+    all_prefs = prefs.get_all()
+    for k in _SENSITIVE_PREF_KEYS:
+        if k in all_prefs and all_prefs[k]:
+            all_prefs[k] = "***"
+    return all_prefs
 
 
 @router.get("/preferences/{key}")
@@ -860,12 +868,62 @@ async def get_preference(
     key: str,
     _token: str = Depends(verify_session_token),
 ):
-    """Return a single preference value."""
+    """Return a single preference value (sensitive keys masked)."""
     from ..core.user_preferences import get_user_preferences
 
     prefs = get_user_preferences()
     value = prefs.get(key)
+    if key in _SENSITIVE_PREF_KEYS:
+        is_set = bool(value)
+        result = {"key": key, "value": "***" if is_set else None, "is_set": is_set}
+        if key == "hostinger_api_key":
+            result["verified_at"] = prefs.get("hostinger_key_verified_at")
+            result["verified_ok"] = prefs.get("hostinger_key_verified_ok")
+        return result
     return {"key": key, "value": value}
+
+
+class HostingerTestRequest(BaseModel):
+    api_key: str = ""
+
+
+@router.post("/integrations/hostinger/test")
+async def test_hostinger_connection(
+    body: HostingerTestRequest,
+    _token: str = Depends(verify_session_token),
+):
+    """Verify a Hostinger API key by listing VPS.
+
+    If body.api_key is provided, test that key directly (allows testing
+    before saving). Otherwise fall back to the saved UserPreferences key.
+    Verification result (ok/fail + timestamp) is persisted only when testing
+    the saved key (body.api_key empty) so the Settings chip stays accurate.
+    """
+    from datetime import datetime, timezone
+    from ..core.user_preferences import get_user_preferences
+    from ..integrations.hostinger import HostingerClient
+
+    prefs = get_user_preferences()
+    testing_saved_key = not body.api_key
+    verified_at = datetime.now(timezone.utc).isoformat()
+
+    try:
+        client = HostingerClient(api_key=body.api_key or None)
+        vms = await client.list_vps()
+        hostnames = [vm.get("hostname") or vm.get("label") or str(vm.get("id")) for vm in vms]
+        if testing_saved_key:
+            prefs.set("hostinger_key_verified_at", verified_at)
+            prefs.set("hostinger_key_verified_ok", "true")
+        return {"ok": True, "vps_count": len(vms), "hostnames": hostnames,
+                "verified_at": verified_at if testing_saved_key else None}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        if testing_saved_key:
+            prefs.set("hostinger_key_verified_at", verified_at)
+            prefs.set("hostinger_key_verified_ok", "false")
+        return {"ok": False, "error": f"API error: {exc}",
+                "verified_at": verified_at if testing_saved_key else None}
 
 
 class PreferenceUpdate(BaseModel):
@@ -883,6 +941,12 @@ async def set_preference(
 
     prefs = get_user_preferences()
     prefs.set(key, body.value)
+    if key == "hostinger_api_key":
+        # New key requires re-verification — clear stale status
+        prefs.delete("hostinger_key_verified_at")
+        prefs.delete("hostinger_key_verified_ok")
+    if key in _SENSITIVE_PREF_KEYS:
+        return {"key": key, "value": "***", "saved": True}
     return {"key": key, "value": body.value}
 
 

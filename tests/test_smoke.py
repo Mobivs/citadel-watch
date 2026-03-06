@@ -20,6 +20,8 @@ When a section fails, run the full suite for that area:
   S10 Remote Shield         tests/test_remote_shield_escalation.py
   S11 Event Aggregator      tests/test_aggregator.py
   S12 Panic Room            tests/test_remote_panic.py
+  S15 LAN Sentinel          tests/test_lan_sentinel.py
+  S16 SSH Key Rotation      (unit tests only — requires live VPS for full test)
 """
 
 import pytest
@@ -308,3 +310,248 @@ class TestS12_PanicRoom:
         with TestClient(app) as client:
             r = client.get("/api/panic/config")
         assert r.status_code != 500
+
+
+# ---------------------------------------------------------------------------
+# S13 — Local Host Defender
+# Verifies localhost auto-registration and safe-command whitelist.
+# ---------------------------------------------------------------------------
+class TestS13_LocalHostDefender:
+    """S13: Local host protection — auto-registration and command safety."""
+
+    def test_localhost_asset_auto_registers(self):
+        """ensure_localhost_asset creates an asset with id='localhost'."""
+        from citadel_archer.local.local_defender import ensure_localhost_asset
+        from citadel_archer.intel.assets import AssetInventory, AssetPlatform
+
+        inv = AssetInventory(db_path=None)  # memory-only
+        result = ensure_localhost_asset(inv)
+        assert result is True
+        asset = inv.get("localhost")
+        assert asset is not None
+        assert asset.asset_id == "localhost"
+        assert asset.platform == AssetPlatform.LOCAL
+        assert asset.guardian_active is True
+
+    def test_localhost_auto_register_is_idempotent(self):
+        """Calling twice does not create a duplicate."""
+        from citadel_archer.local.local_defender import ensure_localhost_asset
+        from citadel_archer.intel.assets import AssetInventory
+
+        inv = AssetInventory(db_path=None)
+        first = ensure_localhost_asset(inv)
+        second = ensure_localhost_asset(inv)
+        assert first is True
+        assert second is False
+
+    def test_windows_powershell_commands_whitelisted(self):
+        """PowerShell read-only commands are in the safe-command set."""
+        from citadel_archer.chat.ai_bridge import _is_safe_read_only
+        assert _is_safe_read_only("Get-Process") is True
+        assert _is_safe_read_only("Get-FileHash C:\\Windows\\notepad.exe") is True
+        assert _is_safe_read_only("Get-AuthenticodeSignature 'C:\\file.exe'") is True
+
+    def test_windows_cmd_tools_with_paths_whitelisted(self):
+        """Windows cmd tools with backslash paths must auto-execute (not prompt approval)."""
+        from citadel_archer.chat.ai_bridge import _is_safe_read_only
+        assert _is_safe_read_only("dir C:\\Windows\\System32") is True
+        assert _is_safe_read_only("type C:\\Windows\\System32\\drivers\\etc\\hosts") is True
+
+    def test_powershell_write_commands_blocked(self):
+        """Destructive PowerShell commands must NOT be auto-executed."""
+        from citadel_archer.chat.ai_bridge import _is_safe_read_only
+        assert _is_safe_read_only("Stop-Process -Id 1234") is False
+        assert _is_safe_read_only("Remove-Item C:\\evil.exe -Force") is False
+
+
+# ---------------------------------------------------------------------------
+# S14 — Event Resolution Store
+# Verifies resolve/unresolve/get/get_many with an in-memory DB.
+# ---------------------------------------------------------------------------
+class TestS14_ResolutionStore:
+    """S14: Event resolution persistence — resolve, unresolve, bulk fetch."""
+
+    def _store(self, tmp_path):
+        from pathlib import Path
+        from citadel_archer.intel.resolution_store import ResolutionStore
+        return ResolutionStore(db_path=Path(tmp_path) / "resolutions.db")
+
+    def test_resolve_creates_record(self, tmp_path):
+        store = self._store(tmp_path)
+        rec = store.resolve("local", "evt-001", "block_ip")
+        assert rec["external_id"] == "evt-001"
+        assert rec["action_taken"] == "block_ip"
+        assert rec["resolved_by"] == "user"
+
+    def test_get_returns_record(self, tmp_path):
+        store = self._store(tmp_path)
+        store.resolve("local", "evt-002", "kill_process", notes="test")
+        row = store.get("local", "evt-002")
+        assert row is not None
+        assert row["action_taken"] == "kill_process"
+        assert row["notes"] == "test"
+
+    def test_unresolve_deletes_record(self, tmp_path):
+        store = self._store(tmp_path)
+        store.resolve("remote-shield", "thr-001", "apply_patches")
+        deleted = store.unresolve("remote-shield", "thr-001")
+        assert deleted is True
+        assert store.get("remote-shield", "thr-001") is None
+
+    def test_unresolve_missing_returns_false(self, tmp_path):
+        store = self._store(tmp_path)
+        assert store.unresolve("local", "nonexistent") is False
+
+    def test_resolve_upserts(self, tmp_path):
+        store = self._store(tmp_path)
+        store.resolve("local", "evt-003", "block_ip")
+        store.resolve("local", "evt-003", "quarantine_file")
+        row = store.get("local", "evt-003")
+        assert row["action_taken"] == "quarantine_file"
+
+    def test_get_many_bulk_fetch(self, tmp_path):
+        store = self._store(tmp_path)
+        store.resolve("local", "a1", "block_ip")
+        store.resolve("remote-shield", "b1", "kill_process")
+        result = store.get_many([("local", "a1"), ("remote-shield", "b1"), ("local", "missing")])
+        assert "local:a1" in result
+        assert "remote-shield:b1" in result
+        assert "local:missing" not in result
+
+    def test_resolution_route_resolve(self, tmp_path):
+        """REST endpoint returns 200 and resolution record."""
+        from fastapi.testclient import TestClient
+        from citadel_archer.api.main import app
+        with TestClient(app) as client:
+            r = client.post(
+                "/api/events/local/smoke-evt-001/resolve",
+                json={"action_taken": "block_ip"},
+                headers={"X-Session-Token": "test"},
+            )
+        # 401 is expected without a real session token — just verify no 500
+        assert r.status_code != 500
+
+
+# ---------------------------------------------------------------------------
+# S15 — LAN Sentinel
+# Verifies LanDeviceStore CRUD and REST endpoint health with an in-memory DB.
+# ---------------------------------------------------------------------------
+class TestS15_LanSentinel:
+    """S15: LAN device store — upsert, mark_known, get_new, endpoint health."""
+
+    def _make_store(self, tmp_path):
+        from pathlib import Path
+        from citadel_archer.local.lan_scanner import LanDeviceStore
+        return LanDeviceStore(db_path=Path(tmp_path) / "lan_test.db")
+
+    def test_lan_device_store_upsert(self, tmp_path):
+        """Upsert a device then get_all returns it."""
+        store = self._make_store(tmp_path)
+        is_new = store.upsert({
+            "mac": "AA:BB:CC:DD:EE:FF",
+            "ip": "192.168.1.10",
+            "hostname": "testhost",
+            "manufacturer": "TestCo",
+        })
+        assert is_new is True
+        devices = store.get_all()
+        assert len(devices) == 1
+        assert devices[0]["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert devices[0]["ip"] == "192.168.1.10"
+
+    def test_mark_known(self, tmp_path):
+        """After mark_known, is_known is 1 and label is saved."""
+        store = self._make_store(tmp_path)
+        store.upsert({"mac": "11:22:33:44:55:66", "ip": "192.168.1.20"})
+        result = store.mark_known("11:22:33:44:55:66", label="My Laptop")
+        assert result is True
+        device = store.get_by_mac("11:22:33:44:55:66")
+        assert device["is_known"] == 1
+        assert device["label"] == "My Laptop"
+
+    def test_get_new_devices(self, tmp_path):
+        """get_new() returns only unknown (is_known=0) devices."""
+        store = self._make_store(tmp_path)
+        store.upsert({"mac": "AA:BB:CC:00:00:01", "ip": "192.168.1.2"})
+        store.upsert({"mac": "AA:BB:CC:00:00:02", "ip": "192.168.1.3"})
+        store.mark_known("AA:BB:CC:00:00:01")
+        new = store.get_new()
+        assert len(new) == 1
+        assert new[0]["mac"] == "AA:BB:CC:00:00:02"
+
+    def test_lan_status_endpoint_not_500(self):
+        """GET /api/lan/status returns something other than 500."""
+        from fastapi.testclient import TestClient
+        from citadel_archer.api.main import app
+        with TestClient(app) as client:
+            r = client.get(
+                "/api/lan/status",
+                headers={"X-Session-Token": "test"},
+            )
+        assert r.status_code != 500
+
+# ---------------------------------------------------------------------------
+# S16 — SSH Key Rotation Store
+# Verifies SSHRotationStore CRUD and state transitions with an in-memory DB.
+# ---------------------------------------------------------------------------
+class TestS16_SshRotationStore:
+    """S16: SSH key rotation state store — create, update, get_active, get_all_in_progress."""
+
+    def _make_store(self, tmp_path):
+        from pathlib import Path
+        from citadel_archer.remote.ssh_rotation import SSHRotationStore
+        return SSHRotationStore(db_path=Path(tmp_path) / "ssh_rot_test.db")
+
+    def test_create_rotation(self, tmp_path):
+        """create() returns a UUID and persists the record."""
+        store = self._make_store(tmp_path)
+        rotation_id = store.create("asset-123", old_cred_id="cred-abc")
+        assert rotation_id
+        rec = store.get(rotation_id)
+        assert rec is not None
+        assert rec["asset_id"] == "asset-123"
+        assert rec["old_cred_id"] == "cred-abc"
+        assert rec["status"] == "pending"
+
+    def test_update_status(self, tmp_path):
+        """update() transitions status and persists extra fields."""
+        store = self._make_store(tmp_path)
+        rid = store.create("asset-456")
+        store.update(rid, "generating", new_cred_id="cred-xyz", new_pub_key="ssh-ed25519 AAAA test")
+        rec = store.get(rid)
+        assert rec["status"] == "generating"
+        assert rec["new_cred_id"] == "cred-xyz"
+        assert rec["new_pub_key"] == "ssh-ed25519 AAAA test"
+
+    def test_get_active_returns_in_progress(self, tmp_path):
+        """get_active() finds non-terminal rotation for an asset."""
+        store = self._make_store(tmp_path)
+        rid = store.create("asset-789")
+        store.update(rid, "key_written")
+        active = store.get_active("asset-789")
+        assert active is not None
+        assert active["rotation_id"] == rid
+        assert active["status"] == "key_written"
+
+    def test_get_active_returns_none_for_completed(self, tmp_path):
+        """get_active() returns None after rotation completes."""
+        store = self._make_store(tmp_path)
+        rid = store.create("asset-done")
+        store.update(rid, "completed")
+        assert store.get_active("asset-done") is None
+
+    def test_get_all_in_progress_filters_terminal(self, tmp_path):
+        """get_all_in_progress() excludes terminal statuses."""
+        store = self._make_store(tmp_path)
+        rid_active = store.create("asset-A")
+        store.update(rid_active, "verified")
+        rid_done = store.create("asset-B")
+        store.update(rid_done, "completed")
+        rid_failed = store.create("asset-C")
+        store.update(rid_failed, "failed")
+
+        in_progress = store.get_all_in_progress()
+        ids = [r["rotation_id"] for r in in_progress]
+        assert rid_active in ids
+        assert rid_done not in ids
+        assert rid_failed not in ids

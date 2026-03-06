@@ -424,6 +424,20 @@
             color: #6B7280;
         }
 
+        .chat-msg-model {
+            font-size: 0.6rem;
+            font-weight: 400;
+            color: #6B7280;
+        }
+
+        .chat-msg-tokens {
+            font-size: 0.6rem;
+            color: #4B5563;
+            margin-left: auto;
+            margin-right: 6px;
+            white-space: nowrap;
+        }
+
         .chat-msg-body {
             font-size: 0.78rem;
             color: #D1D5DB;
@@ -621,6 +635,26 @@
             margin-left: 4px;
         }
 
+        .ssh-output {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(0,217,255,0.15);
+            border-radius: 4px;
+            padding: 6px 8px;
+            margin: 4px 0 0;
+            font-size: 11px;
+            font-family: 'Cascadia Code', 'Consolas', monospace;
+            color: #c8d8e8;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .ssh-stderr {
+            color: #ff9966;
+            border-color: rgba(255,100,0,0.25);
+        }
+
         .chat-input-area {
             display: flex;
             gap: 6px;
@@ -699,6 +733,24 @@
             background: rgba(167, 139, 250, 0.04);
         }
         #chat-thinking-indicator[hidden] { display: none; }
+        #chat-interrupt-btn {
+            margin-left: auto;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 7px;
+            border-radius: 4px;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            background: rgba(239, 68, 68, 0.08);
+            color: #ef4444;
+            font-size: 0.68rem;
+            cursor: pointer;
+        }
+        #chat-interrupt-btn:hover {
+            background: rgba(239, 68, 68, 0.18);
+            border-color: rgba(239, 68, 68, 0.5);
+        }
         .thinking-dots {
             display: flex;
             gap: 3px;
@@ -792,6 +844,10 @@
                     <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                     <span>Intelligence</span>
                 </button>
+                <button id="tab-btn-ops-center" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic">
+                    <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="7" height="18" rx="1"/><rect x="9" y="8" width="6" height="13" rx="1"/><rect x="15" y="3" width="7" height="18" rx="1"/><line x1="2" y1="21" x2="22" y2="21"/></svg>
+                    <span>Ops Center</span>
+                </button>
                 <button id="tab-btn-charts" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic">
                     <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                     <span>Charts</span>
@@ -811,6 +867,10 @@
                 <button id="tab-btn-remote-shield" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic">
                     <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     <span>Remote Shield</span>
+                </button>
+                <button id="tab-btn-lan-sentinel" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic">
+                    <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="16" y="2" width="6" height="6" rx="1"/><rect x="9" y="16" width="6" height="6" rx="1"/><line x1="5" y1="8" x2="12" y2="16"/><line x1="19" y1="8" x2="12" y2="16"/></svg>
+                    <span>LAN</span>
                 </button>
                 <button id="tab-btn-backup" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-panel-dynamic">
                     <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -925,6 +985,10 @@
                         <span></span><span></span><span></span>
                     </div>
                     <span id="chat-thinking-detail">Analyzing...</span>
+                    <button id="chat-interrupt-btn" title="Stop AI">
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                        Stop
+                    </button>
                 </div>
                 <div class="chat-input-area">
                     <textarea id="chat-input" rows="1" placeholder="Message or command… (Shift+Enter for new line)" autocomplete="off"></textarea>
@@ -983,6 +1047,28 @@
                         </div>
                     </button>
                 </li>
+                <li class="settings-menu-item">
+                    <button class="settings-menu-btn" id="settings-integrations">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                        <div class="settings-menu-text">
+                            <span class="settings-menu-label">Integrations</span>
+                            <span class="settings-menu-desc">API keys for external services</span>
+                        </div>
+                    </button>
+                </li>
+                <li class="settings-menu-item">
+                    <button class="settings-menu-btn" id="settings-ai-context">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+                        </svg>
+                        <div class="settings-menu-text">
+                            <span class="settings-menu-label">AI Context</span>
+                            <span class="settings-menu-desc">Tune Guardian AI trigger sensitivity and context window</span>
+                        </div>
+                    </button>
+                </li>
                 <li class="settings-menu-item dev-tools">
                     <button class="settings-menu-btn dev-tools" id="settings-dev-tools">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1027,6 +1113,119 @@
                         <svg id="dnd-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                         <span id="dnd-label">Enable Do Not Disturb</span>
                     </button>
+                </div>
+            </div>
+
+            <!-- AI Context Panel (hidden by default) -->
+            <div id="settings-ai-context-panel" style="display: none; padding: 1.25rem; overflow-y: auto; max-height: calc(90vh - 80px);">
+                <button id="settings-ai-context-back" style="background: none; border: none; color: #9CA3AF; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; margin-bottom: 1rem; padding: 0; transition: color 0.2s;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    Back to Settings
+                </button>
+                <h3 style="font-size: 1rem; font-weight: 600; color: #E5E7EB; margin-bottom: 1.25rem;">AI Context</h3>
+
+                <!-- Context Window -->
+                <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">Context Window</label>
+
+                    <div style="margin-bottom: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.25rem;">
+                            <span style="font-size: 0.8rem; color: #E5E7EB; font-weight: 500;">History Window</span>
+                            <span id="ai-history-chars-display" style="font-size: 0.72rem; color: #00D9FF; font-weight: 600;">~100K tokens</span>
+                        </div>
+                        <p style="font-size: 0.75rem; color: #6B7280; margin-bottom: 0.5rem;">Characters of chat history fed to Guardian per call. Keep at compaction threshold × 3.8 chars/token — or context silently drops before compaction fires. Default 380K = 100K-token compaction.</p>
+                        <input type="number" id="ai-history-chars-input" min="10000" max="500000" step="10000" value="380000"
+                               style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.8rem; color: #E5E7EB; outline: none;" />
+                    </div>
+
+                    <div>
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.25rem;">
+                            <span style="font-size: 0.8rem; color: #E5E7EB; font-weight: 500;">Compaction Threshold</span>
+                            <span id="ai-compaction-display" style="font-size: 0.72rem; color: #9CA3AF; font-weight: 600;">100K tokens</span>
+                        </div>
+                        <p style="font-size: 0.75rem; color: #6B7280; margin-bottom: 0.5rem;">Compact chat into a summary at this many tokens. Lower = fresher summaries. Higher = longer raw history.</p>
+                        <input type="number" id="ai-compaction-tokens-input" min="20000" max="500000" step="10000" value="100000"
+                               style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.8rem; color: #E5E7EB; outline: none;" />
+                    </div>
+                </div>
+
+                <!-- Daily Reports -->
+                <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">Daily Reports</label>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.875rem;">
+                        <div style="flex: 1; margin-right: 1rem;">
+                            <span style="font-size: 0.8rem; color: #E5E7EB; font-weight: 500;">Startup Catch-Up</span>
+                            <p style="font-size: 0.75rem; color: #6B7280; margin: 0.15rem 0 0;">Review offline security events on start. Disable to skip the daily startup report.</p>
+                        </div>
+                        <button id="ai-catchup-enabled-btn" data-value="true" style="flex-shrink: 0; padding: 0.375rem 0.875rem; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid rgba(0,217,255,0.3); background: rgba(0,217,255,0.12); color: #00D9FF; white-space: nowrap;">Enabled</button>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="flex: 1; margin-right: 1rem;">
+                            <span style="font-size: 0.8rem; color: #E5E7EB; font-weight: 500;">Daily Posture Report</span>
+                            <p style="font-size: 0.75rem; color: #6B7280; margin: 0.15rem 0 0;">Once-daily security health check. Disable if it fires too often or adds noise.</p>
+                        </div>
+                        <button id="ai-posture-enabled-btn" data-value="true" style="flex-shrink: 0; padding: 0.375rem 0.875rem; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid rgba(0,217,255,0.3); background: rgba(0,217,255,0.12); color: #00D9FF; white-space: nowrap;">Enabled</button>
+                    </div>
+                </div>
+
+                <!-- Trigger Sensitivity -->
+                <div>
+                    <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">Trigger Sensitivity</label>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.875rem;">
+                        <div style="flex: 1; margin-right: 1rem;">
+                            <span style="font-size: 0.8rem; color: #E5E7EB; font-weight: 500;">Investigate Events Trigger AI</span>
+                            <p style="font-size: 0.75rem; color: #6B7280; margin: 0.15rem 0 0;">"Investigate" severity events activate Guardian AI. Disable to raise the threshold.</p>
+                        </div>
+                        <button id="ai-investigate-triggers-btn" data-value="true" style="flex-shrink: 0; padding: 0.375rem 0.875rem; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid rgba(0,217,255,0.3); background: rgba(0,217,255,0.12); color: #00D9FF; white-space: nowrap;">Enabled</button>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="flex: 1; margin-right: 1rem;">
+                            <span style="font-size: 0.8rem; color: #E5E7EB; font-weight: 500;">Stale Agents Trigger AI</span>
+                            <p style="font-size: 0.75rem; color: #6B7280; margin: 0.15rem 0 0;">Agents with no recent heartbeat activate Guardian AI. Disable if agents go offline regularly.</p>
+                        </div>
+                        <button id="ai-stale-triggers-btn" data-value="true" style="flex-shrink: 0; padding: 0.375rem 0.875rem; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border: 1px solid rgba(0,217,255,0.3); background: rgba(0,217,255,0.12); color: #00D9FF; white-space: nowrap;">Enabled</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Integrations Panel (hidden by default) -->
+            <div id="settings-integrations-panel" style="display: none; padding: 1.25rem;">
+                <button id="settings-integrations-back" style="background: none; border: none; color: #9CA3AF; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; margin-bottom: 1rem; padding: 0; transition: color 0.2s;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    Back to Settings
+                </button>
+                <h3 style="font-size: 1rem; font-weight: 600; color: #E5E7EB; margin-bottom: 1.25rem;">Integrations</h3>
+
+                <!-- Hostinger API Key -->
+                <div style="margin-bottom: 1.5rem;">
+                    <label class="settings-section-label" style="display: block; font-size: 0.75rem; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Hostinger API Key</label>
+                    <p style="font-size: 0.78rem; color: #6B7280; margin-bottom: 0.75rem;">Allows Guardian AI to check VPS status, resource usage, and reboot unresponsive servers directly via the Hostinger API. Generate your key in the Hostinger Panel under API settings.</p>
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <input type="password" id="hostinger-api-key-input"
+                               placeholder="Paste API key from Hostinger Panel"
+                               style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.8rem; color: #E5E7EB; font-family: monospace; outline: none;" />
+                        <button id="hostinger-key-show-btn"
+                                style="padding: 0.5rem 0.75rem; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #9CA3AF; white-space: nowrap; transition: all 0.2s;">
+                            Show
+                        </button>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <button id="hostinger-key-save-btn"
+                                style="padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border: 1px solid rgba(0,217,255,0.3); background: rgba(0,217,255,0.12); color: #00D9FF; transition: all 0.2s;">
+                            Save
+                        </button>
+                        <button id="hostinger-key-test-btn"
+                                style="padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #9CA3AF; transition: all 0.2s;">
+                            Test Connection
+                        </button>
+                        <span id="hostinger-key-status" style="font-size: 0.78rem; color: #9CA3AF;"></span>
+                    </div>
+                    <!-- Persistent verification status chip — updated by settings.js -->
+                    <div id="hostinger-key-verified" style="margin-top: 0.4rem; min-height: 1.1rem;"></div>
                 </div>
             </div>
         </div>

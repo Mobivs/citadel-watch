@@ -5,13 +5,15 @@
 # from persistent sources (audit log, Remote Shield DB, asset inventory)
 # that occurred during the offline period (between last SYSTEM_STOP and now).
 #
-# AI Bridge coupling: The summary text MUST contain "critical" or "high"
-# to trigger AI processing (ai_bridge.py:224-227).
+# AI Bridge coupling: When significant findings exist, the summary is sent
+# as MessageType.EVENT and triggers AI processing (ai_bridge.py).
+# On clean days it is sent as MessageType.TEXT — no AI call, no token cost.
 
 import asyncio
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,6 +29,28 @@ CATCHUP_DELAY = 30           # seconds — wait for services to warm up
 MIN_OFFLINE_MINUTES = 5      # skip if offline < 5 min (just a restart)
 DEFAULT_LOOKBACK_HOURS = 24  # fallback if no SYSTEM_STOP found (first run)
 MAX_LOOKBACK_DAYS = 7        # never look back more than 7 days
+
+# Once-per-day dedup — prevents re-running on every app restart
+_DATE_FILE = Path("data/catchup_last_date.txt")
+
+
+def _ran_today() -> bool:
+    """Return True if catch-up already ran today (UTC)."""
+    try:
+        if _DATE_FILE.exists():
+            return _DATE_FILE.read_text().strip() == datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return False
+
+
+def _mark_ran_today() -> None:
+    """Persist today's UTC date so restarts won't re-run catch-up."""
+    try:
+        _DATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _DATE_FILE.write_text(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    except Exception:
+        logger.debug("Failed to write catchup date marker", exc_info=True)
 
 
 class StartupCatchup:
@@ -98,6 +122,27 @@ class StartupCatchup:
 
     async def _execute_inner(self):
         """Core logic: determine window, gather data, send summary."""
+        # Once-per-day guard — skip on restarts that happen on the same day.
+        # First-run (no date file) always proceeds so the user gets an initial report.
+        if _ran_today():
+            self._skipped = True
+            self._skip_reason = "Already ran today — skipping to save tokens"
+            self._completed = True
+            logger.info("Startup catch-up skipped: already ran today (UTC)")
+            return
+
+        # Respect ai.catchup_enabled — user can disable startup catch-up entirely
+        try:
+            from ..core.user_preferences import get_user_preferences
+            if get_user_preferences().get("ai.catchup_enabled", "true") == "false":
+                self._skipped = True
+                self._skip_reason = "Catch-up disabled in AI Context settings"
+                self._completed = True
+                logger.info("Startup catch-up skipped (disabled in AI Context settings)")
+                return
+        except Exception:
+            pass  # preference unavailable — proceed normally
+
         now = datetime.now(timezone.utc)
         last_stop = self._find_last_stop()
 
@@ -132,19 +177,24 @@ class StartupCatchup:
         report["offline_duration"] = _format_duration(now - start_time)
         report["is_first_run"] = is_first_run
 
-        # Format and send summary
-        summary = self._format_summary(report)
+        # Only trigger an AI turn when there are actual findings.
+        # Clean-day reports are logged to chat as TEXT (no AI turn = no token cost).
+        has_findings = self._has_significant_findings(report)
+        msg_type = MessageType.EVENT if has_findings else MessageType.TEXT
+        summary = self._format_summary(report, has_findings)
 
         try:
-            await self._chat.send_system(summary, MessageType.EVENT)
+            await self._chat.send_system(summary, msg_type)
         except Exception:
             logger.warning("Failed to send startup catch-up to chat")
 
+        _mark_ran_today()
         self._completed = True
         logger.info(
-            "Startup catch-up complete (window=%s, first_run=%s)",
+            "Startup catch-up complete (window=%s, first_run=%s, ai_triggered=%s)",
             report["offline_duration"],
             is_first_run,
+            has_findings,
         )
 
     # ── Offline Window Detection ─────────────────────────────────────
@@ -361,14 +411,38 @@ class StartupCatchup:
 
         return report
 
+    # ── Findings Check ───────────────────────────────────────────────
+
+    def _has_significant_findings(self, report: Dict[str, Any]) -> bool:
+        """Return True only when there are actual findings worth an AI turn.
+
+        On clean days this returns False so the summary is logged to chat
+        as MessageType.TEXT — no AI call, no token cost.
+        """
+        if "audit" in report:
+            sev = report["audit"].get("by_severity", {})
+            if sev.get("critical", 0) + sev.get("alert", 0) > 0:
+                return True
+            # "investigate" triggering AI is user-configurable (default: True)
+            if sev.get("investigate", 0) > 0:
+                try:
+                    from ..core.user_preferences import get_user_preferences
+                    if get_user_preferences().get("ai.investigate_triggers_ai", "true") == "true":
+                        return True
+                except Exception:
+                    return True
+        if "remote_shield" in report:
+            if report["remote_shield"].get("new_threats", 0) > 0:
+                return True
+        if "assets" in report:
+            if report["assets"].get("compromised"):
+                return True
+        return False
+
     # ── Summary Formatting ───────────────────────────────────────────
 
-    def _format_summary(self, report: Dict[str, Any]) -> str:
-        """Format the catch-up report as text for SecureChat.
-
-        The text MUST contain "critical" and "high" keywords to trigger
-        AI Bridge processing (ai_bridge.py:224-227).
-        """
+    def _format_summary(self, report: Dict[str, Any], has_findings: bool = False) -> str:
+        """Format the catch-up report as text for SecureChat."""
         duration = report.get("offline_duration", "unknown")
         is_first = report.get("is_first_run", False)
 
@@ -441,11 +515,14 @@ class StartupCatchup:
             else:
                 lines.append(f"Assets: {a['total']} managed — all healthy")
 
-        # Always include trigger keywords
-        lines.append(
-            "Review any critical and high-priority findings from "
-            "the offline period and advise on required actions."
-        )
+        # Only include the AI instruction when there are findings to act on.
+        # On clean days the message is sent as TEXT so no AI turn fires anyway,
+        # but omitting the instruction keeps the chat log concise.
+        if has_findings:
+            lines.append(
+                "Review critical and high-priority findings from "
+                "the offline period and advise on required actions."
+            )
 
         return "\n".join(lines)
 

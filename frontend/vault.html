@@ -94,7 +94,7 @@
 
             <!-- Unlocked State -->
             <div id="vault-unlocked-state" class="hidden">
-                <!-- Actions Bar -->
+                <!-- Passwords Section -->
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-bold">Stored Passwords</h2>
                     <button id="add-password-btn" class="btn-primary px-4 py-1.5 rounded-lg text-sm flex items-center gap-1.5">
@@ -102,10 +102,148 @@
                         Add Password
                     </button>
                 </div>
-
-                <!-- Password List -->
-                <div class="glass-card p-4">
+                <div class="glass-card p-4 mb-6">
                     <vault-password-list></vault-password-list>
+                </div>
+
+                <!-- SSH Keys Section -->
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-bold">SSH Keys</h2>
+                    <button id="add-ssh-btn" class="btn-primary px-4 py-1.5 rounded-lg text-sm flex items-center gap-1.5">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Add SSH Key
+                    </button>
+                </div>
+                <div class="glass-card p-4" id="ssh-cred-list">
+                    <div style="text-align:center;padding:1.5rem 1rem;color:#94a3b8;font-size:0.8rem;">
+                        Loading SSH keys...
+                    </div>
+                </div>
+
+                <!-- Auto-Unlock Section -->
+                <div class="flex items-center justify-between mb-4 mt-6">
+                    <h2 class="text-lg font-bold">Startup Auto-Unlock</h2>
+                </div>
+                <div class="glass-card p-4" id="auto-unlock-section">
+                    <div class="flex items-start justify-between gap-4">
+                        <div style="flex:1">
+                            <p class="text-sm text-gray-300 mb-1">Auto-unlock vault on startup</p>
+                            <p class="text-xs text-gray-500">Guardian AI and SSH tools will work immediately after restart — no manual unlock needed. The vault password is stored encrypted on this machine.</p>
+                            <p id="auto-unlock-warning" class="text-xs mt-2" style="color:#e6b800;display:none">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:3px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                Weakens vault security to filesystem access. Only enable on trusted machines.
+                            </p>
+                        </div>
+                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.5rem;flex-shrink:0">
+                            <span id="auto-unlock-status-badge" class="text-xs px-2 py-0.5 rounded-full" style="background:rgba(100,116,139,0.2);color:#64748b;border:1px solid rgba(100,116,139,0.3)">Checking...</span>
+                            <div style="display:flex;gap:0.5rem">
+                                <button id="auto-unlock-enable-btn" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:rgba(0,204,102,0.1);border:1px solid rgba(0,204,102,0.3);color:#00cc66;cursor:pointer;display:none">Enable</button>
+                                <button id="auto-unlock-disable-btn" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#ef4444;cursor:pointer;display:none">Disable</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="auto-unlock-pw-row" style="display:none;margin-top:0.875rem;padding-top:0.875rem;border-top:1px solid rgba(255,255,255,0.05)">
+                        <label class="text-xs text-gray-400 block mb-1">Confirm master password to enable auto-unlock</label>
+                        <div style="display:flex;gap:0.5rem">
+                            <input id="auto-unlock-pw-input" type="password" placeholder="Master password" class="modal-input" style="flex:1;font-size:0.8rem;padding:0.4rem 0.6rem" />
+                            <button id="auto-unlock-confirm-btn" class="text-xs px-3 py-1 rounded-lg font-medium" style="background:rgba(0,204,102,0.15);border:1px solid rgba(0,204,102,0.4);color:#00cc66;cursor:pointer;white-space:nowrap">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SSH Credential Modal -->
+            <div id="ssh-modal-overlay" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50" style="display:none">
+                <div style="background:rgba(15,23,42,0.97);border:1px solid rgba(0,217,255,0.3);border-radius:10px;padding:1.25rem;width:90%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,217,255,0.15)">
+                    <h2 style="color:#00D9FF;font-size:1.05rem;margin:0 0 1rem 0" id="ssh-modal-title">Add SSH Key</h2>
+
+                    <div id="ssh-modal-success" style="display:none;background:rgba(16,185,129,0.1);border-left:3px solid #10B981;padding:0.5rem 0.75rem;border-radius:6px;color:#6ee7b7;font-size:0.75rem;margin-bottom:0.75rem"></div>
+                    <div id="ssh-modal-error" style="display:none;background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;padding:0.5rem 0.75rem;border-radius:6px;color:#fca5a5;font-size:0.75rem;margin-bottom:0.75rem"></div>
+
+                    <form id="ssh-modal-form">
+                        <input type="hidden" id="ssh-modal-id" value="" />
+
+                        <div style="margin-bottom:0.875rem">
+                            <label style="display:block;color:#e2e8f0;font-size:0.75rem;margin-bottom:0.375rem;font-weight:500">Name *</label>
+                            <input id="ssh-modal-title-input" type="text" placeholder="e.g. srv1360615-root" required
+                                style="width:100%;padding:0.5rem 0.75rem;background:rgba(15,23,42,0.6);border:1px solid rgba(0,217,255,0.2);border-radius:6px;color:#e2e8f0;font-size:0.8rem;box-sizing:border-box" />
+                        </div>
+
+                        <div style="margin-bottom:0.875rem">
+                            <label style="display:block;color:#e2e8f0;font-size:0.75rem;margin-bottom:0.375rem;font-weight:500">Auth Type</label>
+                            <select id="ssh-modal-auth-type"
+                                style="width:100%;padding:0.5rem 0.75rem;background:rgba(15,23,42,0.6);border:1px solid rgba(0,217,255,0.2);border-radius:6px;color:#e2e8f0;font-size:0.8rem;box-sizing:border-box">
+                                <option value="key">Private Key</option>
+                                <option value="password">Password</option>
+                            </select>
+                        </div>
+
+                        <div id="ssh-key-fields">
+                            <div style="margin-bottom:0.875rem">
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.375rem">
+                                    <label style="display:block;color:#e2e8f0;font-size:0.75rem;font-weight:500;margin:0">Private Key *</label>
+                                    <button type="button" id="ssh-generate-btn"
+                                        style="padding:3px 10px;border:1px solid rgba(0,217,255,0.35);border-radius:5px;background:rgba(0,217,255,0.08);color:#00D9FF;font-size:0.7rem;font-weight:600;cursor:pointer">
+                                        Generate New Key
+                                    </button>
+                                </div>
+                                <textarea id="ssh-modal-private-key" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----&#10;&#10;Or click Generate New Key above"
+                                    style="width:100%;padding:0.5rem 0.75rem;background:rgba(15,23,42,0.6);border:1px solid rgba(0,217,255,0.2);border-radius:6px;color:#e2e8f0;font-size:0.75rem;box-sizing:border-box;font-family:monospace;resize:vertical"></textarea>
+                                <p style="font-size:0.7rem;color:#64748b;margin:0.25rem 0 0">Paste an existing key, or click Generate to create a fresh Ed25519 keypair.</p>
+                            </div>
+
+                            <!-- Public key copy box — shown after generation -->
+                            <div id="ssh-pubkey-box" style="display:none;margin-bottom:0.875rem;background:rgba(0,204,102,0.06);border:1px solid rgba(0,204,102,0.25);border-radius:6px;padding:0.75rem">
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.375rem">
+                                    <span style="font-size:0.75rem;font-weight:600;color:#00cc66">Public Key — install this on your server</span>
+                                    <button type="button" id="ssh-copy-pubkey"
+                                        style="padding:3px 10px;border:1px solid rgba(0,204,102,0.35);border-radius:5px;background:rgba(0,204,102,0.1);color:#00cc66;font-size:0.7rem;cursor:pointer">
+                                        Copy
+                                    </button>
+                                </div>
+                                <code id="ssh-pubkey-text" style="font-size:0.7rem;color:#a0e4b0;word-break:break-all;display:block"></code>
+                                <p style="font-size:0.7rem;color:#64748b;margin:0.5rem 0 0">Run on the VPS: <code style="color:#94a3b8">echo "&lt;key&gt;" >> ~/.ssh/authorized_keys</code></p>
+                            </div>
+                            <div style="margin-bottom:0.875rem">
+                                <label style="display:block;color:#e2e8f0;font-size:0.75rem;margin-bottom:0.375rem;font-weight:500">Key Passphrase <span style="color:#64748b">(if encrypted)</span></label>
+                                <input id="ssh-modal-passphrase" type="password" placeholder="Leave blank if no passphrase"
+                                    style="width:100%;padding:0.5rem 0.75rem;background:rgba(15,23,42,0.6);border:1px solid rgba(0,217,255,0.2);border-radius:6px;color:#e2e8f0;font-size:0.8rem;box-sizing:border-box" />
+                            </div>
+                        </div>
+
+                        <div id="ssh-password-field" style="display:none;margin-bottom:0.875rem">
+                            <label style="display:block;color:#e2e8f0;font-size:0.75rem;margin-bottom:0.375rem;font-weight:500">SSH Password *</label>
+                            <input id="ssh-modal-password" type="password" placeholder="SSH login password"
+                                style="width:100%;padding:0.5rem 0.75rem;background:rgba(15,23,42,0.6);border:1px solid rgba(0,217,255,0.2);border-radius:6px;color:#e2e8f0;font-size:0.8rem;box-sizing:border-box" />
+                        </div>
+
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.875rem">
+                            <div>
+                                <label style="display:block;color:#e2e8f0;font-size:0.75rem;margin-bottom:0.375rem;font-weight:500">Default Username</label>
+                                <input id="ssh-modal-username" type="text" value="root"
+                                    style="width:100%;padding:0.5rem 0.75rem;background:rgba(15,23,42,0.6);border:1px solid rgba(0,217,255,0.2);border-radius:6px;color:#e2e8f0;font-size:0.8rem;box-sizing:border-box" />
+                            </div>
+                            <div>
+                                <label style="display:block;color:#e2e8f0;font-size:0.75rem;margin-bottom:0.375rem;font-weight:500">Default Port</label>
+                                <input id="ssh-modal-port" type="number" value="22" min="1" max="65535"
+                                    style="width:100%;padding:0.5rem 0.75rem;background:rgba(15,23,42,0.6);border:1px solid rgba(0,217,255,0.2);border-radius:6px;color:#e2e8f0;font-size:0.8rem;box-sizing:border-box" />
+                            </div>
+                        </div>
+
+                        <div style="display:flex;gap:0.75rem;margin-top:1.25rem">
+                            <button type="button" id="ssh-modal-cancel"
+                                style="flex:1;padding:0.5rem 1rem;border:1px solid rgba(0,217,255,0.3);border-radius:6px;background:rgba(0,217,255,0.1);color:#00D9FF;font-size:0.8rem;font-weight:600;cursor:pointer">
+                                Cancel
+                            </button>
+                            <button type="button" id="ssh-modal-delete" style="display:none;flex:1;padding:0.5rem 1rem;border:1px solid rgba(239,68,68,0.3);border-radius:6px;background:rgba(239,68,68,0.1);color:#ef4444;font-size:0.8rem;font-weight:600;cursor:pointer">
+                                Delete
+                            </button>
+                            <button type="submit"
+                                style="flex:1;padding:0.5rem 1rem;border:none;border-radius:6px;background:linear-gradient(135deg,#00D9FF,#0099CC);color:white;font-size:0.8rem;font-weight:600;cursor:pointer">
+                                Save Key
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
 

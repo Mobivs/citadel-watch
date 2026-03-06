@@ -5,15 +5,15 @@
 # Gathers data from EventAggregator, AssetInventory, RemoteShieldDatabase,
 # and AnomalyDetector, then sends a structured summary to SecureChat.
 #
-# AI Bridge coupling: The summary text MUST contain the substring
-# "critical" or "high" to trigger AI processing (ai_bridge.py:224-227).
-# The "Provide analysis of critical and high-priority findings" line
-# ensures this even on clean days with zero events.
+# AI Bridge coupling: When significant findings exist, the summary is sent
+# as MessageType.EVENT and triggers AI processing (ai_bridge.py).
+# On clean days it is sent as MessageType.TEXT — no AI call, no token cost.
 
 import asyncio
 import logging
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,6 +28,28 @@ logger = logging.getLogger(__name__)
 
 ANALYSIS_INTERVAL = 86400  # 24 hours (seconds)
 INITIAL_DELAY = 120        # 2 min after startup — lets sensors warm up
+
+# Once-per-day dedup — prevents re-running when the app restarts mid-day
+_DATE_FILE = Path("data/posture_last_date.txt")
+
+
+def _ran_today() -> bool:
+    """Return True if posture analysis already ran today (UTC)."""
+    try:
+        if _DATE_FILE.exists():
+            return _DATE_FILE.read_text().strip() == datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return False
+
+
+def _mark_ran_today() -> None:
+    """Persist today's UTC date so restarts won't re-run posture analysis."""
+    try:
+        _DATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _DATE_FILE.write_text(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    except Exception:
+        logger.debug("Failed to write posture date marker", exc_info=True)
 
 
 class PostureAnalyzer:
@@ -121,17 +143,52 @@ class PostureAnalyzer:
 
     async def _run_analysis(self):
         """Gather posture data, format summary, send to AI."""
+        # Once-per-day guard — prevents re-running when the app restarts mid-day.
+        # The 24-hour interval already prevents double-runs in a stable session,
+        # but a restart resets the in-memory timer.
+        if _ran_today():
+            logger.info("Posture analysis suppressed: already ran today (UTC)")
+            return
+
+        # Respect Do Not Disturb — skip entirely if Guardian is muted
+        try:
+            from ..core.user_preferences import get_user_preferences
+            prefs = get_user_preferences()
+            if prefs.get("guardian_muted", "false") == "true":
+                logger.info("Posture analysis suppressed (Do Not Disturb active)")
+                self._last_run = datetime.now(timezone.utc)
+                self._run_count += 1
+                return
+            # Respect ai.posture_enabled — user can disable daily posture reports
+            if prefs.get("ai.posture_enabled", "true") == "false":
+                logger.info("Posture analysis suppressed (disabled in AI Context settings)")
+                self._last_run = datetime.now(timezone.utc)
+                self._run_count += 1
+                return
+        except Exception:
+            pass  # preference unavailable — proceed normally
+
         report = self._gather_posture()
-        summary = self._format_summary(report)
+
+        # Only trigger an AI turn when there are actual findings worth analyzing.
+        # On clean days the summary is logged as TEXT — no AI call, no token cost.
+        has_findings = self._has_significant_findings(report)
+        msg_type = MessageType.EVENT if has_findings else MessageType.TEXT
+        summary = self._format_summary(report, has_findings)
 
         try:
-            await self._chat.send_system(summary, MessageType.EVENT)
+            await self._chat.send_system(summary, msg_type)
         except Exception:
             logger.warning("Failed to send posture analysis to chat")
 
-        self._last_run = datetime.utcnow()
+        _mark_ran_today()
+        self._last_run = datetime.now(timezone.utc)
         self._run_count += 1
-        logger.info("Posture analysis #%d complete", self._run_count)
+        logger.info(
+            "Posture analysis #%d complete (ai_triggered=%s)",
+            self._run_count,
+            has_findings,
+        )
 
     # ── Data Gathering ───────────────────────────────────────────────
 
@@ -146,7 +203,7 @@ class PostureAnalyzer:
         # 1. Events from the last 24 hours
         if self._aggregator:
             try:
-                cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
                 events = self._aggregator.since(cutoff)
                 severity_counts: Dict[str, int] = Counter()
                 for ev in events:
@@ -169,7 +226,7 @@ class PostureAnalyzer:
         if self._shield_db:
             try:
                 agents = self._shield_db.list_agents()
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 active = 0
                 stale = 0
                 for agent in agents:
@@ -198,14 +255,38 @@ class PostureAnalyzer:
 
         return report
 
+    # ── Findings Check ───────────────────────────────────────────────
+
+    def _has_significant_findings(self, report: Dict[str, Any]) -> bool:
+        """Return True only when there are actual findings worth an AI turn.
+
+        On clean days this returns False so the summary is logged to chat
+        as MessageType.TEXT — no AI call, no token cost.
+        """
+        if "events" in report:
+            sev = report["events"].get("by_severity", {})
+            if sev.get("critical", 0) + sev.get("alert", 0) > 0:
+                return True
+        if "agents" in report:
+            ag = report["agents"]
+            if ag.get("open_threats", 0) > 0:
+                return True
+            if ag.get("stale", 0) > 0:
+                try:
+                    from ..core.user_preferences import get_user_preferences
+                    if get_user_preferences().get("ai.stale_triggers_ai", "true") == "true":
+                        return True
+                except Exception:
+                    return True
+        if "anomaly" in report:
+            if report["anomaly"].get("anomalies_detected", 0) > 0:
+                return True
+        return False
+
     # ── Summary Formatting ───────────────────────────────────────────
 
-    def _format_summary(self, report: Dict[str, Any]) -> str:
-        """Format the posture report as a text summary for SecureChat.
-
-        The text MUST contain "critical" and "high" keywords to trigger
-        AI Bridge processing (ai_bridge.py:224-227).
-        """
+    def _format_summary(self, report: Dict[str, Any], has_findings: bool = False) -> str:
+        """Format the posture report as a text summary for SecureChat."""
         lines: List[str] = ["[Security Posture] Daily security review"]
 
         if "events" in report:
@@ -246,11 +327,15 @@ class PostureAnalyzer:
                 f"model {model_status}"
             )
 
-        # Always include trigger keywords — ensures AI Bridge fires
-        # even on clean days with zero findings
-        lines.append(
-            "Provide analysis of critical and high-priority findings."
-        )
+        # Only include the AI instruction when there are findings to act on.
+        # On clean days the message is sent as TEXT so no AI turn fires anyway,
+        # but omitting the instruction keeps the chat log concise.
+        if has_findings:
+            lines.append(
+                "Provide analysis of critical and high-priority findings."
+            )
+        else:
+            lines.append("All systems nominal — no critical or high-priority findings.")
 
         return "\n".join(lines)
 

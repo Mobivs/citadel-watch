@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ops Center</title>
+<style>
+/* ── Ops Center scoped CSS ────────────────────────────────────────────────────
+   NOTE: Global rules (* margin/padding, html/body height) are intentionally
+   OMITTED here — the parent app (index.html) owns those declarations.
+   All rules below are scoped to #oc-root or to classes that only exist
+   when the ops-center tab is active in #tab-panel-dynamic.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --bg:    #0A0E27;
+  --bg2:   rgba(15,23,42,0.6);
+  --bdr:   rgba(0,217,255,0.1);
+  --cyan:  #00D9FF;
+  --green: #00CC66;
+  --amber: #FF9900;
+  --red:   #FF3333;
+  --mag:   #EC4899;
+  --pur:   #A855F7;
+  --dim:   #1a2a3a;
+}
+
+/* ── Root grid — fills the injected panel height ─────────────────────────── */
+#oc-root {
+  display: grid;
+  height: 100%;
+  grid-template: "left ctr" 1fr / 268px 1fr;
+  gap: 2px;
+  padding: 2px;
+  position: relative; /* scopes the scanline overlay */
+  font-size: 11px;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #9CA3AF;
+  box-sizing: border-box;
+}
+
+/* Scanline overlay — scoped to #oc-root, doesn't touch parent app chrome */
+#oc-root::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 3px,
+    rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 4px
+  );
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── Panel base ─────────────────────────────────────────────────────────── */
+#oc-root .pnl {
+  background: var(--bg2);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--bdr);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.37);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Corner accent brackets */
+#oc-root .pnl::before, #oc-root .pnl::after {
+  content: ''; position: absolute;
+  width: 14px; height: 14px;
+  border-color: rgba(0,217,255,0.35);
+  border-style: solid;
+  pointer-events: none;
+}
+#oc-root .pnl::before { top: 4px; left: 4px; border-width: 2px 0 0 2px; }
+#oc-root .pnl::after  { bottom: 4px; right: 4px; border-width: 0 2px 2px 0; }
+
+/* Panel title bar */
+#oc-root .pnl-title {
+  font-size: 8px; letter-spacing: 2.5px; color: var(--cyan);
+  padding: 6px 12px 5px; border-bottom: 1px solid var(--bdr);
+  text-transform: uppercase; display: flex; align-items: center; gap: 6px;
+}
+#oc-root .pnl-title::before {
+  content: ''; display: inline-block; width: 4px; height: 4px;
+  background: var(--cyan); border-radius: 50%;
+}
+
+/* ── Status dot animations ──────────────────────────────────────────────── */
+#oc-root .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+#oc-root .g   { background: var(--green); box-shadow: 0 0 7px var(--green); animation: oc-pg 3s ease-in-out infinite; }
+#oc-root .a   { background: var(--amber); box-shadow: 0 0 7px var(--amber); animation: oc-pa 1.2s ease-in-out infinite; }
+#oc-root .r   { background: var(--red);   box-shadow: 0 0 7px var(--red);   animation: oc-pr 0.5s ease-in-out infinite; }
+#oc-root .o   { background: #222; border: 1px solid #333; }
+
+@keyframes oc-pg { 0%,100%{opacity:1} 50%{opacity:.55} }
+@keyframes oc-pa { 0%,100%{opacity:1} 50%{opacity:.4}  }
+@keyframes oc-pr { 0%,100%{opacity:1} 50%{opacity:.2}  }
+
+/* ── Center canvas panel ────────────────────────────────────────────────── */
+#oc-ctr { grid-area: ctr; }
+#oc-cv  { display: block; width: 100%; height: 100%; }
+
+/* ── Left panel — threat counters, alarms, event log ─────────────────────── */
+#oc-ops-panel { grid-area: left; display: flex; flex-direction: column; }
+
+/* Counters */
+#oc-counters {
+  padding: 8px 12px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  border-bottom: 1px solid var(--bdr);
+}
+#oc-root .ctr-cell {
+  background: rgba(0,217,255,0.04); border: 1px solid var(--bdr);
+  padding: 5px 8px; text-align: center;
+}
+#oc-root .ctr-num {
+  font-size: 22px; font-weight: bold; color: var(--cyan);
+  letter-spacing: 1px; line-height: 1;
+}
+#oc-root .ctr-lbl   { font-size: 8px; color: #6B7280; letter-spacing: 1px; margin-top: 2px; }
+#oc-root .ctr-cell.hi   .ctr-num { color: var(--red); }
+#oc-root .ctr-cell.warn .ctr-num { color: var(--amber); }
+
+/* Alarm annunciator */
+#oc-alarms {
+  padding: 6px 8px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px;
+  border-bottom: 1px solid var(--bdr);
+}
+#oc-root .alarm-tile {
+  padding: 3px 4px; text-align: center; font-size: 7px; letter-spacing: 1px;
+  border: 1px solid var(--bdr); color: #6B7280;
+  background: rgba(0,217,255,0.03); transition: all .15s; text-transform: uppercase;
+}
+#oc-root .alarm-tile.on {
+  border-color: var(--amber); color: var(--amber);
+  background: rgba(255,153,0,0.08); box-shadow: 0 0 6px rgba(255,153,0,0.33) inset;
+}
+#oc-root .alarm-tile.hi {
+  border-color: var(--red); color: var(--red);
+  background: rgba(255,51,51,0.08); box-shadow: 0 0 6px rgba(255,51,51,0.33) inset;
+  animation: oc-pr .5s infinite;
+}
+
+/* Event log */
+#oc-evt-log { flex: 1; overflow: hidden; padding: 0; }
+#oc-evt-scroll { height: 100%; overflow-y: auto; padding: 4px 8px; }
+#oc-evt-scroll::-webkit-scrollbar { width: 2px; }
+#oc-evt-scroll::-webkit-scrollbar-thumb { background: rgba(0,217,255,0.2); }
+
+#oc-root .evt-row {
+  padding: 3px 0; border-bottom: 1px solid rgba(0,217,255,0.06); line-height: 1.4;
+}
+#oc-root .evt-time { color: #6B7280; font-size: 9px; }
+#oc-root .evt-node { color: var(--pur); font-size: 9px; }
+#oc-root .evt-msg  { color: #9CA3AF; font-size: 10px; margin-top: 1px; }
+#oc-root .evt-row.INFO .evt-msg { color: #9CA3AF; }
+#oc-root .evt-row.WARN .evt-msg { color: #e6b800; }
+#oc-root .evt-row.HIGH .evt-msg { color: #ff9900; }
+#oc-root .evt-row.CRIT .evt-msg { color: var(--red); animation: oc-pr 1s infinite; }
+
+/* Pinned unacknowledged CRIT events */
+#oc-root .evt-row.pinned {
+  background: rgba(255,51,51,0.07);
+  border-left: 2px solid var(--red);
+  border-bottom: 1px solid rgba(255,51,51,0.2);
+  padding: 4px 4px 4px 6px;
+  margin-bottom: 3px;
+}
+#oc-root .evt-row.pinned .evt-msg { animation: oc-pr 0.75s ease-in-out infinite; }
+
+/* ACK button */
+#oc-root .ack-btn {
+  float: right; cursor: pointer;
+  background: rgba(255,51,51,0.12); border: 1px solid rgba(255,51,51,0.5);
+  color: var(--red); font-family: inherit; font-size: 7px; letter-spacing: 1.5px;
+  padding: 2px 6px; border-radius: 2px; text-transform: uppercase; margin-left: 4px;
+}
+#oc-root .ack-btn:hover { background: rgba(255,51,51,0.28); border-color: var(--red); }
+
+/* Severity badge */
+#oc-root .sev {
+  display: inline-block; font-size: 7px; padding: 1px 4px;
+  letter-spacing: 1px; margin-right: 3px;
+}
+#oc-root .sev.INFO { background: rgba(0,204,102,0.1);  color: #00CC66; border: 1px solid rgba(0,204,102,0.25); }
+#oc-root .sev.WARN { background: rgba(230,184,0,0.1);  color: #e6b800; border: 1px solid rgba(230,184,0,0.25); }
+#oc-root .sev.HIGH { background: rgba(255,153,0,0.1);  color: var(--amber); border: 1px solid rgba(255,153,0,0.3); }
+#oc-root .sev.CRIT { background: rgba(255,51,51,0.1);  color: var(--red);   border: 1px solid rgba(255,51,51,0.4); }
+
+</style>
+</head>
+<body>
+
+<div id="oc-root">
+
+  <!-- CENTER — NETWORK TOPOLOGY CANVAS -->
+  <main id="oc-ctr" class="pnl">
+    <canvas id="oc-cv"></canvas>
+  </main>
+
+  <!-- LEFT — COUNTERS + ALARMS + EVENT LOG -->
+  <aside id="oc-ops-panel" class="pnl">
+    <div class="pnl-title">THREAT COUNTERS</div>
+    <div id="oc-counters">
+      <div class="ctr-cell"><div class="ctr-num" id="oc-c-total">0</div><div class="ctr-lbl">ALL TIME</div></div>
+      <div class="ctr-cell"><div class="ctr-num" id="oc-c-today">0</div><div class="ctr-lbl">TODAY</div></div>
+      <div class="ctr-cell"><div class="ctr-num" id="oc-c-hr">0</div><div class="ctr-lbl">THIS HOUR</div></div>
+    </div>
+
+    <div class="pnl-title">ALARM ANNUNCIATOR</div>
+    <div id="oc-alarms">
+      <div class="alarm-tile" id="al-ssh">SSH<br>BRUTE</div>
+      <div class="alarm-tile" id="al-file">FILE<br>INTEG</div>
+      <div class="alarm-tile" id="al-patch">PATCHES<br>PENDING</div>
+      <div class="alarm-tile" id="al-proc">PROCESS<br>ANOM</div>
+      <div class="alarm-tile" id="al-res">RESOURCE<br>HIGH</div>
+      <div class="alarm-tile" id="al-ts">TAILSCALE<br>MESH</div>
+    </div>
+
+    <div class="pnl-title">EVENT LOG</div>
+    <div id="oc-evt-log">
+      <div id="oc-evt-scroll"></div>
+    </div>
+  </aside>
+
+</div><!-- #oc-root -->
+
+</body>
+</html>

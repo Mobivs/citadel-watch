@@ -604,7 +604,7 @@
                     <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                     </svg>
-                    <input id="search-input" type="text" class="search-input" placeholder="Search assets..." autocomplete="off" />
+                    <input id="search-input" type="search" class="search-input" placeholder="Search assets..." autocomplete="off" name="citadel-asset-search" readonly onfocus="this.removeAttribute('readonly')" />
                 </div>
 
                 <!-- Status filter -->
@@ -693,6 +693,52 @@
         </footer>
     </div>
 
+    <!-- SSH Rotation / Recovery Modal -->
+    <div id="rotation-modal-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;flex-direction:column">
+        <div style="background:#111827;border:1px solid rgba(0,217,255,0.2);border-radius:12px;padding:24px;width:420px;max-width:95vw;max-height:85vh;overflow-y:auto">
+            <h3 id="rotation-modal-title" style="margin:0 0 16px;font-size:15px;font-weight:600;color:#00D9FF">Rotating SSH Key...</h3>
+
+            <!-- Progress steps list -->
+            <div id="rotation-steps" style="margin-bottom:12px;font-size:12px;line-height:1.8"></div>
+
+            <!-- Error banner -->
+            <div id="rotation-error" style="display:none;padding:8px 12px;background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.3);border-radius:6px;color:#ff5050;font-size:12px;margin-bottom:12px;word-break:break-word"></div>
+
+            <!-- Action buttons (rollback / close) -->
+            <div id="rotation-actions" style="display:none;gap:8px;flex-wrap:wrap">
+                <button id="btn-rotation-rollback" type="button" style="display:none;padding:6px 14px;font-size:12px;border:1px solid rgba(255,153,0,0.4);border-radius:6px;background:rgba(255,153,0,0.08);color:#ff9900;cursor:pointer">
+                    Undo Rotation
+                </button>
+                <button id="btn-rotation-close" type="button" style="padding:6px 14px;font-size:12px;border:1px solid rgba(100,116,139,0.4);border-radius:6px;background:rgba(100,116,139,0.08);color:#94a3b8;cursor:pointer">
+                    Close
+                </button>
+            </div>
+
+            <!-- Recovery-specific section -->
+            <div id="recovery-section" style="display:none;border-top:1px solid rgba(255,255,255,0.08);margin-top:16px;padding-top:16px">
+                <p id="recovery-instructions" style="font-size:12px;color:#94a3b8;margin:0 0 10px;white-space:pre-line"></p>
+                <!-- Temporary password shown separately so it is never embedded in the instructions string -->
+                <div id="recovery-tmp-password-wrap" style="display:none;margin-bottom:10px">
+                    <p style="font-size:11px;color:#6B7280;margin:0 0 4px;font-weight:600">Temporary root password (single use):</p>
+                    <div id="recovery-tmp-password" style="background:rgba(0,0,0,0.4);border:1px solid rgba(255,153,0,0.3);border-radius:6px;padding:8px;font-family:monospace;font-size:12px;color:#ff9900;margin-bottom:2px;user-select:all"></div>
+                    <p style="font-size:10px;color:#6B7280;margin:0">This password was set via the Hostinger API. Change it after restoring SSH access.</p>
+                </div>
+                <p style="font-size:11px;color:#6B7280;margin:0 0 4px;font-weight:600">New Public Key — paste into authorized_keys:</p>
+                <div id="recovery-pubkey" style="background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px;font-family:monospace;font-size:10px;word-break:break-all;color:#94a3b8;margin-bottom:10px;user-select:all"></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <a id="recovery-console-link" href="#" target="_blank" rel="noopener"
+                       style="padding:6px 14px;font-size:12px;border:1px solid rgba(0,217,255,0.4);border-radius:6px;background:rgba(0,217,255,0.08);color:#00D9FF;text-decoration:none;cursor:pointer">
+                        Open VPS Console
+                    </a>
+                    <button id="btn-recovery-done" type="button"
+                        style="padding:6px 14px;font-size:12px;border:1px solid rgba(0,204,102,0.4);border-radius:6px;background:rgba(0,204,102,0.08);color:#00cc66;cursor:pointer">
+                        Done — Test Connection
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Add/Edit Asset Modal -->
     <div id="asset-modal-overlay" class="modal-overlay">
         <div class="modal-card">
@@ -763,6 +809,39 @@
                             </div>
                         </div>
 
+                        <!-- SSH Credential -->
+                        <div>
+                            <label class="modal-label" for="asset-form-ssh-cred">SSH Key (Vault)</label>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <select id="asset-form-ssh-cred" class="modal-input" style="flex:1">
+                                    <option value="">— None —</option>
+                                </select>
+                                <a id="asset-form-vault-link" href="vault.html" target="_blank"
+                                   title="Open Vault to add SSH keys"
+                                   style="flex-shrink:0;padding:6px 10px;border:1px solid rgba(0,217,255,0.3);border-radius:6px;color:#00D9FF;font-size:11px;text-decoration:none;white-space:nowrap">
+                                    + Add Key
+                                </a>
+                            </div>
+                            <p id="asset-form-ssh-cred-hint" class="modal-hint" style="display:none"></p>
+                        </div>
+
+                        <!-- SSH Key Rotation controls (shown when a credential is linked) -->
+                        <div id="ssh-rotation-controls" style="display:none;margin-top:0.25rem;">
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                                <button id="btn-rotate-ssh" type="button"
+                                    style="padding:5px 12px;font-size:11px;border:1px solid rgba(0,217,255,0.4);border-radius:6px;background:rgba(0,217,255,0.08);color:#00D9FF;cursor:pointer;white-space:nowrap">
+                                    Rotate SSH Key
+                                </button>
+                                <button id="btn-recover-ssh" type="button"
+                                    style="padding:5px 12px;font-size:11px;border:1px solid rgba(255,80,80,0.4);border-radius:6px;background:rgba(255,80,80,0.08);color:#ff5050;cursor:pointer;white-space:nowrap">
+                                    Emergency Recovery
+                                </button>
+                            </div>
+                            <p style="margin:4px 0 0;font-size:10px;color:#6B7280">
+                                Rotation is bumpless — access is never interrupted. Use Emergency Recovery only if SSH is already broken.
+                            </p>
+                        </div>
+
                         <!-- Tags -->
                         <div>
                             <label class="modal-label" for="asset-form-tags">Tags (comma-separated)</label>
@@ -806,29 +885,79 @@
 
                 <!-- Step 1: Generate -->
                 <div id="invite-step-generate" class="invite-step active">
-                    <p class="text-sm text-gray-400 mb-4">Generate a one-time invitation code for a remote AI agent to join the Citadel network.</p>
+                    <p id="invite-intro-text" class="text-sm text-gray-400 mb-4">Generate a one-time invitation code for a remote agent to join the Citadel network.</p>
 
                     <div class="space-y-4">
                         <div>
                             <label class="modal-label" for="invite-agent-name">Agent Name *</label>
-                            <input id="invite-agent-name" class="modal-input" type="text" placeholder="e.g. Production VPS Agent" required maxlength="200" />
+                            <input id="invite-agent-name" class="modal-input" type="text" placeholder="e.g. Hostinger VPS 1" required maxlength="200" />
                         </div>
                         <div>
-                            <label class="modal-label" for="invite-agent-type">How will this agent run?</label>
+                            <label class="modal-label" for="invite-agent-type">What kind of machine is this?</label>
                             <select id="invite-agent-type" class="modal-input">
                                 <option value="claude_code">Claude Code (on VPS, server, or cloud)</option>
                                 <option value="forge">Forge AI (on VPS, server, or cloud)</option>
-                                <option value="vps">Shield script (Linux VPS)</option>
+                                <option value="vps">Citadel Daemon (Linux VPS)</option>
                                 <option value="workstation">Shield script (Windows PC)</option>
-                                <option value="cloud">Shield script (cloud instance)</option>
+                                <option value="cloud">Citadel Daemon (cloud instance)</option>
                                 <option value="custom">Other AI agent</option>
                             </select>
                         </div>
                         <div>
-                            <label class="modal-label" for="invite-coordinator-url">Coordinator URL <span style="opacity:0.5">(for remote agents)</span></label>
-                            <input id="invite-coordinator-url" class="modal-input" type="url" placeholder="e.g. http://100.68.75.8:8000 (Tailscale IP)" maxlength="500" />
-                            <p class="text-xs text-white/30 mt-1">How the remote agent reaches this machine. Leave blank if agent is on the same network.</p>
+                            <label class="modal-label" for="invite-coordinator-url">
+                                This machine's address
+                                <span style="opacity:0.5; font-weight:400;"> (auto-detected)</span>
+                            </label>
+                            <input id="invite-coordinator-url" class="modal-input" type="url" placeholder="Detecting your Tailscale IP..." maxlength="500" />
+                            <p class="text-xs text-white/30 mt-1">The remote server uses this address to phone home. Should be your Tailscale IP (100.x.x.x) — auto-filled above if Tailscale is running.</p>
                         </div>
+
+                        <!-- Tailscale section — shown only for Linux daemon types -->
+                        <div id="invite-tailscale-section" style="display:none;">
+                            <div style="border:1px solid rgba(0,217,255,0.15); border-radius:8px; padding:14px; background:rgba(0,217,255,0.04);">
+                                <p class="text-xs font-semibold text-neon-blue mb-1" style="letter-spacing:0.05em;">TAILSCALE NETWORK PROTECTION</p>
+                                <p class="text-xs text-white/50 mb-3">The setup script will install Tailscale on the remote server, add it to your private network, then lock down the firewall — so only your devices can reach it.</p>
+
+                                <p class="text-xs font-medium text-white/70 mb-2">How should the new server be approved?</p>
+
+                                <!-- Option A: Browser approval (default) -->
+                                <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:10px;">
+                                    <input type="radio" name="ts-auth-mode" value="browser" checked
+                                        style="margin-top:3px; accent-color:#00D9FF; flex-shrink:0;" />
+                                    <span>
+                                        <span class="text-xs font-medium text-white/80">Approve in my browser</span>
+                                        <span class="text-xs text-white/40 block mt-0.5">During setup, a link will appear in the terminal. Click it to add the server to your network. No extra steps now.</span>
+                                    </span>
+                                </label>
+
+                                <!-- Option B: Pre-auth key -->
+                                <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                                    <input type="radio" name="ts-auth-mode" value="key"
+                                        style="margin-top:3px; accent-color:#00D9FF; flex-shrink:0;" />
+                                    <span>
+                                        <span class="text-xs font-medium text-white/80">Use a pre-auth key <span style="color:#00D9FF; font-weight:400;">(hands-free)</span></span>
+                                        <span class="text-xs text-white/40 block mt-0.5">The server joins your network automatically — no browser visit needed during setup.</span>
+                                    </span>
+                                </label>
+
+                                <!-- Key input — shown when "key" radio selected -->
+                                <div id="invite-ts-key-input" style="display:none; margin-top:12px;">
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <input id="invite-tailscale-key" class="modal-input" type="password"
+                                            placeholder="tskey-auth-xxxxxxxxxxxx"
+                                            maxlength="500" autocomplete="off"
+                                            style="flex:1; margin:0;" />
+                                        <a href="https://login.tailscale.com/admin/settings/keys" target="_blank"
+                                            style="white-space:nowrap; font-size:0.7rem; color:#00D9FF; text-decoration:none; padding:6px 10px; border:1px solid rgba(0,217,255,0.3); border-radius:6px; flex-shrink:0;"
+                                            title="Opens Tailscale admin to generate a key">
+                                            Get a key ↗
+                                        </a>
+                                    </div>
+                                    <p class="text-xs text-white/30 mt-1">In Tailscale admin: Settings → Keys → Generate auth key. Make it reusable if you plan to add more servers.</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="grid grid-cols-2 gap-3">
                             <div>
                                 <label class="modal-label" for="invite-recipient-name">Recipient Name</label>
@@ -895,22 +1024,53 @@
                         <li data-step="3.">Paste the invitation string above</li>
                     </ol>
 
-                    <!-- One-liner setup command (for Linux Shield agents) -->
+                    <!-- Two-step setup commands (for Linux Shield agents) -->
                     <div id="invite-oneliner-section" style="display:none; margin-top: 1rem;">
-                        <p class="text-xs text-gray-500 mb-2">One-liner setup (copy and run on the remote server):</p>
-                        <div style="position:relative;">
-                            <div id="invite-oneliner-box" class="invite-code-box" style="font-size:0.7rem;"></div>
-                            <button type="button" id="invite-oneliner-copy-btn" class="invite-copy-btn" title="Copy one-liner command">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
-                                </svg>
-                            </button>
-                            <span id="invite-oneliner-feedback" class="invite-copy-feedback">Copied!</span>
+
+                        <!-- Step 1: Tailscale -->
+                        <div style="margin-bottom:14px;">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                <span style="background:rgba(0,217,255,0.15); color:#00D9FF; font-size:0.65rem; font-weight:700; padding:2px 8px; border-radius:4px; letter-spacing:0.05em;">STEP 1</span>
+                                <p class="text-xs text-gray-400">Run on the server — installs Tailscale and joins your private network:</p>
+                            </div>
+                            <div style="position:relative;">
+                                <div id="invite-tailscale-cmd-box" class="invite-code-box" style="font-size:0.7rem;"></div>
+                                <button type="button" id="invite-tailscale-cmd-copy-btn" class="invite-copy-btn" title="Copy Tailscale setup command">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                                    </svg>
+                                </button>
+                                <span id="invite-tailscale-cmd-feedback" class="invite-copy-feedback">Copied!</span>
+                            </div>
+                            <p id="invite-ts-browser-note" class="text-xs text-white/30 mt-1" style="display:none;">A URL will appear — visit it in your browser to approve this server, then continue to Step 2.</p>
+                        </div>
+
+                        <!-- Step 2: Citadel Daemon -->
+                        <div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                <span style="background:rgba(0,217,255,0.15); color:#00D9FF; font-size:0.65rem; font-weight:700; padding:2px 8px; border-radius:4px; letter-spacing:0.05em;">STEP 2</span>
+                                <p class="text-xs text-gray-400">After Tailscale connects — installs and starts the Citadel security daemon:</p>
+                            </div>
+                            <div style="position:relative;">
+                                <div id="invite-oneliner-box" class="invite-code-box" style="font-size:0.7rem;"></div>
+                                <button type="button" id="invite-oneliner-copy-btn" class="invite-copy-btn" title="Copy Citadel setup command">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                                    </svg>
+                                </button>
+                                <span id="invite-oneliner-feedback" class="invite-copy-feedback">Copied!</span>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="flex items-center justify-end mt-6 pt-4 border-t border-white/5">
+                    <p class="text-xs text-white/20 mt-4" style="line-height:1.5;">
+                        If pasted commands show <code style="font-family:monospace;color:rgba(255,255,255,0.35);">^[[200~</code> before the text, run this once on the server to fix it:
+                        <code style="font-family:monospace;color:rgba(255,255,255,0.35);">bind 'set enable-bracketed-paste off'</code>
+                    </p>
+
+                    <div class="flex items-center justify-end mt-4 pt-4 border-t border-white/5">
                         <button type="button" id="invite-done-btn" class="btn-primary">Done</button>
                     </div>
                 </div>

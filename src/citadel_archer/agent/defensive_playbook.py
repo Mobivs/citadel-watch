@@ -82,7 +82,13 @@ PLAYBOOK: Dict[str, Dict[str, Any]] = {
 
     # ── Require User Approval (Medium Risk) ───────────────────────────────
     "rotate_ssh_keys": {
-        "description": "Revoke all existing SSH authorized_keys for a user",
+        "description": (
+            "DISABLED — do NOT call this action. SSH key rotation cannot be "
+            "performed safely by the daemon alone. It has no vault access and "
+            "cannot verify connectivity from the controller's side. Calling this "
+            "will return an error. Direct the user to the Assets UI 'Rotate' "
+            "button, which performs true bumpless rotation from the controller."
+        ),
         "risk": "medium",
         "require_approval": True,
         "parameters": {
@@ -116,6 +122,17 @@ PLAYBOOK: Dict[str, Dict[str, Any]] = {
                 "description": "Apply security patches only (default: True)",
             },
         },
+    },
+    "harden_vps": {
+        "description": (
+            "Apply initial server hardening: SSH config (PasswordAuthentication no, "
+            "PermitRootLogin no, MaxAuthTries 3), fail2ban install+enable, "
+            "unattended-upgrades enable, security patches. "
+            "Auto-queued on VPS enrollment. Safe to re-run."
+        ),
+        "risk": "medium",
+        "require_approval": True,
+        "parameters": {},
     },
 }
 

@@ -90,6 +90,122 @@ KNOWN_MINERS = {
     "kswapd0",  # common disguise
 }
 
+# Commands spawned by this daemon for diagnostics — never flag as anomalous
+DAEMON_SELF_COMMANDS = frozenset({
+    "ps aux",
+    "ps -aux",
+    "apt list --upgradable",
+    "apt-get update -qq",
+    "ss -tlnp",
+    "df --output=pcent /",
+})
+
+# PID of the running daemon process — set by daemon() before sensors start.
+# Sensor threads skip their own parent process to prevent false CPU alerts.
+_daemon_pid: int = 0
+
+# File integrity suppression table — populated by actions that intentionally
+# modify monitored files (harden_vps, apply_patches).  Maps absolute path to
+# (expiry_epoch, action_id) so the sensor downgrades severity to INFO instead
+# of CRITICAL for expected changes.
+_FILE_SUPPRESSIONS: dict = {}   # path -> (expiry_float, action_id_str)
+_FILE_SUPPRESSIONS_LOCK = threading.Lock()
+
+# Process suppression table — populated by actions that intentionally spawn
+# high-CPU system processes (apply_patches, harden_vps).  Maps process name to
+# (expiry_epoch, action_id) so the sensor skips high-CPU alerts for expected
+# maintenance processes.  Miner detection is NEVER suppressed.
+_PROCESS_SUPPRESSIONS: dict = {}   # proc_name -> (expiry_float, action_id_str)
+_PROCESS_SUPPRESSIONS_LOCK = threading.Lock()
+
+# Process names spawned by patch/hardening actions that should not trigger
+# high-CPU or anomaly alerts while an action is running.
+_MAINTENANCE_PROCS = frozenset({
+    "apt", "apt-get", "dpkg", "dpkg-deb", "dpkg-new",
+    "unattended-upgrades", "unattended-upgrade",
+    "fail2ban", "fail2ban-server", "fail2ban-client",
+    "update-alternatives", "ldconfig", "mandb", "systemctl",
+})
+
+# Process names that are permanently benign — never raise high-CPU alerts
+# regardless of suppression windows.  These are either tools the daemon spawns
+# itself on every cycle (ps, ss, df) or standard package-management workers
+# that are legitimately CPU-hungry (apt, dpkg).  Miner names in KNOWN_MINERS
+# are never overridden by this whitelist.
+_BENIGN_PROCS = frozenset({
+    # The daemon's own diagnostic subprocesses (run every 30s)
+    "ps", "ss", "netstat", "df", "du",
+    # Package management — used by patch_status sensor and action handlers
+    "apt", "apt-get", "apt-cache", "apt-config",
+    "dpkg", "dpkg-deb", "dpkg-query",
+    "unattended-upgrades", "unattended-upgrade",
+    # System/service management
+    "systemctl", "systemd", "journalctl",
+    # Compiler/linker noise during package installs
+    "gcc", "cc1", "ld", "make",
+})
+
+
+def _suppress_file_alert(path: str, action_id: str, minutes: int = 10) -> None:
+    """Register a temporary suppression for a monitored file path.
+
+    Thread-safe.  The file integrity sensor will treat changes to `path` as
+    INFO-level (expected maintenance) until the suppression expires.
+    """
+    expiry = time.time() + minutes * 60
+    with _FILE_SUPPRESSIONS_LOCK:
+        _FILE_SUPPRESSIONS[path] = (expiry, action_id)
+
+
+def _check_suppression(path: str):
+    """Return (suppressed: bool, action_id: str) for the given path.
+
+    Automatically removes expired entries.
+    """
+    with _FILE_SUPPRESSIONS_LOCK:
+        entry = _FILE_SUPPRESSIONS.get(path)
+        if entry is None:
+            return False, ""
+        expiry, action_id = entry
+        if time.time() > expiry:
+            del _FILE_SUPPRESSIONS[path]
+            return False, ""
+        return True, action_id
+
+
+def _suppress_process_alert(action_id: str, minutes: int = 30) -> None:
+    """Register temporary suppressions for all _MAINTENANCE_PROCS.
+
+    Thread-safe.  The process sensor will skip high-CPU/anomaly alerts for
+    known maintenance process names until the suppression expires.
+    Miner detection (KNOWN_MINERS) is never suppressed.
+    """
+    expiry = time.time() + minutes * 60
+    with _PROCESS_SUPPRESSIONS_LOCK:
+        for name in _MAINTENANCE_PROCS:
+            _PROCESS_SUPPRESSIONS[name] = (expiry, action_id)
+
+
+def _check_process_suppression(proc_name: str) -> bool:
+    """Return True if proc_name is currently suppressed (expected maintenance).
+
+    Automatically removes expired entries.  Never suppresses KNOWN_MINERS.
+    Uses lowercase comparison throughout for consistency with _MAINTENANCE_PROCS.
+    """
+    name_lower = proc_name.lower()
+    if name_lower in KNOWN_MINERS:
+        return False
+    with _PROCESS_SUPPRESSIONS_LOCK:
+        entry = _PROCESS_SUPPRESSIONS.get(name_lower)
+        if entry is None:
+            return False
+        expiry, _ = entry
+        if time.time() > expiry:
+            del _PROCESS_SUPPRESSIONS[name_lower]
+            return False
+        return True
+
+
 # Suspicious ports (reverse shells, backdoors)
 SUSPICIOUS_PORTS = {4444, 4445, 5555, 6666, 8888, 9999, 1337, 31337}
 
@@ -377,6 +493,62 @@ def _block_ip(ip):
             return f"block failed: {exc}"
 
 
+def _get_ppid(pid: int) -> int:
+    """Return the parent PID of pid, or 0 on failure. Reads /proc without subprocess."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("PPid:"):
+                    return int(line.split()[1])
+    except Exception:
+        pass
+    return 0
+
+
+def _get_parent_context(pid: int, ppid: int = 0) -> str:
+    """Return a short string describing the parent process of pid.
+
+    Used to add execution context to process threat events so operators can
+    answer "what spawned this process?" without needing a separate forensics
+    collection.  Returns empty string on any failure (best-effort only).
+
+    Args:
+        pid:  The process whose parent context we want.
+        ppid: Caller-supplied parent PID (avoids a second /proc read when
+              the caller has already called _get_ppid).  If 0, reads from
+              /proc/{pid}/status.
+
+    Example output: " Parent: [1234] /bin/bash (root)"
+    """
+    try:
+        if ppid == 0:
+            # Read parent PID from /proc/{pid}/status (no subprocess needed)
+            with open(f"/proc/{pid}/status") as f:
+                for line in f:
+                    if line.startswith("PPid:"):
+                        ppid = int(line.split()[1])
+                        break
+                else:
+                    return ""
+        # Read parent command line
+        with open(f"/proc/{ppid}/cmdline", "rb") as f:
+            parent_cmd = f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+        # Read parent owner
+        parent_user = ""
+        try:
+            import pwd as _pwd
+            stat = os.stat(f"/proc/{ppid}")
+            parent_user = _pwd.getpwuid(stat.st_uid).pw_name
+        except Exception:
+            pass
+        label = f" Parent: [{ppid}] {parent_cmd[:80]}"
+        if parent_user:
+            label += f" ({parent_user})"
+        return label
+    except Exception:
+        return ""
+
+
 def sensor_processes(stop_event):
     """Detect crypto miners, high CPU processes, and suspicious listeners."""
     conn = init_db()
@@ -403,10 +575,25 @@ def sensor_processes(stop_event):
 
                         proc_name = os.path.basename(cmd.split()[0]) if cmd else ""
 
-                        # Known miners
+                        # Skip self: daemon's own Python process and commands it spawns
+                        if pid == _daemon_pid or cmd.strip() in DAEMON_SELF_COMMANDS:
+                            continue
+
+                        # Skip direct children of the daemon (sensor subprocesses:
+                        # ps, ss, df, apt list, etc. spawned each monitoring cycle).
+                        # Cache ppid — _get_parent_context can reuse it to avoid
+                        # a second /proc/{pid}/status read for alerting processes.
+                        proc_ppid = _get_ppid(pid) if _daemon_pid else 0
+                        if _daemon_pid and proc_ppid == _daemon_pid:
+                            continue
+
+                        # Known miners — always alert, never suppressed
                         if proc_name.lower() in KNOWN_MINERS:
                             if pid not in known_pids:
                                 known_pids.add(pid)
+                                # Capture parent context BEFORE kill — /proc/{pid}
+                                # is removed by the kernel immediately after SIGKILL.
+                                parent_ctx = _get_parent_context(pid, ppid=proc_ppid)
                                 try:
                                     os.kill(pid, 9)
                                     action = f"killed pid {pid}"
@@ -415,16 +602,22 @@ def sensor_processes(stop_event):
                                 store_event(
                                     conn, "critical", "processes", "process_anomaly",
                                     f"Crypto miner detected: {proc_name} (pid {pid}, "
-                                    f"CPU {cpu}%). {action}",
+                                    f"CPU {cpu}%). {action}.{parent_ctx}",
                                 )
                             continue
 
-                        # High CPU
+                        # High CPU — skip benign/monitoring tools and approved actions
                         if cpu > 80.0 and pid not in known_pids:
+                            if proc_name.lower() in _BENIGN_PROCS:
+                                continue  # daemon's own tools or package mgmt
+                            if _check_process_suppression(proc_name):
+                                continue  # expected: maintenance process running
                             known_pids.add(pid)
+                            parent_ctx = _get_parent_context(pid, ppid=proc_ppid)
                             store_event(
                                 conn, "medium", "processes", "process_anomaly",
-                                f"High CPU process: {proc_name} (pid {pid}, CPU {cpu}%)",
+                                f"High CPU process: {proc_name} (pid {pid}, "
+                                f"CPU {cpu}%).{parent_ctx}",
                             )
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
@@ -552,10 +745,17 @@ def sensor_file_integrity(stop_event):
             for path, new_hash in current.items():
                 old_hash = file_hashes.get(path)
                 if old_hash and old_hash != new_hash:
-                    store_event(
-                        conn, "critical", "file_integrity", "file_integrity",
-                        f"Critical file modified: {path}",
-                    )
+                    suppressed, by_action = _check_suppression(path)
+                    if suppressed:
+                        store_event(
+                            conn, "info", "file_integrity", "file_integrity",
+                            f"Expected modification (by {by_action}): {path}",
+                        )
+                    else:
+                        store_event(
+                            conn, "critical", "file_integrity", "file_integrity",
+                            f"Critical file modified: {path}",
+                        )
 
             file_hashes = current
             stop_event.wait(FILE_INTEGRITY_INTERVAL)
@@ -566,6 +766,7 @@ def sensor_file_integrity(stop_event):
 def sensor_patch_status(stop_event):
     """Check for pending OS security updates."""
     conn = init_db()
+    last_alerted_count = -1   # -1 = never alerted; avoids alert on first run if already known
 
     try:
         while not stop_event.is_set():
@@ -619,12 +820,17 @@ def sensor_patch_status(stop_event):
                     "pending_titles": pending_titles[:20],
                 })
 
-            # Alert if many updates pending
-            if pending_count > 10:
+            # Alert only when the pending count increases (new patches appeared)
+            # or when it first crosses the threshold — avoids hourly repeat noise
+            # for a count that hasn't changed since the last alert.
+            if pending_count > 10 and pending_count > last_alerted_count:
                 store_event(
                     conn, "medium", "patch_status", "vulnerability",
                     f"{pending_count} pending security updates",
                 )
+                last_alerted_count = pending_count
+            elif pending_count <= 10:
+                last_alerted_count = -1  # reset so we alert again if patches build up
 
             stop_event.wait(PATCH_INTERVAL)
     finally:
@@ -760,7 +966,12 @@ def report_threats(conn, config):
 
 
 def send_heartbeat(config):
-    """Send heartbeat to the server. Processes commands from response."""
+    """Send heartbeat to the server. Processes commands from response.
+
+    The coordinator long-polls this connection for up to 25 seconds waiting
+    for queued actions.  Use a 35s timeout to survive the full long-poll wait
+    plus network overhead.
+    """
     server_url = config["server_url"]
     agent_id = config["agent_id"]
     token = config["api_token"]
@@ -768,7 +979,7 @@ def send_heartbeat(config):
     code, resp = http_post(url, {
         "version": VERSION,
         "status_detail": "daemon_running",
-    }, token=token)
+    }, token=token, timeout=35)
     if code == 200 and resp:
         try:
             data = json.loads(resp) if isinstance(resp, str) else resp
@@ -792,7 +1003,7 @@ def send_heartbeat(config):
 # Hard-coded whitelist — the server cannot instruct the daemon to run anything
 # outside this set.  Add new actions here AND in the coordinator's playbook.
 ALLOWED_ACTIONS = frozenset({
-    # Active defense (new)
+    # Active defense
     "kill_process",
     "block_ip",
     "disable_cron_job",
@@ -800,6 +1011,7 @@ ALLOWED_ACTIONS = frozenset({
     "rotate_ssh_keys",
     "restart_service",
     "apply_patches",
+    "harden_vps",
     # Legacy / policy commands
     "check_updates",
     "threat_alert",
@@ -849,11 +1061,29 @@ def _execute_command(config, cmd):
             svc = params.get("service_name", "")
             if not svc:
                 raise ValueError("service_name is required")
-            subprocess.run(["systemctl", "restart", svc], check=True, timeout=30)
-            result = {"action_id": action_id, "service": svc, "status": "restarted"}
+            # Self-restart requires escaping our own cgroup — systemd sends SIGTERM
+            # to the entire cgroup when stopping the service, which kills both the
+            # daemon and any `systemctl restart citadel-daemon` subprocess we spawned.
+            # Fix: use `systemd-run --on-active=2` to schedule the restart as a
+            # separate transient unit that outlives the daemon's cgroup.
+            if svc == "citadel-daemon":
+                subprocess.Popen(
+                    ["systemd-run", "--on-active=2", "systemctl", "restart", "citadel-daemon"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                result = {"action_id": action_id, "service": svc, "status": "restart_scheduled"}
+            else:
+                subprocess.run(["systemctl", "restart", svc], check=True, timeout=30)
+                result = {"action_id": action_id, "service": svc, "status": "restarted"}
 
         elif action_id == "apply_patches":
             result = _cmd_apply_patches(params)
+
+        elif action_id == "harden_vps":
+            result = _cmd_harden_vps(params)
 
         elif action_id == "check_updates":
             result = _cmd_check_updates()
@@ -876,7 +1106,17 @@ def _execute_command(config, cmd):
         result = {"action_id": action_id, "status": "failed", "error": str(exc)}
         print(f"[!] Command {action_id} failed: {exc}", file=sys.stderr, flush=True)
 
-    # Report result back to coordinator via ext-agent API
+    # Report result back to coordinator via ext-agent API.
+    # Scrub any credential-adjacent fields from params before transmission —
+    # params may include usernames, IPs, or service names but never key material;
+    # this ensures no accidental future action leaks secrets via the result log.
+    # Narrower terms prevent over-matching: "key" alone would scrub innocuous
+    # params like "ssh_key_path" (a file path) or "registry_key".
+    _SCRUB_KEYS = frozenset({"password", "secret", "api_key", "private_key", "token", "credential"})
+    safe_params = {
+        k: "***" if any(s in k.lower() for s in _SCRUB_KEYS) else v
+        for k, v in params.items()
+    }
     if action_uuid:
         url = f"{config['server_url']}/api/ext-agents/{config['agent_id']}/action-result"
         http_post(url, {
@@ -885,6 +1125,7 @@ def _execute_command(config, cmd):
             "status":      exec_status,
             "result":      result,
             "forensics":   result.pop("forensics", {}),
+            "params":      safe_params,
             "timestamp":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, token=config["api_token"])
 
@@ -991,36 +1232,22 @@ def _cmd_disable_cron_job(params):
 
 
 def _cmd_rotate_ssh_keys(params):
-    """Revoke all existing SSH authorized_keys for a user."""
-    username = params.get("username", "root").strip()
-    if not username or "/" in username or username.startswith("."):
-        raise ValueError(f"Invalid username: {username}")
-    # Locate authorized_keys
-    if username == "root":
-        auth_keys = "/root/.ssh/authorized_keys"
-    else:
-        auth_keys = f"/home/{username}/.ssh/authorized_keys"
-    backed_up = False
-    try:
-        if os.path.exists(auth_keys):
-            backup = auth_keys + ".citadel_backup"
-            with open(auth_keys) as f:
-                content = f.read()
-            with open(backup, "w") as f:
-                f.write(content)
-            backed_up = True
-            # Truncate (revoke all keys)
-            with open(auth_keys, "w") as f:
-                f.write("# Cleared by Citadel Archer active defense\n")
-        return {
-            "action_id": "rotate_ssh_keys",
-            "username": username,
-            "keys_file": auth_keys,
-            "backed_up": backed_up,
-            "status": "revoked",
-        }
-    except (OSError, PermissionError) as exc:
-        raise ValueError(f"Failed to rotate SSH keys for {username}: {exc}") from exc
+    """SSH key rotation must be performed by the controller, not the daemon.
+
+    Bumpless rotation requires the controller to generate a new keypair, install
+    it, verify connectivity, and only then remove the old key. The daemon cannot
+    safely do this alone — it has no access to the vault and cannot verify
+    whether a new key works from the controller's perspective.
+
+    Raises ValueError so the caller receives an actionable error instead of
+    silently wiping authorized_keys and locking the server out.
+    """
+    raise ValueError(
+        "rotate_ssh_keys cannot be executed by the daemon. "
+        "Use the Assets UI 'Rotate' button in Citadel Archer, which performs "
+        "safe bumpless rotation: new key installed and verified BEFORE old key "
+        "is removed. Never use this daemon action for SSH key rotation."
+    )
 
 
 def _cmd_collect_forensics():
@@ -1046,17 +1273,34 @@ def _cmd_apply_patches(params):
     """Apply OS security patches."""
     security_only = params.get("security_only", True)
     env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    # Suppress file integrity + process alerts during patching.
+    # apt/dpkg run at high CPU and can modify critical system files legitimately.
+    for _p in CRITICAL_FILES:
+        _suppress_file_alert(_p, "apply_patches", minutes=30)
+    _suppress_process_alert("apply_patches", minutes=30)
     try:
+        # Refresh package index before upgrading (non-fatal if network is slow)
+        subprocess.run(
+            ["apt-get", "update", "-qq"],
+            timeout=120, env=env,
+        )
         if security_only:
-            subprocess.run(
-                ["apt-get", "upgrade", "-y", "--only-upgrade",
-                 "-o", "Dir::Etc::SourceList=/dev/null"],
-                check=True, timeout=300, env=env,
-            )
+            # unattended-upgrades targets security repos by default; fall back
+            # to full upgrade if the tool is not installed
+            try:
+                subprocess.run(
+                    ["unattended-upgrades", "--minimal_upgrade_steps"],
+                    check=True, timeout=600, env=env,
+                )
+            except FileNotFoundError:
+                subprocess.run(
+                    ["apt-get", "upgrade", "-y"],
+                    check=True, timeout=600, env=env,
+                )
         else:
             subprocess.run(
                 ["apt-get", "upgrade", "-y"],
-                check=True, timeout=300, env=env,
+                check=True, timeout=600, env=env,
             )
         return {"action_id": "apply_patches", "status": "patches_applied", "manager": "apt"}
     except FileNotFoundError:
@@ -1065,10 +1309,175 @@ def _cmd_apply_patches(params):
         args = ["dnf", "update", "-y"]
         if security_only:
             args.append("--security")
-        subprocess.run(args, check=True, timeout=300)
+        subprocess.run(args, check=True, timeout=600)
         return {"action_id": "apply_patches", "status": "patches_applied", "manager": "dnf"}
     except FileNotFoundError:
         raise ValueError("No supported package manager found (apt/dnf)")
+
+
+def _cmd_harden_vps(params: dict) -> dict:
+    """Apply server hardening: SSH config, fail2ban, unattended-upgrades, security patches.
+
+    Hardening steps:
+    1. SSH config: PasswordAuthentication no, PermitRootLogin no, MaxAuthTries 3
+    2. fail2ban: install (apt) + enable
+    3. unattended-upgrades: enable
+    4. Apply security patches
+
+    Returns a results dict with each step's outcome.
+    """
+    results = {}
+    errors = []
+
+    # -- Step 1: SSH hardening --------------------------------------------------
+
+    # Suppress file integrity + process alerts for the full hardening duration.
+    # SSH hardening modifies sshd_config; apt (Step 4) can touch critical files;
+    # fail2ban/unattended-upgrades install runs at high CPU.
+    for _p in CRITICAL_FILES:
+        _suppress_file_alert(_p, "harden_vps", minutes=30)
+    _suppress_process_alert("harden_vps", minutes=30)
+
+    sshd_config = "/etc/ssh/sshd_config"
+    if os.path.isfile(sshd_config):
+        try:
+            with open(sshd_config, "r") as f:
+                original = f.read()
+
+            hardened = original
+
+            # Apply each directive: replace existing (commented or uncommented) line,
+            # or append if absent.
+            directives = [
+                ("PasswordAuthentication", "PasswordAuthentication no"),
+                # prohibit-password: blocks password-based root login but keeps
+                # key-based root access intact.  Using 'no' would lock the operator
+                # out on a root-only VPS with no recovery path except console access.
+                ("PermitRootLogin", "PermitRootLogin prohibit-password"),
+                ("MaxAuthTries", "MaxAuthTries 3"),
+                ("PermitEmptyPasswords", "PermitEmptyPasswords no"),
+                ("X11Forwarding", "X11Forwarding no"),
+            ]
+            import re as _re
+            for key, setting in directives:
+                pattern = rf"^#?{key}\s+.*$"
+                if _re.search(pattern, hardened, flags=_re.MULTILINE):
+                    # count=1: only replace the first (global-level) occurrence.
+                    # Without this, Match-block overrides (e.g. per-user SFTP rules)
+                    # would also be clobbered, silently breaking access.
+                    hardened = _re.sub(pattern, setting, hardened, count=1, flags=_re.MULTILINE)
+                else:
+                    hardened = hardened.rstrip("\n") + f"\n{setting}\n"
+
+            with open(sshd_config, "w") as f:
+                f.write(hardened)
+
+            # Reload sshd
+            subprocess.run(
+                ["systemctl", "reload", "sshd"],
+                capture_output=True, timeout=15,
+            )
+            subprocess.run(
+                ["systemctl", "reload", "ssh"],
+                capture_output=True, timeout=15,
+            )
+            results["ssh_hardening"] = "applied"
+        except Exception as e:
+            errors.append(f"ssh_hardening: {e}")
+            results["ssh_hardening"] = f"error: {e}"
+    else:
+        results["ssh_hardening"] = "skipped (sshd_config not found)"
+
+    # -- Step 2: fail2ban -------------------------------------------------------
+
+    try:
+        has_fail2ban = subprocess.run(
+            ["which", "fail2ban-server"],
+            capture_output=True, timeout=5,
+        ).returncode == 0
+
+        if not has_fail2ban:
+            # Try apt-get install
+            env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+            subprocess.run(
+                ["apt-get", "install", "-y", "-qq", "fail2ban"],
+                check=True, capture_output=True, timeout=120, env=env,
+            )
+
+        subprocess.run(
+            ["systemctl", "enable", "--now", "fail2ban"],
+            capture_output=True, timeout=15,
+        )
+        results["fail2ban"] = "enabled"
+    except FileNotFoundError:
+        results["fail2ban"] = "skipped (apt not available)"
+    except subprocess.CalledProcessError as e:
+        errors.append(f"fail2ban: {e}")
+        results["fail2ban"] = f"error: {e}"
+    except Exception as e:
+        errors.append(f"fail2ban: {e}")
+        results["fail2ban"] = f"error: {e}"
+
+    # -- Step 3: unattended-upgrades --------------------------------------------
+
+    try:
+        has_uu = subprocess.run(
+            ["which", "unattended-upgrades"],
+            capture_output=True, timeout=5,
+        ).returncode == 0
+
+        if not has_uu:
+            env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+            subprocess.run(
+                ["apt-get", "install", "-y", "-qq", "unattended-upgrades"],
+                check=True, capture_output=True, timeout=120, env=env,
+            )
+
+        subprocess.run(
+            ["systemctl", "enable", "--now", "unattended-upgrades"],
+            capture_output=True, timeout=15,
+        )
+        results["unattended_upgrades"] = "enabled"
+    except FileNotFoundError:
+        results["unattended_upgrades"] = "skipped (apt not available)"
+    except Exception as e:
+        errors.append(f"unattended_upgrades: {e}")
+        results["unattended_upgrades"] = f"error: {e}"
+
+    # -- Step 4: Apply security patches -----------------------------------------
+
+    try:
+        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        subprocess.run(
+            ["apt-get", "update", "-qq"],
+            check=True, capture_output=True, timeout=120, env=env,
+        )
+        try:
+            subprocess.run(
+                ["unattended-upgrades", "--minimal_upgrade_steps"],
+                check=True, capture_output=True, timeout=600, env=env,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            subprocess.run(
+                ["apt-get", "upgrade", "-y"],
+                check=True, capture_output=True, timeout=600, env=env,
+            )
+        results["security_patches"] = "applied"
+    except FileNotFoundError:
+        results["security_patches"] = "skipped (apt not available)"
+    except subprocess.CalledProcessError as e:
+        errors.append(f"security_patches: {e}")
+        results["security_patches"] = f"error: {e}"
+    except Exception as e:
+        errors.append(f"security_patches: {e}")
+        results["security_patches"] = f"error: {e}"
+
+    return {
+        "action_id": "harden_vps",
+        "status": "completed_with_errors" if errors else "hardened",
+        "results": results,
+        "errors": errors,
+    }
 
 
 def _cmd_check_updates():
@@ -1109,7 +1518,9 @@ def daemon(config):
     signal.signal(signal.SIGTERM, handle_signal)
 
     AGENT_DIR.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(os.getpid()))
+    global _daemon_pid
+    _daemon_pid = os.getpid()
+    PID_FILE.write_text(str(_daemon_pid))
 
     print(f"Citadel Daemon v{VERSION} (Linux)", flush=True)
     print(f"Agent ID: {config['agent_id']}", flush=True)
@@ -1136,10 +1547,13 @@ def daemon(config):
     main_conn = init_db()
     last_heartbeat = 0
     last_report = 0
+    heartbeat_ok = False  # tracks last heartbeat success for long-poll cycling
 
     # Send initial heartbeat immediately
     try:
         send_heartbeat(config)
+        heartbeat_ok = True
+        last_heartbeat = time.monotonic()  # prevent double-send on first loop iteration
         print("  [+] Initial heartbeat sent", flush=True)
     except Exception:
         print("  [!] Initial heartbeat failed (will retry)", flush=True)
@@ -1148,12 +1562,17 @@ def daemon(config):
         while not stop_event.is_set():
             now = time.monotonic()
 
-            if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+            # Long-poll cycling: re-heartbeat immediately after a successful one
+            # so the coordinator can push the next command within ~1s of queuing.
+            # On failure, fall back to HEARTBEAT_INTERVAL to avoid hammering a
+            # down server.
+            if heartbeat_ok or (now - last_heartbeat >= HEARTBEAT_INTERVAL):
                 try:
                     send_heartbeat(config)
+                    heartbeat_ok = True
                 except Exception:
-                    pass
-                last_heartbeat = now
+                    heartbeat_ok = False
+                last_heartbeat = time.monotonic()
 
             if now - last_report >= REPORT_INTERVAL:
                 try:
@@ -1162,7 +1581,7 @@ def daemon(config):
                     pass
                 last_report = now
 
-            stop_event.wait(5)
+            stop_event.wait(1)
     finally:
         main_conn.close()
         if PID_FILE.exists():

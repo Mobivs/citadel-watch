@@ -13,6 +13,7 @@
 // ── CDN dependencies per tab ────────────────────────────────────────
 
 const CDN_DEPS = {
+    'ops-center':    [],
     charts:          ['https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js'],
     timeline:        ['https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js'],
     'risk-metrics':  ['https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js'],
@@ -25,6 +26,7 @@ const CDN_DEPS = {
 };
 
 const MODULE_PATHS = {
+    'ops-center':    './ops-center.js',
     charts:          './charts.js',
     timeline:        './timeline.js',
     'risk-metrics':  './risk-metrics.js',
@@ -37,6 +39,7 @@ const MODULE_PATHS = {
 };
 
 const PAGE_SOURCES = {
+    'ops-center':    'ops-center.html',
     charts:          'charts.html',
     timeline:        'timeline.html',
     'risk-metrics':  'risk-metrics.html',

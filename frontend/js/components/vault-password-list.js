@@ -23,7 +23,8 @@ class VaultPasswordList extends HTMLElement {
             const response = await apiClient.get('/api/vault/passwords');
             if (response.ok) {
                 const data = await response.json();
-                this.passwords = data.passwords || [];
+                // Exclude SSH credentials — those are managed in the SSH Keys section
+                this.passwords = (data.passwords || []).filter(p => p.category !== 'ssh');
                 this.renderPasswords();
             }
         } catch (error) {

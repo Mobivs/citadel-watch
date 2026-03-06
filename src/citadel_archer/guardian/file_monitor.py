@@ -60,6 +60,16 @@ class SuspiciousFilePatterns:
         "\\ProgramData\\Microsoft\\Windows Defender\\",
         # Other trusted Microsoft locations
         "\\ProgramData\\Microsoft\\Windows\\",
+        # PowerShell Core (PS7+) and PSGallery module paths — PSReadLine, Az, etc.
+        "\\Program Files\\PowerShell\\",
+        "\\Program Files (x86)\\PowerShell\\",
+        "\\Program Files\\WindowsPowerShell\\",
+        "\\Program Files (x86)\\WindowsPowerShell\\",
+        # Chocolatey package manager — manages Node.js, Git, and other dev tools
+        "\\ProgramData\\chocolatey\\",
+        # Node.js runtime — updated by Chocolatey or official installer
+        "\\Program Files\\nodejs\\",
+        "\\Program Files (x86)\\nodejs\\",
     ]
 
     # True double-extension patterns: document/image masquerading as executable.

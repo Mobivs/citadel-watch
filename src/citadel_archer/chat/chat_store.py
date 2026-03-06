@@ -207,6 +207,97 @@ class ChatStore:
         return row[0] if row else 0
 
     # ------------------------------------------------------------------
+    # Memory compaction support
+    # ------------------------------------------------------------------
+
+    def total_content_length_since_compaction(self) -> int:
+        """Sum of payload lengths for messages added after the last compaction marker.
+
+        Used for token estimation to decide when to trigger compaction.
+        Excludes compaction marker messages themselves so the count resets
+        after each compaction.
+        """
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                marker_row = conn.execute(
+                    "SELECT MAX(timestamp) FROM chat_messages "
+                    "WHERE payload LIKE ?",
+                    ('%"compaction_summary": true%',),
+                ).fetchone()
+                cutoff = marker_row[0] if (marker_row and marker_row[0]) else "1970-01-01"
+                row = conn.execute(
+                    "SELECT SUM(LENGTH(payload)) FROM chat_messages "
+                    "WHERE timestamp > ? AND payload NOT LIKE ?",
+                    (cutoff, '%"compaction_summary": true%'),
+                ).fetchone()
+                return row[0] or 0
+            finally:
+                conn.close()
+
+    def get_messages_for_compaction(self, limit: int = 5000) -> List[ChatMessage]:
+        """Return all non-marker messages since the last compaction, oldest-first.
+
+        If no compaction has occurred, returns the full history up to limit.
+        Compaction markers are excluded so they are never included in the
+        transcript sent to Haiku.
+        """
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                marker_row = conn.execute(
+                    "SELECT MAX(timestamp) FROM chat_messages "
+                    "WHERE payload LIKE ?",
+                    ('%"compaction_summary": true%',),
+                ).fetchone()
+                cutoff = marker_row[0] if (marker_row and marker_row[0]) else "1970-01-01"
+                rows = conn.execute(
+                    "SELECT * FROM chat_messages "
+                    "WHERE timestamp > ? AND payload NOT LIKE ? "
+                    "ORDER BY timestamp ASC LIMIT ?",
+                    (cutoff, '%"compaction_summary": true%', limit),
+                ).fetchall()
+            finally:
+                conn.close()
+        return [self._row_to_message(r) for r in rows]
+
+    def get_latest_compaction_summary(self) -> Optional[str]:
+        """Return the summary text from the most recent compaction marker, or None."""
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                row = conn.execute(
+                    "SELECT payload FROM chat_messages "
+                    "WHERE payload LIKE ? "
+                    "ORDER BY timestamp DESC LIMIT 1",
+                    ('%"compaction_summary": true%',),
+                ).fetchone()
+            finally:
+                conn.close()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload"] or "{}")
+            return payload.get("text")
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def get_latest_compaction_timestamp(self) -> Optional[str]:
+        """Return the timestamp of the most recent compaction marker, or None."""
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                row = conn.execute(
+                    "SELECT timestamp FROM chat_messages "
+                    "WHERE payload LIKE ? "
+                    "ORDER BY timestamp DESC LIMIT 1",
+                    ('%"compaction_summary": true%',),
+                ).fetchone()
+            finally:
+                conn.close()
+        return row["timestamp"] if row else None
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 

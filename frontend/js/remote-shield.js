@@ -7,6 +7,7 @@ import { apiClient } from './utils/api-client.js';
 const API_BASE = '/api';
 let agentsData = {};
 let threatsData = [];
+let threatResolutionsMap = {};  // key: 'remote-shield:<threat_id>' → resolution record
 let _ws = null;
 let _refreshInterval = null;
 let _currentMode = 'technical';
@@ -91,7 +92,8 @@ function initWebSocket() {
 
 async function fetchAgents() {
     try {
-        const response = await fetch(`${API_BASE}/agents`);
+        const response = await apiClient.request(`${API_BASE}/agents`);
+        if (!response.ok) { console.error('Agents fetch error:', response.status); return; }
         const agents = await response.json();
         agents.forEach(agent => {
             agentsData[agent.id] = agent;
@@ -106,8 +108,10 @@ async function fetchAgents() {
 
 async function fetchThreats() {
     try {
-        const response = await fetch(`${API_BASE}/threats/remote-shield?limit=50`);
+        const response = await apiClient.request(`${API_BASE}/threats/remote-shield?limit=50`);
+        if (!response.ok) { console.error('Threats fetch error:', response.status); return; }
         threatsData = await response.json();
+        await enrichThreatResolutions(threatsData);
         renderThreats();
         updateStats();
     } catch (error) {
@@ -115,9 +119,21 @@ async function fetchThreats() {
     }
 }
 
+async function enrichThreatResolutions(threats) {
+    if (!threats || threats.length === 0) return;
+    const pairs = threats.map(t => ({ source: 'remote-shield', external_id: String(t.id || t.threat_id || '') })).filter(p => p.external_id);
+    if (pairs.length === 0) return;
+    try {
+        const resp = await apiClient.post('/api/events/resolutions/query', { pairs });
+        if (resp.ok) threatResolutionsMap = await resp.json();
+    } catch (err) {
+        console.warn('Threat resolution enrichment failed:', err);
+    }
+}
+
 async function queueCheckUpdates(agentId) {
     try {
-        const resp = await fetch(`${API_BASE}/agents/${agentId}/commands`, {
+        const resp = await apiClient.request(`${API_BASE}/agents/${agentId}/commands`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command_type: 'check_updates', payload: {} }),
@@ -215,12 +231,19 @@ function renderThreats() {
         else if (severity >= 5) severityClass = 'medium';
 
         const threatTime = new Date(threat.reported_at || threat.timestamp).toLocaleString();
+        const threatId = String(threat.id || threat.threat_id || '');
+        const resolution = threatResolutionsMap[`remote-shield:${threatId}`];
+        const resChip = resolution
+            ? `<span style="display:inline-flex;align-items:center;margin-left:6px;padding:1px 6px;border-radius:10px;font-size:0.6rem;font-weight:600;color:#00cc66;background:rgba(0,204,102,0.12);border:1px solid rgba(0,204,102,0.3);">&#x2713; ${escapeHtml(resolution.action_taken)}</span>`
+            : '';
+        const titleStyle = resolution ? ' style="color:#6B7280;"' : '';
+        const badgeStyle = resolution ? ' style="opacity:0.4;"' : '';
 
         return `
             <div class="threat-item severity-${severityClass}">
                 <div class="threat-title">
-                    ${escapeHtml(threat.title)}
-                    <span class="threat-badge ${severityClass}">S${severity}</span>
+                    <span${titleStyle}>${escapeHtml(threat.title)}</span>
+                    <span class="threat-badge ${severityClass}"${badgeStyle}>S${severity}</span>${resChip}
                 </div>
                 <div class="threat-meta">
                     <span class="threat-meta-item">${escapeHtml(threat.hostname)}</span>
@@ -508,17 +531,9 @@ function renderAlertCards() {
 
 let _policyGroups = [];
 
-function _authHeaders(extra = {}) {
-    const h = { ...extra };
-    if (apiClient && apiClient.sessionToken) {
-        h['X-Session-Token'] = apiClient.sessionToken;
-    }
-    return h;
-}
-
 async function fetchPolicyGroups() {
     try {
-        const res = await fetch(`${API_BASE}/policies/groups`, { headers: _authHeaders() });
+        const res = await apiClient.request(`${API_BASE}/policies/groups`);
         if (!res.ok) return;
         const data = await res.json();
         _policyGroups = data.groups || [];
@@ -560,9 +575,9 @@ async function createPolicyGroup() {
     const name = prompt('Policy group name:');
     if (!name) return;
     try {
-        const res = await fetch(`${API_BASE}/policies/groups`, {
+        const res = await apiClient.request(`${API_BASE}/policies/groups`, {
             method: 'POST',
-            headers: _authHeaders({ 'Content-Type': 'application/json' }),
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, description: '', rules: {}, priority: 100 }),
         });
         if (res.ok) await fetchPolicyGroups();
@@ -573,9 +588,8 @@ async function createPolicyGroup() {
 
 async function applyPolicy(groupId) {
     try {
-        const res = await fetch(`${API_BASE}/policies/groups/${groupId}/apply`, {
+        const res = await apiClient.request(`${API_BASE}/policies/groups/${groupId}/apply`, {
             method: 'POST',
-            headers: _authHeaders(),
         });
         if (res.ok) {
             const data = await res.json();
@@ -591,6 +605,13 @@ async function applyPolicy(groupId) {
 
 async function init() {
     destroy();
+
+    // Initialize API client so authenticated calls (resolution queries) have the session token
+    try {
+        await apiClient.initialize();
+    } catch (err) {
+        console.error('Failed to initialize API client:', err);
+    }
 
     // Apply current dashboard mode
     _currentMode = localStorage.getItem('citadel_dashboard_mode') || 'technical';
@@ -640,6 +661,7 @@ function destroy() {
     delete window._rsApplyPolicy;
     agentsData = {};
     threatsData = [];
+    threatResolutionsMap = {};
     _policyGroups = [];
 }
 

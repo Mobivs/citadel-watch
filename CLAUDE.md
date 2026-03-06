@@ -60,8 +60,15 @@ Citadel Archer is a **desktop** AI-centric defensive cybersecurity dashboard (Py
 
 **NEVER run `python -m pytest tests/ -q`** for routine verification — it takes too long. Full suite only before major releases.
 
-## v0.4.0 Backlog
+## v0.4.x Backlog
 - **Process execution logging** (Guardian, medium priority): When a file modification event fires, also capture the process that caused it — name, PID, command line, user. Allows identifying "was this Windows Update or malware?" Use `psutil` to correlate open file handles or Windows Event Log (Event ID 4663). Target format: `{"event_type": "file.modified", "process": {"name": "...", "pid": ..., "command_line": "...", "user": "..."}, "file": "...", "severity": "..."}`
+- **Chocolatey reinstall defensive action** (Windows remediation): Add `choco reinstall <package>` as a defensive action type. System file locks prevent PowerShell deletion of managed packages (e.g., `C:\Program Files\nodejs` held by SYSTEM). Chocolatey handles the lock and reinstall cleanly. AI should prefer `choco reinstall` over delete+install for Windows package remediation.
+- **Guardian file-level whitelisting** (false-positive suppression): When Guardian detects changes in system-protected directories that cannot be modified via script, add ability to mark events as "known compromise — awaiting manual remediation" to suppress repeat alerts on the same path. Prevents infinite re-alerting on locked files. Design: per-path suppression list with optional expiry; stored in `data/guardian_suppressions.db`.
+
+## Windows Platform Notes (for AI / dev reference)
+- **System file locks**: Windows SYSTEM process holds locks on managed package directories (`C:\Program Files\nodejs`, etc.). `takeown` and force-delete flags will fail. Use Chocolatey: `choco uninstall <pkg> -y && choco install <pkg>` — or better, `choco reinstall <pkg>`.
+- **Auto-locked directories**: `C:\Program Files\*`, `C:\Windows\System32\*`, `C:\Windows\SysWOW64\*`, `C:\ProgramData\*` — treat these as read-only from PowerShell automation unless Chocolatey/MSI/winget is used.
+- **Guardian false positives on locked files**: File change events in system dirs that can't be force-remediated are expected. Do NOT attempt repeated deletion. Mark resolved with action_taken="awaiting_manual_remediation" and suppress future alerts on that path.
 
 ## Enrolled Agent
 - ID: f468e151e1bf4165994b76ea9b84615d

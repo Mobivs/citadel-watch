@@ -21,6 +21,11 @@ import asyncio
 import json
 import logging
 import os
+import re as _ssh_re
+import string as _string
+import threading as _ssh_threading
+import time as _ssh_time
+from collections import defaultdict as _defaultdict
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from .ai_audit import get_ai_audit_logger
@@ -73,8 +78,141 @@ def _is_localhost_url(url: str) -> bool:
 
 import re as _re
 
+# ── SSH Command Safety ─────────────────────────────────────────────────
+
+_SAFE_READ_COMMANDS = frozenset({
+    # Linux/macOS read-only
+    # NOTE: "find" is intentionally excluded — it supports -exec/-delete/-execdir
+    # which can run arbitrary commands or delete files even in a "read" invocation.
+    "echo", "ls", "cat", "head", "tail", "grep", "du", "df",
+    "ps", "top", "htop", "netstat", "ss", "lsof",
+    "journalctl", "dmesg", "last", "lastlog", "who", "w",
+    "systemctl status", "docker ps", "docker logs",
+    "iptables -l", "ip addr", "ip route", "nft list ruleset",
+    "free", "vmstat", "iostat", "uptime", "uname", "id", "hostname",
+    "cat /etc/", "cat /var/log/", "tail -",
+    # Linux package management — read-only queries only (no install/upgrade/remove)
+    "apt list", "apt-cache show", "apt-cache policy", "apt-cache search",
+    # apt-get -s / --simulate: dry-run mode, prints actions but does NOT modify the system.
+    # Prefix-matched, so "apt-get -s install foo" passes — safe because -s suppresses all
+    # side-effects in all current Debian/Ubuntu versions.
+    "apt-get -s", "apt-get --simulate",
+    "dpkg -l", "dpkg --list", "dpkg -s", "dpkg --status",
+    # Windows PowerShell read-only (lowercase — compared case-insensitively)
+    "get-process", "get-filehash", "get-authenticodesignature",
+    "get-childitem", "get-item", "get-acl", "get-itemproperty",
+    "get-netfirewallrule", "get-nettcpconnection", "get-netadapter",
+    "get-service", "get-scheduledtask", "get-scheduledtaskinfo",
+    "get-localuser", "get-localgroup", "get-localgroupmember",
+    "get-winevent", "get-eventlog",
+    "get-hotfix", "get-windowsoptionalfeature", "get-installedmodule",
+    # Windows cmd read-only
+    "tasklist", "ipconfig", "systeminfo", "whoami", "dir", "type",
+    "net user", "net localgroup", "sc query", "schtasks /query",
+    "wmic process", "wmic service", "wmic product",
+})
+
+_SHELL_METACHAR = _ssh_re.compile(r'[;&|`$><\\]')
+# Windows metacharacters — backslash omitted (valid path separator); parentheses
+# included because PowerShell subexpressions like Get-Item (Remove-Item x) can
+# execute a nested command before passing its result to the outer cmdlet.
+_PS_METACHAR = _ssh_re.compile(r'[;&|`$><()]')
+# Quoted-string stripper — removes content inside single or double quotes before
+# the metachar check so paths like "C:\Program Files (x86)\..." or
+# 'C:\Program Files (x86)\...' don't false-positive on the parentheses guard.
+# Only applied to Windows commands (PowerShell uses both quoting styles).
+_QUOTED_STR_RE = _ssh_re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'')
+
+# Commands that are PowerShell cmdlets (Get-Verb pattern)
+_PS_CMDLET_PREFIX = _ssh_re.compile(r'^get-', _ssh_re.IGNORECASE)
+
+# Windows cmd-line tools that accept paths with backslashes
+_WINDOWS_CMD_TOOLS = frozenset({
+    "tasklist", "ipconfig", "systeminfo", "whoami", "dir", "type",
+    "net user", "net localgroup", "sc query", "schtasks /query",
+    "wmic process", "wmic service", "wmic product",
+})
+
+
+def _is_safe_read_only(command: str) -> bool:
+    """Return True if the command is whitelisted and has no shell metacharacters.
+
+    Windows commands (PowerShell cmdlets and cmd tools) use a relaxed metachar
+    set — backslash is allowed because Windows paths use it as a separator.
+    """
+    cmd = command.strip()
+    cmd_lower = cmd.lower()
+
+    # Detect Windows commands: PowerShell cmdlets or known cmd tools
+    is_windows_command = bool(_PS_CMDLET_PREFIX.match(cmd_lower)) or any(
+        cmd_lower == safe or cmd_lower.startswith(safe + " ")
+        for safe in _SAFE_READ_COMMANDS
+        if safe.startswith("get-")
+    ) or any(
+        cmd_lower == wc or cmd_lower.startswith(wc + " ")
+        for wc in _WINDOWS_CMD_TOOLS
+    )
+    metachar_re = _PS_METACHAR if is_windows_command else _SHELL_METACHAR
+
+    cmd_for_metachar = _QUOTED_STR_RE.sub('""', cmd) if is_windows_command else cmd
+    if metachar_re.search(cmd_for_metachar):
+        return False
+    return any(
+        cmd_lower == safe or cmd_lower.startswith(safe + " ")
+        for safe in _SAFE_READ_COMMANDS
+    )
+
+
+# Per-asset SSH rate limiter — 10 commands / minute
+_SSH_RATE: Dict[str, list] = _defaultdict(list)
+_SSH_RATE_LIMIT = 10
+_SSH_RATE_LOCK = _ssh_threading.Lock()
+
+
+def _check_ssh_rate(asset_id: str) -> bool:
+    """Return True if within rate limit (10 cmd/min per asset)."""
+    now = _ssh_time.time()
+    with _SSH_RATE_LOCK:
+        window = [t for t in _SSH_RATE[asset_id] if now - t < 60]
+        if not window:
+            # Remove stale entry — deleted/renamed assets don't accumulate forever
+            _SSH_RATE.pop(asset_id, None)
+            window = []
+        _SSH_RATE[asset_id] = window
+        if len(window) >= _SSH_RATE_LIMIT:
+            return False
+        _SSH_RATE[asset_id].append(now)
+        return True
+
+
 _MODEL_HAIKU = "claude-haiku-4-5-20251001"
 _MODEL_SONNET = "claude-sonnet-4-5-20250929"
+
+# Maximum characters of chat history to include in a single AI call.
+# Derived from the compaction threshold: 10K tokens × 3.8 chars/token = 38K chars.
+# MUST be >= compaction_tokens × 3.8 to avoid the "context gap" — messages
+# silently dropped from a sliding window before compaction fires.  If this is
+# smaller than the compaction trigger you lose context without any summarisation.
+_HISTORY_CHAR_BUDGET = 26_600  # 7K tokens × 3.8 chars — matches compaction threshold
+
+
+def _trim_to_char_budget(messages: list, budget: int) -> list:
+    """Return the most-recent messages that fit within budget characters.
+
+    Walks newest-to-oldest, accumulating content length, and stops when the
+    budget is exceeded. Returns messages in original chronological order.
+    Uses the same text extraction as _format_messages_for_claude so the
+    budget estimate is accurate.
+    """
+    total = 0
+    selected = []
+    for msg in reversed(messages):
+        content = msg.text or json.dumps(msg.payload or {})
+        total += len(content)
+        if total > budget:
+            break
+        selected.append(msg)
+    return list(reversed(selected))
 
 # Keywords that signal complex analysis requiring Sonnet.
 _SONNET_KEYWORDS = (
@@ -126,8 +264,17 @@ _TIER0_RULES = [
 
 
 # ── System Prompt ──────────────────────────────────────────────────────
+#
+# Split into two parts for Anthropic prompt caching:
+#   _SYSTEM_BASE     — static, never changes → tagged with cache_control
+#   _SYSTEM_DYNAMIC  — per-call state (uptime, assets, memory) → not cached
+#
+# The Anthropic SDK caches blocks that haven't changed since the last call.
+# Separating the large static base from the tiny dynamic tail means the
+# static block gets a cache hit on every turn after the first, cutting
+# input token costs by ~85% on the static portion.
 
-SYSTEM_PROMPT = """\
+_SYSTEM_BASE = """\
 You are the Citadel Archer AI — the defensive brain of a personal security platform.
 
 ## Your Role
@@ -135,7 +282,6 @@ You are the Citadel Archer AI — the defensive brain of a personal security pla
 - Advise the user on threats, hardening, and best practices.
 - Take action within your security level guardrails (use tools).
 - When something is normal, say so clearly. When dangerous, explain what and why.
-- Keep responses concise (2-4 sentences for simple questions, more for analysis).
 
 ## Personality
 - Trusted security advisor, not an alarm system.
@@ -143,13 +289,17 @@ You are the Citadel Archer AI — the defensive brain of a personal security pla
 - Be direct and honest. Don't hedge unnecessarily.
 - When you've taken action, state what you did and why.
 
-## Security Level: {security_level}
+## Response Length — STRICT
+- Default: 1-3 sentences. No preamble, no summary at the end.
+- Actions taken: one short sentence stating what was done.
+- Analysis/investigation: bullet points only, no prose paragraphs.
+- Only elaborate when the user explicitly asks for detail or an explanation is complex.
+- NEVER start with "Certainly", "Of course", "Great question", or similar filler.
+
+## Security Level Options
 - Observer: Analyze and explain only. Do NOT take autonomous actions.
 - Guardian: May block known threats, deploy agents, rotate credentials if breach detected.
 - Sentinel: Full autonomy — kill processes, block IPs, modify firewall, auto-escalate.
-
-## Current System State
-{system_state}
 
 ## Rules
 - NEVER reveal Vault secrets, SSH private keys, or API keys.
@@ -157,7 +307,58 @@ You are the Citadel Archer AI — the defensive brain of a personal security pla
 - If you don't know, say so. Don't invent threat details.
 - Use tools to get fresh data before answering questions about system state.
 - Prefer action over questions when confidence is high and security level allows.
+
+## Executing Commands on Assets
+When the user asks you to run, execute, check, create, delete, or modify ANYTHING on a
+managed asset — ALWAYS call execute_ssh_command. Do NOT describe how to do it manually.
+This applies to ALL assets including the local machine (asset_id='localhost').
+- Read-only commands (Get-Process, ps, df, etc.) execute immediately.
+- Write/modify commands (New-Item, rm, kill, Set-Content, etc.) automatically show an
+  approval card in the chat for the user to confirm — just call the tool and the system
+  handles the rest. You do not need to ask permission first; call the tool and let the
+  approval flow handle it.
+
+## Multi-Asset Operations — Serial Only
+When performing write/destructive operations across multiple assets, ALWAYS do them
+one at a time in series — complete and verify on the first asset before touching the
+next. Never send simultaneous approval requests for write operations on multiple servers.
+Parallel execution is acceptable for read-only checks only.
+
+## SSH Credential Management — CRITICAL RULES
+SSH key rotation in this platform is BUMPLESS — the new key is installed and verified
+before the old key is ever removed. Violating this order causes immediate lockout.
+
+The correct rotation order (enforced by the Assets UI "Rotate" button):
+1. Generate new keypair
+2. APPEND new public key to remote ~/.ssh/authorized_keys (both keys valid simultaneously)
+3. Update asset to use new credential
+4. Verify SSH connection works with new key only
+5. ONLY THEN remove old public key from authorized_keys
+6. Delete old private key from vault
+
+**Never do this manually via execute_ssh_command.** Always use the "Rotate" button in the
+Assets tab. If the user asks you to rotate an SSH key, instruct them to use the UI button.
+
+Hard constraints:
+- NEVER remove or overwrite authorized_keys before the new key is verified working
+- NEVER remove keys with the comment "citadel-recovery-*" — these are emergency fallbacks
+- NEVER revoke or delete the current active SSH key as a first step
+- If SSH is already broken (can't connect), use "Emergency Recovery" in the Assets UI,
+  not manual key manipulation
 """
+
+# Dynamic tail — rebuilt on every call, NOT cached (contains timestamps / live state).
+# Uses string.Template ($-syntax) instead of str.format() so that AI-generated
+# content in $memory_index or $system_state can never crash on literal {curly braces}.
+_SYSTEM_DYNAMIC = _string.Template("""
+## Active Security Level: $security_level
+
+## Current System State
+$system_state
+
+## Past Session Memory
+$memory_index
+""")
 
 
 # ── Tool Definitions (Anthropic API format) ────────────────────────────
@@ -275,7 +476,7 @@ TOOLS = [
             "Execute a pre-approved defensive response on one or more enrolled daemon agents. "
             "Low-risk actions (kill_process, block_ip, disable_cron_job, collect_forensics) "
             "execute automatically on the next heartbeat. Medium-risk actions "
-            "(rotate_ssh_keys, restart_service, apply_patches) are queued for user "
+            "(rotate_ssh_keys, restart_service, apply_patches, harden_vps) are queued for user "
             "approval first. Supports distributed response via the 'assets' parameter — "
             "use assets=[\"all\"] to target every enrolled daemon at once (e.g. block an "
             "attacker IP across all machines). Use get_defensive_playbook() first. "
@@ -306,8 +507,10 @@ TOOLS = [
                     "type": "string",
                     "description": (
                         "Action to execute. One of: kill_process, block_ip, "
-                        "disable_cron_job, collect_forensics, rotate_ssh_keys, "
-                        "restart_service, apply_patches."
+                        "disable_cron_job, collect_forensics, "
+                        "restart_service, apply_patches, harden_vps. "
+                        "NOTE: rotate_ssh_keys is NOT available — for SSH key "
+                        "rotation direct the user to the Assets UI 'Rotate' button."
                     ),
                 },
                 "parameters": {
@@ -409,6 +612,142 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "read_memory_log",
+        "description": (
+            "Read the full content of a past session memory log. "
+            "The Past Session Memory index in your system prompt lists available "
+            "log filenames and 2-sentence summaries. Call this when you need full "
+            "detail from a past session — e.g. the user references something that "
+            "happened before, or you need to recall a specific IP, hostname, "
+            "threat finding, or action taken in a prior conversation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": (
+                        "The memory log filename from the index "
+                        "(e.g. 'session_20260221_143000.md')."
+                    ),
+                },
+            },
+            "required": ["filename"],
+        },
+    },
+    {
+        "name": "hostinger_vps_action",
+        "description": (
+            "Directly manage VPS servers via the Hostinger REST API. "
+            "Use this when: a daemon is unreachable and you need to check or reboot "
+            "the underlying VPS; the user asks about VPS resource usage (CPU/RAM/disk); "
+            "you need to list all Hostinger VPS to find one by hostname. "
+            "Requires a Hostinger API key in Settings > Integrations."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "status", "metrics", "reboot"],
+                    "description": (
+                        "list=enumerate all VPS (no vps_id needed); "
+                        "status=get state and IPs for one VPS; "
+                        "metrics=CPU/RAM/disk for one VPS; "
+                        "reboot=hard-restart one VPS via Hostinger API (immediate, no approval)."
+                    ),
+                },
+                "vps_id": {
+                    "type": "integer",
+                    "description": (
+                        "Hostinger VPS numeric ID. Required for status/metrics/reboot. "
+                        "Omit for list. Use list first if you don't know the ID."
+                    ),
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "mark_event_resolved",
+        "description": (
+            "Mark a security event as resolved after taking a defensive action. "
+            "Call this AFTER successfully blocking an IP, killing a process, patching a vuln, "
+            "or any other remediation so the user can see the resolution status in the timeline "
+            "and threat views. The original severity badge is preserved; a green chip shows "
+            "the action taken and timestamp. "
+            "Use source='local' for EventAggregator events, 'remote-shield' for daemon threats, "
+            "'correlation' for cross-asset correlation events."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "type": "string",
+                    "description": "Event UUID (from EventAggregator) or threat ID (from daemon).",
+                },
+                "source": {
+                    "type": "string",
+                    "enum": ["local", "remote-shield", "correlation"],
+                    "description": "Which event source this ID belongs to.",
+                },
+                "action_taken": {
+                    "type": "string",
+                    "description": (
+                        "Short label for the action taken, e.g. 'block_ip', 'kill_process', "
+                        "'apply_patches', 'quarantine_file', 'update_firewall'."
+                    ),
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional detail about what was done (shown in detail panel).",
+                },
+            },
+            "required": ["event_id", "source", "action_taken"],
+        },
+    },
+    {
+        "name": "execute_ssh_command",
+        "description": (
+            "Execute a shell command on a managed asset. "
+            "Remote assets use SSH; the local host machine (platform=local, asset_id='localhost') "
+            "uses subprocess — NO SSH credential needed for localhost. "
+            "Use for investigation (logs, processes, network, disk, system info) and "
+            "defensive actions (kill processes, block IPs, modify firewall, create/delete files). "
+            "Read-only commands (Get-Process, ps, df, journalctl, Get-NetTCPConnection, etc.) "
+            "execute immediately. "
+            "Write/modify commands (New-Item, Set-Content, Remove-Item, systemctl, rm, kill, "
+            "iptables -A/D) are automatically routed to an approval flow — call this tool and "
+            "an approval card will appear in chat for the user to confirm before execution."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "asset_id": {
+                    "type": "string",
+                    "description": "Asset ID, hostname, or name. Use get_asset_list() if unsure.",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to run (e.g. 'journalctl -u citadel-daemon -n 50').",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Seconds before abort (default 30, max 120).",
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Why this command is needed — recorded in audit trail.",
+                },
+            },
+            "required": ["asset_id", "command"],
+        },
+        # cache_control on the LAST tool caches all tool definitions up to this point.
+        # The Anthropic API caches the entire tools block (2000+ static tokens) on
+        # every call after the first, reducing input token costs by ~85% on tools.
+        "cache_control": {"type": "ephemeral"},
+    },
 ]
 
 
@@ -441,12 +780,15 @@ class AIBridge:
         self._client = None
         self._enabled = False
         self._processing = False  # one-at-a-time guard
-        self._pending_msg: Optional[ChatMessage] = None  # queued while processing
+        self._pending_msgs: "deque[ChatMessage]" = __import__("collections").deque(maxlen=20)
         self._shield_db = None  # cached RemoteShieldDatabase instance
+        self._last_call_meta: Dict[str, Any] = {}  # model + token info for last AI call
 
         # Ollama local LLM backend (fallback when Claude is unavailable)
         self._ollama = None
         self._active_backend = "none"  # "claude", "ollama", or "none"
+        self._current_task: Optional[asyncio.Task] = None  # track in-flight task
+        self._compactor = None  # MemoryCompactor — set after Claude client is ready
 
         if self._api_key:
             try:
@@ -456,6 +798,9 @@ class AIBridge:
                 self._enabled = True
                 self._active_backend = "claude"
                 logger.info("AI Bridge initialized (model=%s)", self._model)
+                # Memory compactor requires the Anthropic client
+                from .memory_compactor import MemoryCompactor
+                self._compactor = MemoryCompactor(self._client, chat_manager.store)
             except ImportError:
                 logger.warning(
                     "anthropic package not installed — run: pip install anthropic. "
@@ -499,6 +844,14 @@ class AIBridge:
                 "No AI backend configured. AI Bridge disabled. "
                 "Set ANTHROPIC_API_KEY or install Ollama to enable AI responses."
             )
+
+        # Register as the completion notification handler so API routes can
+        # push action results back to Guardian without circular imports.
+        try:
+            from ..agent.guardian_notifications import register_handler
+            register_handler(self._on_completion_event)
+        except Exception:
+            logger.debug("Could not register guardian notification handler", exc_info=True)
 
     # ── Properties ─────────────────────────────────────────────────────
 
@@ -552,6 +905,18 @@ class AIBridge:
         self._chat.subscribe("*", self._on_message)
         logger.info("AI Bridge registered on ChatManager")
 
+    def interrupt(self) -> bool:
+        """Cancel the current AI processing task (user-requested stop).
+
+        Returns True if a task was actually cancelled, False if nothing was running.
+        """
+        task = self._current_task
+        if task and not task.done():
+            task.cancel()
+            logger.info("AI Bridge: processing interrupted by user")
+            return True
+        return False
+
     # ── Message Handler ────────────────────────────────────────────────
 
     async def _on_message(self, msg: ChatMessage):
@@ -560,11 +925,10 @@ class AIBridge:
         if msg.from_id == PARTICIPANT_ASSISTANT:
             return
 
-        # If already processing, queue the latest message (replaces previous queued)
-        if self._processing:
-            self._pending_msg = msg
-            return
-
+        # ── IMPORTANT: check needs_ai BEFORE the _processing guard ──────
+        # The processing guard queues messages for later. We must filter first
+        # so that system-generated messages (approval cards, SSH results) are
+        # never queued and re-triggered as new AI calls.
         needs_ai = False
 
         # 1. User sent plain text (not a command — commands already handled)
@@ -584,6 +948,10 @@ class AIBridge:
                 text = (msg.text or "").lower()
                 if "critical" in text or "high" in text:
                     needs_ai = True
+            # Completion events pierce DND — the user already approved the action
+            # and must always receive a follow-up analysis (success or failure)
+            if msg.payload.get("action_type") == "completion_event":
+                needs_ai = True
 
         # 3. External AI agent sent a text message (Trigger 1b)
         if msg.from_id.startswith("ext-agent:") and msg.msg_type == MessageType.TEXT:
@@ -591,6 +959,11 @@ class AIBridge:
                 needs_ai = True
 
         if not needs_ai:
+            return  # No AI needed — discard silently, never queue
+
+        # If already processing, queue for later (only messages that need AI)
+        if self._processing:
+            self._pending_msgs.append(msg)
             return
 
         # SCS token quota check — prevent budget exhaustion
@@ -615,16 +988,22 @@ class AIBridge:
         self._broadcast_thinking(True, "Analyzing...")
 
         # Process in background to avoid blocking the listener pipeline
-        asyncio.create_task(self._process(msg))
+        self._current_task = asyncio.create_task(self._process(msg))
 
     # ── Core Processing Loop ───────────────────────────────────────────
 
     async def _process(self, trigger: ChatMessage):
         """Build context → call Claude → handle response."""
         self._processing = True
+        _interrupted = False
         try:
             # 1. Gather system state
             state = self._gather_system_state()
+
+            # 1b. Check if memory compaction is needed (token threshold exceeded)
+            if self._compactor and self._compactor.should_compact():
+                self._broadcast_thinking(True, "Compacting memory...")
+                await self._compactor.compact()
 
             # 2. Build conversation history in Claude message format
             # Exclude the trigger message (it's appended separately below)
@@ -650,11 +1029,15 @@ class AIBridge:
                     await self._chat.send(ai_msg)
                     return  # no API call
 
-            # 4. Build system prompt
+            # 4. Build system prompt (static base + per-call dynamic tail)
             security_level = state.get("security_level", "guardian")
-            system = SYSTEM_PROMPT.format(
+            from .memory_compactor import load_memory_index
+            memory_index = load_memory_index()
+            memory_section = memory_index if memory_index else "(No past sessions recorded yet.)"
+            system = _SYSTEM_BASE + _SYSTEM_DYNAMIC.substitute(
                 security_level=security_level.title(),
                 system_state=self._format_state(state),
+                memory_index=memory_section,
             )
 
             # 5. Determine trigger type for audit logging + select inference tier
@@ -680,16 +1063,21 @@ class AIBridge:
                 model=selected_model,
             )
 
-            # 7. Send AI response to chat
+            # 7. Send AI response to chat (include model + token info for display)
             if final_text:
                 ai_msg = ChatMessage(
                     from_id=PARTICIPANT_ASSISTANT,
                     to_id=PARTICIPANT_USER,
                     msg_type=MessageType.RESPONSE,
-                    payload={"text": final_text},
+                    payload={"text": final_text, **self._last_call_meta},
                 )
                 await self._chat.send(ai_msg)
 
+        except asyncio.CancelledError:
+            _interrupted = True
+            # Notify user via a new fire-and-forget task (safe after cancel)
+            asyncio.ensure_future(self._chat.send_system("Stopped."))
+            raise  # must propagate so asyncio knows the task was cancelled
         except asyncio.TimeoutError:
             logger.warning("AI Bridge: Claude API call timed out")
             try:
@@ -708,12 +1096,14 @@ class AIBridge:
                 pass
         finally:
             self._processing = False
+            self._current_task = None
             self._broadcast_thinking(False)
-            # Process any queued message
-            pending = self._pending_msg
-            self._pending_msg = None
-            if pending:
-                asyncio.create_task(self._process(pending))
+            # Don't auto-process queued messages after a user interrupt
+            if not _interrupted:
+                if self._pending_msgs:
+                    asyncio.create_task(self._process(self._pending_msgs.popleft()))
+            else:
+                self._pending_msgs.clear()
 
     # ── Context Building ───────────────────────────────────────────────
 
@@ -784,8 +1174,40 @@ class AIBridge:
 
         return state
 
+    def _get_history_char_budget(self) -> int:
+        """Return the history char budget for this call.
+
+        Priority:
+          1. ai.history_chars preference (user-dialled explicit value)
+          2. ai.compaction_tokens × 3.8  (auto-sync: no context gap)
+          3. _HISTORY_CHAR_BUDGET module constant (ultimate fallback)
+
+        Auto-sync (priority 2) ensures the history window always covers ALL
+        uncompacted messages — context grows until compaction fires rather than
+        being silently trimmed by a mismatched budget.
+        """
+        try:
+            from ..core.user_preferences import get_user_preferences
+            prefs = get_user_preferences()
+            raw = prefs.get("ai.history_chars")
+            if raw:
+                return max(10_000, min(500_000, int(raw)))
+            # Auto-derive from compaction threshold so the two stay in sync
+            comp_raw = prefs.get("ai.compaction_tokens")
+            if comp_raw:
+                comp_tokens = max(20_000, min(500_000, int(comp_raw)))
+                return int(comp_tokens * 3.8)
+        except Exception:
+            pass
+        return _HISTORY_CHAR_BUDGET
+
     def _build_history(self, exclude_id: Optional[str] = None) -> List[Dict[str, str]]:
-        """Convert recent chat messages to Claude's alternating message format.
+        """Convert chat messages to Claude's alternating message format.
+
+        Includes ALL uncompacted messages up to _HISTORY_CHAR_BUDGET characters,
+        ensuring Guardian has full continuity after a restart without silently
+        dropping context. Once the compaction threshold is hit, compaction fires
+        and future calls use [summary] + all post-compaction messages within budget.
 
         Claude requires: user/assistant messages alternating, starting with user.
         System messages are prefixed with [System] and folded into user turns.
@@ -795,12 +1217,91 @@ class AIBridge:
             exclude_id: Message ID to exclude (the trigger message, which is
                         appended separately to avoid duplication).
         """
-        recent = self._chat.get_recent(limit=20)
+        # --- Compacted history path ---
+        if self._compactor:
+            summary = self._compactor.get_latest_summary()
+            if summary:
+                marker_ts = self._compactor.get_latest_marker_timestamp()
+                return self._build_compacted_history(summary, marker_ts, exclude_id)
+
+        # --- Full history path (no compaction yet) ---
+        # Use all messages since the beginning (get_messages_for_compaction returns
+        # the full history when no compaction marker exists), trimmed to budget.
+        all_msgs = self._chat.store.get_messages_for_compaction()
         if exclude_id:
-            recent = [m for m in recent if m.id != exclude_id]
+            all_msgs = [m for m in all_msgs if m.id != exclude_id]
+        trimmed = _trim_to_char_budget(all_msgs, self._get_history_char_budget())
+        return self._format_messages_for_claude(trimmed)
+
+    def _build_compacted_history(
+        self,
+        summary: str,
+        marker_ts: Optional[str],
+        exclude_id: Optional[str],
+    ) -> List[Dict[str, str]]:
+        """Build history as [summary_context] + all post-compaction messages within budget.
+
+        Includes every message since the last compaction marker up to
+        _HISTORY_CHAR_BUDGET characters, so Guardian never has a blind spot
+        between compaction events.
+        """
+        if marker_ts:
+            recent = self._chat.store.get_messages_for_compaction()
+        else:
+            recent = self._chat.get_recent(limit=500)
+
+        # Filter: exclude compaction markers and the trigger message
+        recent = [
+            m for m in recent
+            if not m.payload.get("compaction_summary")
+            and m.id != exclude_id
+        ]
+
+        # Trim to budget (most-recent messages within character limit)
+        recent = _trim_to_char_budget(recent, self._get_history_char_budget())
+
+        # Bootstrap with summary as framing context
+        merged: List[Dict[str, str]] = [
+            {
+                "role": "user",
+                "content": (
+                    "[Previous conversation summary — use this as full context]\n"
+                    f"{summary}"
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "Understood. I have full context from the previous session "
+                    "and am ready to continue."
+                ),
+            },
+        ]
+
+        # Append the recent messages using the shared formatter
+        for entry in self._format_messages_for_claude(recent):
+            if merged and merged[-1]["role"] == entry["role"]:
+                merged[-1]["content"] += f"\n{entry['content']}"
+            else:
+                merged.append(entry)
+
+        # Ensure we don't end on assistant
+        if merged and merged[-1]["role"] == "assistant":
+            merged.append({"role": "user", "content": "[Awaiting new input]"})
+
+        return merged
+
+    def _format_messages_for_claude(
+        self, messages: List
+    ) -> List[Dict[str, str]]:
+        """Convert a list of ChatMessages to Claude's {role, content} format.
+
+        Merges consecutive same-role entries and ensures the sequence starts
+        with a user turn.
+        """
         raw: List[Dict[str, str]] = []
 
-        for msg in recent:
+        for msg in messages:
             text = msg.text or json.dumps(msg.payload)
 
             if msg.from_id == PARTICIPANT_ASSISTANT:
@@ -808,7 +1309,6 @@ class AIBridge:
             elif msg.from_id == PARTICIPANT_USER:
                 role = "user"
             else:
-                # System/citadel/agent messages → user role with label
                 role = "user"
                 label = "System"
                 if msg.from_id.startswith("ext-agent:"):
@@ -819,7 +1319,6 @@ class AIBridge:
 
             raw.append({"role": role, "content": text})
 
-        # Merge consecutive same-role messages (Claude requirement)
         merged: List[Dict[str, str]] = []
         for entry in raw:
             if merged and merged[-1]["role"] == entry["role"]:
@@ -827,11 +1326,9 @@ class AIBridge:
             else:
                 merged.append(dict(entry))
 
-        # Ensure first message is user role
         if merged and merged[0]["role"] != "user":
             merged.insert(0, {"role": "user", "content": "[Chat history begins]"})
 
-        # Ensure we don't end on assistant (the trigger message will follow)
         if merged and merged[-1]["role"] == "assistant":
             merged.append({"role": "user", "content": "[Awaiting new input]"})
 
@@ -948,6 +1445,7 @@ class AIBridge:
         from .scs_quota import get_scs_quota_tracker
 
         quota = get_scs_quota_tracker()
+        self._last_call_meta = {}  # reset so failed calls never leak previous metadata
 
         # -- Try Claude first --
         if self._client:
@@ -990,6 +1488,22 @@ class AIBridge:
                    Pass _MODEL_HAIKU for Tier 1 or _MODEL_SONNET for Tier 2.
         """
         _model = model or self._model
+
+        # Build cached system blocks: static base is tagged cache_control so the
+        # Anthropic API can cache it across calls.  Dynamic tail (state/memory)
+        # always changes so it is sent uncached as a second block.
+        _api_system = [
+            {
+                "type": "text",
+                "text": _SYSTEM_BASE,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
+                "text": system[len(_SYSTEM_BASE):],
+            },
+        ]
+
         try:
             ctx = audit.start_call(trigger_type, trigger_message_id, _model, 0)
             try:
@@ -997,7 +1511,7 @@ class AIBridge:
                     self._client.messages.create(
                         model=_model,
                         max_tokens=8192,
-                        system=system,
+                        system=_api_system,
                         messages=messages,
                         tools=TOOLS,
                     ),
@@ -1011,11 +1525,21 @@ class AIBridge:
                 raise
 
             # Tool use loop — Claude may call tools before giving final answer
-            max_iterations = 5  # safety valve
+            max_iterations = 20  # raised from 5 to support multi-step approval chains
+            _TOOL_LOOP_MAX_SECONDS = 1800  # 30-min hard ceiling (covers long downloads)
             iteration = 0
+            _loop_start = asyncio.get_event_loop().time()
 
             while response.stop_reason == "tool_use" and iteration < max_iterations:
                 iteration += 1
+
+                # Elapsed-time guard — prevent infinite loops on runaway chains
+                if asyncio.get_event_loop().time() - _loop_start > _TOOL_LOOP_MAX_SECONDS:
+                    logger.warning(
+                        "Tool loop exceeded %ds total time budget after %d iterations",
+                        _TOOL_LOOP_MAX_SECONDS, iteration,
+                    )
+                    break
 
                 # Re-check quota before each tool-loop API call
                 allowed, _qinfo = quota.check(participant_id, estimated_tokens=2000)
@@ -1056,7 +1580,7 @@ class AIBridge:
                         self._client.messages.create(
                             model=_model,
                             max_tokens=8192,
-                            system=system,
+                            system=_api_system,
                             messages=messages,
                             tools=TOOLS,
                         ),
@@ -1076,6 +1600,12 @@ class AIBridge:
                     texts.append(block.text)
 
             self._active_backend = "claude"
+            self._last_call_meta = {
+                "model": _model,
+                "input_tokens": getattr(response.usage, "input_tokens", None),
+                "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", None),
+                "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", None),
+            }
             return "\n".join(texts) if texts else None
 
         except Exception:
@@ -1154,6 +1684,10 @@ class AIBridge:
             quota.record(participant_id, total_tokens)
 
             self._active_backend = "ollama"
+            self._last_call_meta = {
+                "model": response.model,
+                "input_tokens": response.input_tokens,
+            }
             return response.text
 
         except Exception:
@@ -1175,6 +1709,10 @@ class AIBridge:
         "get_defensive_playbook":   "Loading defensive playbook...",
         "get_action_history":       "Pulling action history...",
         "get_local_events":         "Reading local event log...",
+        "read_memory_log":          "Reading memory log...",
+        "hostinger_vps_action":     "Querying Hostinger API...",
+        "mark_event_resolved":      "Recording resolution...",
+        "execute_ssh_command":      "Running SSH command...",
     }
 
     async def _execute_tool(self, name: str, tool_input: Dict) -> Any:
@@ -1191,6 +1729,10 @@ class AIBridge:
             "get_defensive_playbook":   self._tool_get_defensive_playbook,
             "get_action_history":       self._tool_get_action_history,
             "get_local_events":         self._tool_local_events,
+            "read_memory_log":          self._tool_read_memory_log,
+            "hostinger_vps_action":     self._tool_hostinger_vps_action,
+            "mark_event_resolved":      self._tool_mark_event_resolved,
+            "execute_ssh_command":      self._tool_execute_ssh_command,
         }
 
         handler = handlers.get(name)
@@ -1497,6 +2039,10 @@ class AIBridge:
                 agent_id, agent_name, action_id, entry, parameters, needs_approval, threat_id,
             )
 
+        # Multi-target dispatch: always require approval regardless of risk level.
+        # The operator must confirm the full asset list before a distributed
+        # action fires — prevents a single AI call from affecting every machine.
+        needs_approval = True
         return await self._queue_distributed_action(
             targets, action_id, entry, parameters, needs_approval, threat_id,
         )
@@ -1594,6 +2140,17 @@ class AIBridge:
     ) -> Dict:
         """Queue the same action on multiple agents and return a summary."""
         from ..agent.actions_database import queue_action
+        target_names = [name for _, name in targets]
+        # Cap display to 5 names to avoid bloating the description column and
+        # AI context window when many daemons are enrolled.
+        display = target_names[:5]
+        suffix = f" +{len(target_names) - 5} more" if len(target_names) > 5 else ""
+        target_summary = ", ".join(display) + suffix
+        multi_description = (
+            f"{entry.get('description', action_id)} "
+            f"[Multi-target: {len(targets)} asset(s): {target_summary}]"
+        )
+
         results = []
         for agent_id, agent_name in targets:
             uuid = queue_action(
@@ -1602,7 +2159,7 @@ class AIBridge:
                 parameters=parameters,
                 require_approval=needs_approval,
                 risk_level=entry.get("risk", "low"),
-                description=entry.get("description", action_id),
+                description=multi_description,
                 threat_id=threat_id,
             )
             if needs_approval:
@@ -1655,6 +2212,7 @@ class AIBridge:
             )
             msg = ChatMessage(
                 from_id=PARTICIPANT_CITADEL,
+                to_id=PARTICIPANT_USER,
                 msg_type=MessageType.RESPONSE,
                 payload={
                     "text": text,
@@ -1723,6 +2281,32 @@ class AIBridge:
             ],
         }
 
+    async def _tool_read_memory_log(self, tool_input: Dict) -> Dict:
+        """Read the full content of a past-session memory log file."""
+        from .memory_compactor import _MEMORY_DIR
+
+        filename = tool_input.get("filename", "").strip()
+        if not filename:
+            return {"error": "filename is required"}
+
+        # Safety: only allow simple filenames, no path traversal
+        if "/" in filename or "\\" in filename or ".." in filename:
+            return {"error": "Invalid filename"}
+
+        log_path = _MEMORY_DIR / filename
+        if not log_path.exists():
+            available = sorted(p.name for p in _MEMORY_DIR.glob("session_*.md")) if _MEMORY_DIR.exists() else []
+            return {
+                "error": f"Memory log '{filename}' not found.",
+                "available_logs": available,
+            }
+
+        try:
+            content = log_path.read_text(encoding="utf-8")
+            return {"filename": filename, "content": content}
+        except Exception as exc:
+            return {"error": f"Failed to read memory log: {exc}"}
+
     async def _tool_local_events(self, tool_input: Dict) -> Dict:
         """Return recent local Guardian events from the audit log."""
         limit = min(int(tool_input.get("limit", 20)), 100)
@@ -1777,3 +2361,695 @@ class AIBridge:
             "total": len(events_out),
             "events": events_out,
         }
+
+    async def _tool_hostinger_vps_action(self, tool_input: Dict) -> Dict:
+        """Call the Hostinger REST API to manage VPS servers directly."""
+        from ..integrations.hostinger import HostingerClient
+
+        action = tool_input.get("action", "")
+        vps_id = tool_input.get("vps_id")
+
+        try:
+            client = HostingerClient()
+        except ValueError as exc:
+            msg = str(exc)
+            asyncio.ensure_future(self._chat.send_system(msg))
+            return {"error": msg}
+
+        try:
+            if action == "list":
+                vms = await client.list_vps()
+                # Summarise to avoid overwhelming context
+                summary = []
+                for vm in vms:
+                    summary.append({
+                        "id":       vm.get("id"),
+                        "hostname": vm.get("hostname") or vm.get("label"),
+                        "state":    vm.get("state") or vm.get("status"),
+                        "ips":      [
+                            ip.get("address") or ip
+                            for ip in (vm.get("ip_addresses") or vm.get("ips") or [])
+                            if ip
+                        ],
+                    })
+                return {"vps_count": len(summary), "virtual_machines": summary}
+
+            if vps_id is None:
+                return {"error": f"vps_id is required for action '{action}'"}
+
+            if action == "status":
+                vm = await client.get_vps(int(vps_id))
+                return {
+                    "id":       vm.get("id"),
+                    "hostname": vm.get("hostname") or vm.get("label"),
+                    "state":    vm.get("state") or vm.get("status"),
+                    "ips":      [
+                        ip.get("address") or ip
+                        for ip in (vm.get("ip_addresses") or vm.get("ips") or [])
+                        if ip
+                    ],
+                    "plan":     vm.get("plan") or vm.get("type"),
+                }
+
+            if action == "metrics":
+                return await client.get_metrics(int(vps_id))
+
+            if action == "reboot":
+                # Reboot is destructive — require Sentinel level or explicit user confirmation.
+                # At Guardian/Observer, return a soft block so Claude asks the user to confirm.
+                try:
+                    from ..core import get_security_manager as _gsm_vps
+                    _vps_level = _gsm_vps().current_level.value
+                except Exception:
+                    _vps_level = "guardian"
+                if _vps_level != "sentinel":
+                    return {
+                        "requires_confirmation": True,
+                        "action": "reboot",
+                        "vps_id": vps_id,
+                        "message": (
+                            f"Rebooting VPS {vps_id} will interrupt all running services. "
+                            "Reply 'confirm reboot' to proceed, or set security level to "
+                            "Sentinel to allow auto-execution of destructive actions."
+                        ),
+                    }
+                result = await client.restart_vps(int(vps_id))
+                return {"status": "rebooting", "vps_id": vps_id, "api_response": result}
+
+            return {"error": f"Unknown action '{action}'"}
+
+        except Exception as exc:
+            import httpx as _httpx
+            if isinstance(exc, _httpx.HTTPStatusError) and exc.response.status_code in (401, 403):
+                msg = (
+                    "Hostinger API key is invalid or expired. "
+                    "Update it in Settings > Integrations and click Test Connection."
+                )
+                asyncio.ensure_future(self._chat.send_system(msg))
+                return {"error": msg}
+            return {"error": f"Hostinger API error: {exc}"}
+
+    async def _tool_mark_event_resolved(self, tool_input: Dict) -> Dict:
+        """Record that a security event has been resolved by Guardian AI."""
+        event_id = tool_input.get("event_id", "").strip()
+        source = tool_input.get("source", "local").strip()
+        action_taken = tool_input.get("action_taken", "").strip()
+        notes = tool_input.get("notes")
+
+        if not event_id or not action_taken:
+            return {"error": "event_id and action_taken are required"}
+
+        from ..intel.resolution_store import get_resolution_store
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+
+        record = get_resolution_store().resolve(
+            source=source,
+            external_id=event_id,
+            action_taken=action_taken,
+            resolved_by="guardian_ai",
+            notes=notes,
+        )
+        log_security_event(
+            EventType.SYSTEM_EVENT,
+            EventSeverity.INFO,
+            f"Event resolved by Guardian AI: {event_id} via {action_taken}",
+            details={
+                "source": source,
+                "event_id": event_id,
+                "action_taken": action_taken,
+                "notes": notes,
+            },
+        )
+        return {
+            "success": True,
+            "event_id": event_id,
+            "source": source,
+            "action_taken": action_taken,
+            "resolved_at": record["resolved_at"],
+            "message": f"Event marked resolved: {action_taken}",
+        }
+
+    async def _tool_execute_ssh_command(self, tool_input: Dict) -> Dict:
+        """Execute a shell command on a managed asset via SSH."""
+        asset_id_or_name = tool_input.get("asset_id", "").strip()
+        command = tool_input.get("command", "").strip()
+        timeout = max(5, min(int(tool_input.get("timeout", 30)), 120))
+        justification = tool_input.get("justification", "")
+
+        if not command:
+            return {"error": "command is required"}
+
+        # Resolve asset by ID, hostname, or name
+        from ..api.asset_routes import get_inventory
+        inv = get_inventory()
+        asset = inv.get(asset_id_or_name)
+        if asset is None:
+            asset = next(
+                (
+                    a for a in inv.all()
+                    if asset_id_or_name.lower() in (a.hostname or "").lower()
+                    or asset_id_or_name.lower() in (a.name or "").lower()
+                ),
+                None,
+            )
+        if asset is None:
+            return {
+                "error": (
+                    f"Asset '{asset_id_or_name}' not found. "
+                    "Use get_asset_list() to see available assets."
+                )
+            }
+
+        asset_id = asset.asset_id
+        asset_label = asset.name or asset.hostname or asset_id
+
+        # ── Local-platform routing ────────────────────────────────────
+        # The local host machine uses subprocess instead of SSH.
+        # No credentials needed — skip the SSH credential check entirely.
+        from ..intel.assets import AssetPlatform as _AssetPlatform
+        if asset.platform == _AssetPlatform.LOCAL:
+            return await self._tool_execute_local_command(
+                asset_id, asset_label, command, justification, timeout
+            )
+        # ── End local routing ─────────────────────────────────────────
+
+        if not asset.ssh_credential_id:
+            return {
+                "error": (
+                    f"Asset '{asset_label}' has no SSH credential linked. "
+                    "Add one in Assets → SSH Settings."
+                )
+            }
+
+        # Pre-flight: verify the linked credential actually exists in vault and
+        # has a private key before creating an approval request.  This prevents
+        # the user from clicking Approve and then getting "Permission denied"
+        # because the credential was deleted or never imported.
+        try:
+            _cred_check = self.vault.get_ssh_credential(asset.ssh_credential_id)
+            if _cred_check is None:
+                _cred_msg = (
+                    f"The SSH credential linked to '{asset_label}' no longer exists in the vault "
+                    f"(credential ID: {asset.ssh_credential_id[:8]}…). "
+                    "Go to Assets → select this asset → link a valid SSH credential."
+                )
+                asyncio.ensure_future(self._chat.send_system(_cred_msg))
+                return {"error": _cred_msg}
+            if _cred_check.get("auth_type") == "key" and not _cred_check.get("private_key"):
+                _cred_msg = (
+                    f"The SSH credential '{_cred_check.get('label', asset.ssh_credential_id[:8])}' "
+                    f"linked to '{asset_label}' has no private key stored. "
+                    "Re-import the private key in the Vault tab."
+                )
+                asyncio.ensure_future(self._chat.send_system(_cred_msg))
+                return {"error": _cred_msg}
+        except Exception:
+            pass  # Vault locked — let the normal execution path surface that error
+
+        if not _check_ssh_rate(asset_id):
+            return {
+                "error": (
+                    f"SSH rate limit reached for '{asset_label}' "
+                    f"(max {_SSH_RATE_LIMIT}/min). Try again shortly."
+                )
+            }
+
+        safe = _is_safe_read_only(command)
+
+        if safe:
+            # Execute immediately — read-only, no approval needed
+            try:
+                from ..api.asset_routes import get_ssh_manager
+                from ..remote.ssh_manager import (
+                    NoCredentialError, VaultLockedError,
+                    ConnectionFailedError, CommandTimeoutError,
+                )
+                from ..core.audit_log import log_security_event, EventType, EventSeverity
+
+                ssh = get_ssh_manager()
+                result = await ssh.execute(asset_id, command, timeout=timeout)
+
+                log_security_event(
+                    EventType.SSH_COMMAND_EXECUTED,
+                    EventSeverity.INFO,
+                    f"SSH read command on {asset_label}: {command!r}",
+                    details={
+                        "asset_id": asset_id,
+                        "command": command,
+                        "exit_code": result.exit_code,
+                        "duration_ms": result.duration_ms,
+                        "justification": justification,
+                        "executed_by": "guardian_ai",
+                    },
+                )
+
+                return {
+                    "asset": asset_label,
+                    "command": command,
+                    "success": result.exit_code == 0,
+                    "stdout": result.stdout[:4000],
+                    "stderr": result.stderr[:1000],
+                    "exit_code": result.exit_code,
+                    "execution_time_ms": result.duration_ms,
+                }
+
+            except Exception as exc:
+                # Map well-known exceptions to friendly messages
+                exc_name = type(exc).__name__
+                if "VaultLocked" in exc_name:
+                    msg = (
+                        "Vault is locked — cannot retrieve SSH credentials. "
+                        "Unlock the vault in the Vault tab, or enable Startup Auto-Unlock "
+                        "so Guardian always has access."
+                    )
+                    asyncio.ensure_future(self._chat.send_system(msg))
+                    return {"error": msg}
+                if "NoCredential" in exc_name:
+                    msg = f"No SSH credential stored for '{asset_label}'. Add one via Assets > SSH Settings."
+                    asyncio.ensure_future(self._chat.send_system(msg))
+                    return {"error": msg}
+                if "ConnectionFailed" in exc_name:
+                    msg = f"SSH connection to '{asset_label}' failed — check connectivity and firewall."
+                    asyncio.ensure_future(self._chat.send_system(msg))
+                    return {"error": msg}
+                if "CommandTimeout" in exc_name:
+                    msg = f"Command timed out on '{asset_label}' after {timeout}s — asset may be offline."
+                    asyncio.ensure_future(self._chat.send_system(msg))
+                    return {"error": msg}
+                return {"error": f"SSH execution error: {exc}"}
+
+        # Check security level — Sentinel auto-executes remote write commands
+        # (mirrors the local-command path in _tool_execute_local_command)
+        try:
+            from ..core import get_security_manager as _gsm
+            _ssh_level = _gsm().current_level.value
+        except Exception:
+            _ssh_level = "guardian"
+
+        if _ssh_level == "sentinel":
+            try:
+                from ..api.asset_routes import get_ssh_manager as _get_ssh
+                from ..core.audit_log import log_security_event as _lse, EventType as _ET, EventSeverity as _ES
+                _ssh_res = await _get_ssh().execute(asset_id, command, timeout=timeout)
+                _lse(
+                    _ET.SSH_COMMAND_EXECUTED,
+                    _ES.ALERT,
+                    f"SSH write command (auto-sentinel) on {asset_label}: {command!r}",
+                    details={
+                        "asset_id": asset_id, "command": command,
+                        "exit_code": _ssh_res.exit_code, "mode": "ssh_sentinel",
+                        "justification": justification,
+                    },
+                )
+                return {
+                    "asset": asset_label, "command": command,
+                    "success": _ssh_res.exit_code == 0,
+                    "stdout": _ssh_res.stdout[:4000],
+                    "stderr": _ssh_res.stderr[:1000],
+                    "exit_code": _ssh_res.exit_code,
+                    "execution_time_ms": _ssh_res.duration_ms,
+                }
+            except Exception as _exc:
+                return {"error": f"SSH sentinel execution error: {_exc}"}
+
+        # Write command — require user approval (serial — await Future)
+        from ..api.asset_routes import register_pending_ssh, create_approval_future
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+
+        approval_uuid = register_pending_ssh(asset_id, command, timeout)
+        approval_future = create_approval_future(approval_uuid)
+        log_security_event(
+            EventType.SSH_COMMAND_BLOCKED,
+            EventSeverity.ALERT,
+            f"SSH write command pending approval on {asset_label}: {command!r}",
+            details={
+                "asset_id": asset_id,
+                "command": command,
+                "approval_uuid": approval_uuid,
+                "justification": justification,
+            },
+        )
+        await self._send_ssh_approval_request(
+            approval_uuid, asset_id, asset_label, command, justification
+        )
+
+        # Show "waiting for approval" in the thinking indicator so the user
+        # understands why the AI is paused (not just spinning indefinitely).
+        short_cmd = command[:60] + ("..." if len(command) > 60 else "")
+        self._broadcast_thinking(True, f"Waiting for approval: {short_cmd}")
+
+        # Block until user approves or denies (max 5 min)
+        try:
+            decision = await asyncio.wait_for(approval_future, timeout=300)
+        except asyncio.TimeoutError:
+            # Clean up orphaned Future and pending command so a late Approve click
+            # cannot silently execute the command after the tool loop has moved on.
+            from ..api.asset_routes import _APPROVAL_FUTURES, _APPROVAL_FUTURES_LOCK, _PENDING_SSH, _PENDING_SSH_LOCK
+            with _APPROVAL_FUTURES_LOCK:
+                _APPROVAL_FUTURES.pop(approval_uuid, None)
+            with _PENDING_SSH_LOCK:
+                _PENDING_SSH.pop(approval_uuid, None)
+            return {
+                "status": "timeout",
+                "command": command,
+                "message": "Approval timed out after 5 minutes. Command was not executed.",
+            }
+
+        if decision.get("denied"):
+            return {
+                "status": "denied",
+                "command": command,
+                "message": "User denied this command. It was not executed.",
+            }
+
+        # SSH connection failure — surface the error clearly so the AI stops and
+        # reports to the user rather than silently retrying.
+        if decision.get("connection_error"):
+            error_msg = decision.get("error", "SSH connection failed")
+            asyncio.ensure_future(self._chat.send_system(
+                f"SSH connection to '{asset_label}' failed: {error_msg}\n\n"
+                "The command was not executed. Fix the SSH connection before retrying."
+            ))
+            return {
+                "status": "connection_failed",
+                "asset": asset_label,
+                "command": command,
+                "error": error_msg,
+                "success": False,
+                "message": (
+                    f"STOP — SSH connection to '{asset_label}' failed: {error_msg}. "
+                    "Do not retry this command. Report this failure to the user and wait for instructions."
+                ),
+            }
+
+        # Return the actual execution result so Claude can report it
+        return {
+            "asset": asset_label,
+            "command": command,
+            "success": decision.get("success", False),
+            "stdout": decision.get("stdout", ""),
+            "stderr": decision.get("stderr", ""),
+            "exit_code": decision.get("exit_code", -1),
+            "execution_time_ms": decision.get("execution_time_ms", 0),
+        }
+
+    async def _tool_execute_local_command(
+        self,
+        asset_id: str,
+        asset_label: str,
+        command: str,
+        justification: str,
+        timeout: int,
+    ) -> Dict:
+        """Execute a command on the local host machine via subprocess (no SSH).
+
+        Read-only commands auto-execute. Write commands require approval at
+        Guardian/Observer level; at Sentinel they execute immediately.
+        """
+        from ..core.audit_log import log_security_event, EventType, EventSeverity
+
+        if not _check_ssh_rate(asset_id):
+            return {
+                "error": (
+                    f"Rate limit reached for '{asset_label}' "
+                    f"(max {_SSH_RATE_LIMIT}/min). Try again shortly."
+                )
+            }
+
+        safe = _is_safe_read_only(command)
+        logger.warning(
+            "[LocalCmd] asset=%s safe=%s command=%r",
+            asset_id, safe, command[:120],
+        )
+
+        if safe:
+            # Read-only — execute immediately, no approval needed
+            try:
+                from ..local.local_defender import LocalHostDefender
+                result = await LocalHostDefender().execute_command_async(command, timeout)
+
+                log_security_event(
+                    EventType.SSH_COMMAND_EXECUTED,
+                    EventSeverity.INFO,
+                    f"Local read command on {asset_label}: {command!r}",
+                    details={
+                        "asset_id": asset_id,
+                        "command": command,
+                        "exit_code": result.exit_code,
+                        "duration_ms": result.duration_ms,
+                        "justification": justification,
+                        "executed_by": "guardian_ai",
+                        "mode": "local",
+                    },
+                )
+                return {
+                    "asset": asset_label,
+                    "command": command,
+                    "success": result.success,
+                    "stdout": result.stdout[:4000],
+                    "stderr": result.stderr[:1000],
+                    "exit_code": result.exit_code,
+                    "execution_time_ms": result.duration_ms,
+                }
+            except TimeoutError as exc:
+                return {"error": f"Local command timed out: {exc}"}
+            except RuntimeError as exc:
+                return {"error": f"Local execution failed: {exc}"}
+
+        # Write command — check security level
+        try:
+            from ..core import get_security_manager
+            level = get_security_manager().current_level.value
+        except Exception as _sec_exc:
+            logger.warning("Could not read security level, defaulting to guardian: %s", _sec_exc)
+            level = "guardian"
+
+        if level == "sentinel":
+            # Sentinel: auto-execute write commands, log at ALERT severity
+            try:
+                from ..local.local_defender import LocalHostDefender
+                result = await LocalHostDefender().execute_command_async(command, timeout)
+
+                log_security_event(
+                    EventType.SSH_COMMAND_EXECUTED,
+                    EventSeverity.ALERT,
+                    f"Local write command (auto-sentinel) on {asset_label}: {command!r}",
+                    details={
+                        "asset_id": asset_id,
+                        "command": command,
+                        "exit_code": result.exit_code,
+                        "duration_ms": result.duration_ms,
+                        "justification": justification,
+                        "executed_by": "guardian_ai",
+                        "mode": "local_sentinel",
+                    },
+                )
+                return {
+                    "asset": asset_label,
+                    "command": command,
+                    "success": result.success,
+                    "stdout": result.stdout[:4000],
+                    "stderr": result.stderr[:1000],
+                    "exit_code": result.exit_code,
+                    "execution_time_ms": result.duration_ms,
+                }
+            except TimeoutError as exc:
+                return {"error": f"Local command timed out: {exc}"}
+            except RuntimeError as exc:
+                return {"error": f"Local execution failed: {exc}"}
+
+        # Guardian/Observer: require user approval (serial — await Future)
+        from ..api.asset_routes import register_pending_ssh, create_approval_future
+        approval_uuid = register_pending_ssh(asset_id, command, timeout)
+        approval_future = create_approval_future(approval_uuid)
+
+        log_security_event(
+            EventType.SSH_COMMAND_BLOCKED,
+            EventSeverity.ALERT,
+            f"Local write command pending approval on {asset_label}: {command!r}",
+            details={
+                "asset_id": asset_id,
+                "command": command,
+                "approval_uuid": approval_uuid,
+                "justification": justification,
+                "mode": "local",
+            },
+        )
+        await self._send_ssh_approval_request(
+            approval_uuid, asset_id, asset_label, command, justification
+        )
+
+        # Show "waiting for approval" in the thinking indicator so the user
+        # understands why the AI is paused (not just spinning indefinitely).
+        short_cmd = command[:60] + ("..." if len(command) > 60 else "")
+        self._broadcast_thinking(True, f"Waiting for approval: {short_cmd}")
+
+        # Block until user approves or denies (max 5 min)
+        try:
+            decision = await asyncio.wait_for(approval_future, timeout=300)
+        except asyncio.TimeoutError:
+            # Clean up orphaned Future and pending command so a late Approve click
+            # cannot silently execute the command after the tool loop has moved on.
+            from ..api.asset_routes import _APPROVAL_FUTURES, _APPROVAL_FUTURES_LOCK, _PENDING_SSH, _PENDING_SSH_LOCK
+            with _APPROVAL_FUTURES_LOCK:
+                _APPROVAL_FUTURES.pop(approval_uuid, None)
+            with _PENDING_SSH_LOCK:
+                _PENDING_SSH.pop(approval_uuid, None)
+            return {
+                "status": "timeout",
+                "command": command,
+                "message": "Approval timed out after 5 minutes. Command was not executed.",
+            }
+
+        if decision.get("denied"):
+            return {
+                "status": "denied",
+                "command": command,
+                "message": "User denied this command. It was not executed.",
+            }
+
+        # Return the actual execution result so Claude can report it
+        return {
+            "asset": asset_label,
+            "command": command,
+            "success": decision.get("success", False),
+            "stdout": decision.get("stdout", ""),
+            "stderr": decision.get("stderr", ""),
+            "exit_code": decision.get("exit_code", -1),
+            "execution_time_ms": decision.get("execution_time_ms", 0),
+        }
+
+    async def _send_ssh_approval_request(
+        self,
+        approval_uuid: str,
+        asset_id: str,
+        asset_label: str,
+        command: str,
+        justification: str,
+    ) -> None:
+        """Send an SSH approval card into the chat sidebar."""
+        try:
+            from ..chat.message import ChatMessage, MessageType, PARTICIPANT_CITADEL
+            reason_line = f"**Reason:** {justification}\n" if justification else ""
+            text = (
+                f"**SSH Command Approval Required**\n\n"
+                f"**Asset:** {asset_label}\n"
+                f"**Command:** `{command}`\n"
+                f"{reason_line}"
+                f"\n*This command modifies system state and requires your approval.*"
+            )
+            msg = ChatMessage(
+                from_id=PARTICIPANT_CITADEL,
+                to_id=PARTICIPANT_USER,
+                msg_type=MessageType.RESPONSE,
+                payload={
+                    "text": text,
+                    "action_type": "ssh_approval_request",
+                    "approval_uuid": approval_uuid,
+                    "asset_id": asset_id,
+                    "asset_label": asset_label,
+                    "command": command,
+                },
+            )
+            await self._chat.send(msg)
+        except Exception:
+            logger.exception("Failed to send SSH approval request")
+
+    async def _on_completion_event(self, event_type: str, data: dict) -> None:
+        """Handle action completion events pushed from API route handlers.
+
+        Only triggers a Guardian AI turn for events that need analysis:
+          - failures and denials (always)
+          - successes with meaningful output (forensics, command output)
+        Silent successes with no output are logged to chat but don't trigger
+        an AI turn — Guardian confirming "all good" wastes tokens for no value.
+        """
+        try:
+            from ..chat.message import ChatMessage, MessageType, PARTICIPANT_CITADEL
+
+            text: str = ""
+            should_trigger: bool = False  # only True when Guardian needs to react
+
+            if event_type == "daemon_action_result":
+                status    = data.get("status", "unknown")
+                host      = data.get("hostname") or data.get("agent_id", "daemon")
+                action    = data.get("action_id", "")
+                result    = data.get("result", "")
+                forensics = data.get("forensics", "")
+                icon  = "[OK]" if status == "success" else "[FAIL]"
+                lines = [f"{icon} Daemon action on {host}: {action} — {status.upper()}"]
+                if result:
+                    lines.append(f"Output: {str(result)[:500]}")
+                if forensics:
+                    lines.append(f"Forensics: {str(forensics)[:300]}")
+                text = "\n".join(lines)
+                # Trigger AI on failure, or success with forensics worth analyzing.
+                # 'result' is always a non-empty dict (daemon always populates it),
+                # so bool(result) would always be True — use 'forensics' instead.
+                should_trigger = (status != "success") or bool(forensics)
+
+            elif event_type == "daemon_action_approved":
+                # Approved → queued: Guardian already knows it submitted the action.
+                # Skip entirely — no chat message, no AI turn needed.
+                return
+
+            elif event_type == "daemon_action_denied":
+                action = data.get("action_id", data.get("action_uuid", ""))
+                host   = data.get("agent_name") or data.get("agent_id", "daemon")
+                text   = f"[DENIED] Daemon action {action!r} on {host} was denied by user."
+                should_trigger = True
+
+            elif event_type == "ssh_command_result":
+                asset_id  = data.get("asset_id", "")
+                command   = data.get("command", "")
+                success   = data.get("success", False)
+                exit_code = data.get("exit_code", -1)
+                stdout    = (data.get("stdout") or "")[:500]
+                stderr    = (data.get("stderr") or "")[:300]
+                icon  = "[OK]" if success else "[FAIL]"
+                lines = [f"{icon} SSH on {asset_id}: `{command}` — exit {exit_code}"]
+                if not success and stderr:
+                    lines.append(f"Stderr: {stderr}")
+                elif stdout:
+                    lines.append(f"Output: {stdout}")
+                text = "\n".join(lines)
+                # Trigger AI on failure only; stderr from write commands is often
+                # informational (e.g. "Stopping service...") and not worth an AI turn.
+                should_trigger = not success
+
+            elif event_type == "ssh_command_denied":
+                asset_id = data.get("asset_id", "")
+                command  = data.get("command", "")
+                text     = f"[DENIED] SSH command on {asset_id} was denied by user: `{command}`"
+                should_trigger = True
+
+            if not text:
+                return
+
+            if should_trigger:
+                # Truncate large fields before storing in the payload
+                clean_data = dict(data)
+                for _key in ("stdout", "stderr", "result", "forensics"):
+                    if _key in clean_data and isinstance(clean_data[_key], str):
+                        clean_data[_key] = clean_data[_key][:500]
+
+                # Send as EVENT — _on_message will start a new Guardian AI turn
+                msg = ChatMessage(
+                    from_id=PARTICIPANT_CITADEL,
+                    to_id=PARTICIPANT_ASSISTANT,
+                    msg_type=MessageType.EVENT,
+                    payload={
+                        "text":        text,
+                        "action_type": "completion_event",
+                        "event_type":  event_type,
+                        "data":        clean_data,
+                    },
+                )
+                await self._chat.send(msg)
+            else:
+                # Log to chat for audit trail but don't burn tokens on a Guardian turn
+                await self._chat.send_system(text)
+
+        except Exception:
+            logger.exception("_on_completion_event failed for %s", event_type)
+

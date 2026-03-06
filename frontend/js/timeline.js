@@ -49,6 +49,7 @@ let refreshInterval = null;
 let _wsUnsubs = [];
 let _onWsConnected = null;
 let _onWsDisconnected = null;
+let resolutionsMap = {};     // key: 'source:event_id' → resolution record
 
 // ── API ─────────────────────────────────────────────────────────────
 
@@ -67,6 +68,17 @@ async function fetchTimeline(limit) {
     } catch (err) {
         console.error('Timeline fetch failed:', err);
         return null;
+    }
+}
+
+async function enrichWithResolutions(entries) {
+    if (!entries || entries.length === 0) return;
+    const pairs = entries.map(e => ({ source: e.source || 'local', external_id: e.event_id }));
+    try {
+        const resp = await apiClient.post('/api/events/resolutions/query', { pairs });
+        if (resp.ok) resolutionsMap = await resp.json();
+    } catch (err) {
+        console.warn('Resolution enrichment failed:', err);
     }
 }
 
@@ -175,6 +187,97 @@ function getPage(entries, page) {
     };
 }
 
+// ── Resolution UI ────────────────────────────────────────────────────
+
+function injectResolutionStyles() {
+    if (document.getElementById('resolution-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'resolution-styles';
+    style.textContent = `
+        .resolution-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            margin-left: 6px; padding: 1px 6px; border-radius: 10px;
+            font-size: 0.6rem; font-weight: 600; letter-spacing: 0.03em;
+            color: #00cc66; background: rgba(0,204,102,0.12);
+            border: 1px solid rgba(0,204,102,0.3); vertical-align: middle;
+            white-space: nowrap;
+        }
+        .resolution-banner {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 12px; border-radius: 8px; margin-bottom: 16px;
+            background: rgba(0,204,102,0.08); border: 1px solid rgba(0,204,102,0.25);
+        }
+        .resolution-banner .res-label { color: #00cc66; font-size: 0.75rem; font-weight: 600; }
+        .resolution-banner .res-meta  { color: #6B7280; font-size: 0.65rem; margin-top: 2px; }
+        .btn-resolve {
+            padding: 4px 12px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;
+            cursor: pointer; border: 1px solid rgba(0,204,102,0.4);
+            background: rgba(0,204,102,0.1); color: #00cc66;
+        }
+        .btn-resolve:hover { background: rgba(0,204,102,0.2); }
+        .btn-unresolve {
+            padding: 4px 10px; border-radius: 6px; font-size: 0.65rem; font-weight: 600;
+            cursor: pointer; border: 1px solid rgba(107,114,128,0.3);
+            background: transparent; color: #6B7280;
+        }
+        .btn-unresolve:hover { background: rgba(107,114,128,0.1); }
+        .sev-badge.sev-resolved {
+            background: rgba(100,116,139,0.12) !important;
+            color: #6B7280 !important;
+            border: 1px solid rgba(100,116,139,0.25) !important;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+function renderResolutionSection(entry) {
+    const key = `${entry.source || 'local'}:${entry.event_id}`;
+    const res = resolutionsMap[key];
+    if (res) {
+        return `
+        <div class="resolution-banner">
+            <div>
+                <div class="res-label">&#x2713; Resolved &middot; ${escapeHtml(res.action_taken)}</div>
+                <div class="res-meta">${escapeHtml(res.resolved_by)} &middot; ${escapeHtml(res.resolved_at)}${res.notes ? ' &middot; ' + escapeHtml(res.notes) : ''}</div>
+            </div>
+            <button class="btn-unresolve" data-unresolve-id="${escapeHtml(entry.event_id)}" data-unresolve-src="${escapeHtml(entry.source || 'local')}">Un-resolve</button>
+        </div>`;
+    }
+    return `
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+            <button class="btn-resolve" data-resolve-id="${escapeHtml(entry.event_id)}" data-resolve-src="${escapeHtml(entry.source || 'local')}">Mark Resolved</button>
+        </div>`;
+}
+
+async function handleResolveClick(eventId, source) {
+    const action = prompt('Action taken (e.g. block_ip, kill_process, apply_patches):');
+    if (!action) return;
+    try {
+        const resp = await apiClient.post(`/api/events/${encodeURIComponent(source)}/${encodeURIComponent(eventId)}/resolve`, { action_taken: action });
+        if (resp.ok) {
+            const rec = await resp.json();
+            resolutionsMap[`${source}:${eventId}`] = rec;
+            renderTable();
+            openDetail(eventId);
+        }
+    } catch (err) {
+        console.error('Resolve failed:', err);
+    }
+}
+
+async function handleUnresolveClick(eventId, source) {
+    try {
+        const resp = await apiClient.delete(`/api/events/${encodeURIComponent(source)}/${encodeURIComponent(eventId)}/resolve`);
+        if (resp.ok) {
+            delete resolutionsMap[`${source}:${eventId}`];
+            renderTable();
+            openDetail(eventId);
+        }
+    } catch (err) {
+        console.error('Un-resolve failed:', err);
+    }
+}
+
 // ── Rendering ───────────────────────────────────────────────────────
 
 function renderTable() {
@@ -199,15 +302,21 @@ function renderTable() {
             const ts = formatTimestamp(entry.timestamp);
             const selected = entry.event_id === selectedEventId ? ' selected' : '';
             const src = SOURCE_COLOURS[entry.source] || SOURCE_COLOURS.local;
+            const resolution = resolutionsMap[`${entry.source || 'local'}:${entry.event_id}`];
+            const descStyle = resolution ? ' style="color:#6B7280;"' : '';
+            const resChip = resolution
+                ? `<span class="resolution-chip" title="Resolved at ${escapeHtml(resolution.resolved_at)}">&#x2713; ${escapeHtml(resolution.action_taken)} &middot; ${escapeHtml(formatTimestamp(resolution.resolved_at))}</span>`
+                : '';
+            const sevCls = resolution ? 'sev-badge sev-resolved' : `sev-badge sev-${sev}`;
 
             return `<tr data-event-id="${escapeHtml(entry.event_id)}" class="${selected}">
                 <td data-label="Timestamp" title="${escapeHtml(entry.timestamp)}">${ts}</td>
-                <td data-label="Severity"><span class="sev-badge sev-${sev}">${sev}</span></td>
+                <td data-label="Severity"><span class="${sevCls}">${sev}</span></td>
                 <td data-label="Asset" title="${escapeHtml(entry.asset_id)}">${escapeHtml(entry.asset_id || '—')}</td>
                 <td data-label="Event Type">${escapeHtml(entry.event_type)}</td>
                 <td data-label="Category"><span class="cat-tag">${escapeHtml(entry.category)}</span></td>
                 <td data-label="Source"><span class="source-badge ${src.cls}">${src.label}</span></td>
-                <td data-label="Description" title="${escapeHtml(entry.message)}">${escapeHtml(truncate(entry.message, 80))}</td>
+                <td data-label="Description" title="${escapeHtml(entry.message)}"><span${descStyle}>${escapeHtml(truncate(entry.message, 80))}</span>${resChip}</td>
             </tr>`;
         }).join('');
     }
@@ -450,6 +559,9 @@ function openDetail(eventId) {
             <p class="mt-2 text-sm text-gray-200">${escapeHtml(entry.message)}</p>
         </div>
 
+        <!-- Resolution status -->
+        ${renderResolutionSection(entry)}
+
         <!-- Metadata grid -->
         <div class="grid grid-cols-2 gap-3 mb-6">
             <div>
@@ -512,6 +624,14 @@ function openDetail(eventId) {
         el.addEventListener('click', () => {
             openDetail(el.dataset.relatedId);
         });
+    });
+
+    // Resolve / un-resolve buttons
+    content.querySelector('[data-resolve-id]')?.addEventListener('click', async (e) => {
+        await handleResolveClick(e.currentTarget.dataset.resolveId, e.currentTarget.dataset.resolveSrc);
+    });
+    content.querySelector('[data-unresolve-id]')?.addEventListener('click', async (e) => {
+        await handleUnresolveClick(e.currentTarget.dataset.unresolveId, e.currentTarget.dataset.unresolveSrc);
     });
 }
 
@@ -711,6 +831,7 @@ async function refreshData() {
     if (!data) return;
 
     allEntries = data.entries || [];
+    await enrichWithResolutions(allEntries);
     populateFilterDropdowns();
     renderTable();
     renderD3Timeline();
@@ -724,8 +845,10 @@ function destroy() {
     _wsUnsubs = [];
     if (_onWsConnected) { window.removeEventListener('ws-connected', _onWsConnected); _onWsConnected = null; }
     if (_onWsDisconnected) { window.removeEventListener('ws-disconnected', _onWsDisconnected); _onWsDisconnected = null; }
+    document.getElementById('resolution-styles')?.remove();
     allEntries = [];
     filteredEntries = [];
+    resolutionsMap = {};
     currentPage = 1;
     selectedEventId = null;
 }
@@ -734,6 +857,7 @@ function destroy() {
 
 async function init() {
     destroy();
+    injectResolutionStyles();
     // Initialize API client
     try {
         await apiClient.initialize();

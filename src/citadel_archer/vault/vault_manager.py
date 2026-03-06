@@ -6,6 +6,8 @@
 # Master password verification via encrypted canary
 
 import json
+import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
@@ -14,6 +16,9 @@ import uuid
 import time
 
 from .encryption import EncryptionService, verify_master_password
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+_auto_unlock_logger = logging.getLogger(__name__)
 from ..core import get_audit_logger, EventType, EventSeverity
 
 
@@ -63,6 +68,128 @@ class VaultManager:
         self.lockout_until: Optional[datetime] = None
 
         self.logger = get_audit_logger()
+
+    # ------------------------------------------------------------------
+    # Auto-unlock helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def _data_dir(self) -> Path:
+        return self.vault_path.parent
+
+    @property
+    def _machine_key_path(self) -> Path:
+        return self._data_dir / "machine.key"
+
+    @property
+    def _auto_unlock_path(self) -> Path:
+        return self._data_dir / "auto_unlock.enc"
+
+    def _get_machine_key(self) -> bytes:
+        """Return (and lazily create) the machine-specific 32-byte key.
+
+        This key never leaves the data directory.  It is used solely to
+        encrypt/decrypt the vault master password for auto-unlock storage.
+        """
+        if self._machine_key_path.exists():
+            return self._machine_key_path.read_bytes()
+        key = os.urandom(32)
+        self._machine_key_path.write_bytes(key)
+        try:
+            os.chmod(str(self._machine_key_path), 0o600)
+        except OSError:
+            pass
+        return key
+
+    @property
+    def is_auto_unlock_configured(self) -> bool:
+        """True if an auto-unlock credential is saved on disk."""
+        return self._auto_unlock_path.exists()
+
+    def store_auto_unlock_credential(self, master_password: str) -> bool:
+        """Encrypt and persist the master password for startup auto-unlock.
+
+        The password is encrypted with AES-256-GCM using a machine-specific
+        key stored in data/machine.key.  Both files must be present to
+        decrypt — losing machine.key makes the stored credential useless.
+
+        Security note: This weakens vault protection to the level of
+        filesystem access.  It is an explicit user opt-in.
+        """
+        try:
+            machine_key = self._get_machine_key()
+            nonce = os.urandom(12)
+            cipher = AESGCM(machine_key)
+            ciphertext = cipher.encrypt(nonce, master_password.encode("utf-8"), b"citadel-auto-unlock")
+            self._auto_unlock_path.write_bytes(nonce + ciphertext)
+            try:
+                os.chmod(str(self._auto_unlock_path), 0o600)
+            except OSError:
+                pass
+            return True
+        except Exception as exc:
+            _auto_unlock_logger.error("Failed to store auto-unlock credential: %s", exc)
+            return False
+
+    def clear_auto_unlock_credential(self) -> bool:
+        """Remove the stored auto-unlock credential."""
+        try:
+            if self._auto_unlock_path.exists():
+                self._auto_unlock_path.unlink()
+            return True
+        except Exception as exc:
+            _auto_unlock_logger.error("Failed to clear auto-unlock credential: %s", exc)
+            return False
+
+    def attempt_auto_unlock(self) -> bool:
+        """Try to unlock the vault without user interaction.
+
+        Checks (in order):
+        1. CITADEL_VAULT_PASSWORD environment variable
+        2. data/auto_unlock.enc file (encrypted with data/machine.key)
+
+        Returns True if vault was successfully unlocked, False otherwise.
+        Silently ignores failures — never raises.
+        """
+        if self.is_unlocked:
+            return True
+
+        # 1. Environment variable
+        env_password = os.environ.get("CITADEL_VAULT_PASSWORD", "")
+        if env_password:
+            try:
+                success, _ = self.unlock_vault(env_password)
+                if success:
+                    _auto_unlock_logger.info("Vault auto-unlocked via CITADEL_VAULT_PASSWORD")
+                    return True
+                # Wrong env var password — reset rate limiter so user isn't locked out
+                self.failed_attempts = 0
+                self.lockout_until = None
+            except Exception:
+                pass
+
+        # 2. Stored credential file
+        if not self._auto_unlock_path.exists():
+            return False
+        try:
+            data = self._auto_unlock_path.read_bytes()
+            nonce, ciphertext = data[:12], data[12:]
+            machine_key = self._get_machine_key()
+            cipher = AESGCM(machine_key)
+            password = cipher.decrypt(nonce, ciphertext, b"citadel-auto-unlock").decode("utf-8")
+            success, _ = self.unlock_vault(password)
+            if success:
+                _auto_unlock_logger.info("Vault auto-unlocked via stored credential")
+                return True
+            # Stale stored credential — reset rate limiter so manual unlock still works
+            self.failed_attempts = 0
+            self.lockout_until = None
+        except Exception as exc:
+            _auto_unlock_logger.warning("Auto-unlock failed: %s", exc)
+            self.failed_attempts = 0
+            self.lockout_until = None
+
+        return False
 
     @staticmethod
     def _escape_pragma_value(value: str) -> str:

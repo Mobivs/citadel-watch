@@ -10,6 +10,7 @@
 # The "ext-agent:" prefix distinguishes these from Remote Shield monitoring
 # agents ("agent:"), which are security scanners, not conversational AI.
 
+import asyncio
 import json
 import logging
 from typing import List, Optional
@@ -711,10 +712,16 @@ async def agent_heartbeat(
             )
             inv.register(asset)
         else:
-            # Keep IP and status fresh on every heartbeat.
+            # Keep status fresh on every heartbeat.
+            # Only update IP if current stored IP is empty or loopback — never overwrite
+            # a user-manually-set real IP with a loopback/proxied connection IP.
             kwargs: dict = {"status": "online"}
             if ip_str:
-                kwargs["ip_address"] = ip_str
+                existing_asset = inv.get(agent_id)
+                _LOOPBACK_IPS = {"127.0.0.1", "::1", "localhost", ""}
+                current_ip = (existing_asset.ip_address or "") if existing_asset else ""
+                if current_ip in _LOOPBACK_IPS:
+                    kwargs["ip_address"] = ip_str
             inv.update(agent_id, **kwargs)
     except Exception:
         pass  # best-effort — never break heartbeat
@@ -745,10 +752,28 @@ async def agent_heartbeat(
 
     # Attach any queued defensive commands for this agent.
     # The daemon reads data.get("pending_commands", []) from the heartbeat response.
+    #
+    # Long-poll: if no commands are immediately available, hold this connection
+    # open for up to LONG_POLL_SECS seconds and check the DB every second.
+    # This means an approved action reaches the daemon within ~1s of approval
+    # rather than waiting for the next polling heartbeat (up to 5 minutes).
+    LONG_POLL_SECS = 25
+    queued = []
     try:
         from ..agent.actions_database import get_queued_for_agent, init_db
         init_db()
         queued = get_queued_for_agent(agent_id)
+
+        if not queued:
+            # Hold connection open — check every second for newly-queued actions
+            _loop = asyncio.get_running_loop()
+            deadline = _loop.time() + LONG_POLL_SECS
+            while _loop.time() < deadline:
+                await asyncio.sleep(1)
+                queued = get_queued_for_agent(agent_id)
+                if queued:
+                    break
+
         if queued:
             response["pending_commands"] = [
                 {
@@ -1082,7 +1107,7 @@ async def enroll_agent(
         agent_id, raw_token = registry.register_agent(
             name=invitation.agent_name,
             agent_type=invitation.agent_type,
-            ip_address=client_ip if client_ip != "unknown" else "",
+            ip_address=client_ip if client_ip and client_ip not in ("unknown", "127.0.0.1", "::1", "localhost") else "",
             hostname=req.hostname,
         )
     except Exception as e:
@@ -1107,7 +1132,8 @@ async def enroll_agent(
 
         inv = get_inventory()
         # Avoid duplicate if IP or hostname already matches an existing asset.
-        ip_str = client_ip if client_ip and client_ip != "unknown" else ""
+        _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+        ip_str = client_ip if client_ip and client_ip not in _LOOPBACK and client_ip != "unknown" else ""
         existing = None
         if ip_str:
             existing = next((a for a in inv.all() if a.ip_address == ip_str), None)
@@ -1160,6 +1186,27 @@ async def enroll_agent(
     except Exception:
         logger.warning("Failed to generate agent context, enrollment continues without it")
         context = ""
+
+    # Auto-queue harden_vps for Shield agents (vps/cloud) so the dashboard
+    # shows a one-click "Approve" for initial server hardening.
+    if invitation.agent_type in ("vps", "cloud"):
+        try:
+            from ..agent.actions_database import queue_action, init_db as actions_init_db
+            actions_init_db()
+            queue_action(
+                agent_id=agent_id,
+                action_id="harden_vps",
+                parameters={},
+                require_approval=True,
+                risk_level="medium",
+                description=(
+                    "Initial server hardening: SSH config (PasswordAuthentication no, "
+                    "PermitRootLogin no), fail2ban, unattended-upgrades, security patches."
+                ),
+                requested_by="citadel",
+            )
+        except Exception:
+            pass  # never block enrollment
 
     return EnrollAgentResponse(
         agent_id=agent_id,
@@ -1437,6 +1484,7 @@ class ActionResultRequest(BaseModel):
     status: str = Field(..., pattern=r"^(success|failed)$")
     result: dict = Field(default_factory=dict)
     forensics: dict = Field(default_factory=dict)
+    params: dict = Field(default_factory=dict)   # action parameters echoed back by daemon
     timestamp: str = Field("", max_length=64)
 
 
@@ -1453,21 +1501,38 @@ async def report_action_result(
     if agent["agent_id"] != agent_id:
         raise HTTPException(403, "Cannot report results for a different agent")
 
+    result_recorded = False
     try:
         from ..agent.actions_database import record_result, init_db
         init_db()
-        found = record_result(
+        result_recorded = record_result(
             req.action_uuid,
             req.status,
             {"result": req.result, "forensics": req.forensics},
         )
-        if not found:
+        if not result_recorded:
             logger.warning(
                 "action-result for unknown uuid %s from agent %s",
                 req.action_uuid, agent_id,
             )
     except Exception:
         logger.exception("Failed to record action result for agent %s", agent_id)
+
+    # Notify Guardian AI only when the result was successfully recorded
+    if result_recorded:
+        try:
+            from ..agent.guardian_notifications import notify
+            notify("daemon_action_result", {
+                "action_uuid": req.action_uuid,
+                "action_id":   req.action_id,
+                "status":      req.status,
+                "agent_id":    agent_id,
+                "hostname":    agent.get("hostname") or agent_id,
+                "result":      req.result,
+                "forensics":   req.forensics,
+            })
+        except Exception:
+            logger.debug("Failed to send guardian notification for action result", exc_info=True)
 
     if req.status == "failed":
         try:
@@ -1502,11 +1567,30 @@ async def approve_daemon_action(
     Moves the action from pending_approval → queued so it is delivered
     on the daemon's next heartbeat.
     """
-    from ..agent.actions_database import approve_action, init_db
+    from ..agent.actions_database import approve_action, get_action, init_db
     init_db()
     found = approve_action(action_uuid)
     if not found:
         raise HTTPException(404, f"Action {action_uuid} not found or not pending approval")
+    try:
+        from ..agent.guardian_notifications import notify
+        action = get_action(action_uuid) or {}
+        _aid = action.get("agent_id", "")
+        _aname = _aid
+        try:
+            reg = get_agent_registry().get_agent(_aid)
+            if reg:
+                _aname = reg.get("name", _aid)
+        except Exception:
+            pass
+        notify("daemon_action_approved", {
+            "action_uuid": action_uuid,
+            "action_id":   action.get("action_id", ""),
+            "agent_id":    _aid,
+            "agent_name":  _aname,
+        })
+    except Exception:
+        logger.debug("Failed to send guardian notification for action approve", exc_info=True)
     return {"status": "queued", "action_uuid": action_uuid}
 
 
@@ -1516,12 +1600,50 @@ async def deny_daemon_action(
     _token: str = Depends(verify_session_token),
 ):
     """Deny a pending defensive action (dashboard user only)."""
-    from ..agent.actions_database import deny_action, init_db
+    from ..agent.actions_database import deny_action, get_action, init_db
     init_db()
+    action = get_action(action_uuid) or {}   # read before deny so data is still available
     found = deny_action(action_uuid)
     if not found:
         raise HTTPException(404, f"Action {action_uuid} not found or not pending approval")
+    try:
+        from ..agent.guardian_notifications import notify
+        _aid = action.get("agent_id", "")
+        _aname = _aid
+        try:
+            reg = get_agent_registry().get_agent(_aid)
+            if reg:
+                _aname = reg.get("name", _aid)
+        except Exception:
+            pass
+        notify("daemon_action_denied", {
+            "action_uuid": action_uuid,
+            "action_id":   action.get("action_id", ""),
+            "agent_id":    _aid,
+            "agent_name":  _aname,
+        })
+    except Exception:
+        logger.debug("Failed to send guardian notification for action deny", exc_info=True)
     return {"status": "denied", "action_uuid": action_uuid}
+
+
+@router.get("/actions/{action_uuid}/status")
+async def get_action_status(
+    action_uuid: str,
+    _token: str = Depends(verify_session_token),
+):
+    """Return the current status and result of a daemon action."""
+    from ..agent.actions_database import get_action, init_db
+    init_db()
+    action = get_action(action_uuid)
+    if action is None:
+        raise HTTPException(404, f"Action {action_uuid} not found")
+    return {
+        "action_uuid": action_uuid,
+        "status": action.get("status"),
+        "result": action.get("result") or {},
+        "action_id": action.get("action_id"),
+    }
 
 
 # ── Coordinator URL Detection ─────────────────────────────────────────
@@ -1530,24 +1652,52 @@ async def deny_daemon_action(
 def _detect_coordinator_ip() -> Optional[str]:
     """Detect the best external IP for this coordinator.
 
-    Priority: Tailscale CLI > Tailscale-range socket scan > default route.
+    Priority: Tailscale CLI > all-interface scan for 100.x > default route.
     """
     import socket
     import subprocess
+    import sys
 
-    # 1. Try Tailscale CLI (most reliable — works on Windows + Linux)
-    try:
-        result = subprocess.run(
-            ["tailscale", "ip", "-4"],
-            capture_output=True, text=True, timeout=3,
-        )
-        ip = result.stdout.strip().splitlines()[0].strip()
-        if ip and not ip.startswith("127."):
-            return ip
-    except Exception:
-        pass
+    # 1. Try Tailscale CLI — check multiple locations (Windows has two binaries)
+    tailscale_candidates = ["tailscale", "tailscale.exe"]
+    if sys.platform == "win32":
+        import os
+        pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+        tailscale_candidates += [
+            os.path.join(pf, "Tailscale CLI", "tailscale.exe"),
+            os.path.join(pf, "Tailscale", "tailscale.exe"),
+            r"C:\Program Files\Tailscale CLI\tailscale.exe",
+            r"C:\Program Files\Tailscale\tailscale.exe",
+        ]
+    for cmd in tailscale_candidates:
+        try:
+            result = subprocess.run(
+                [cmd, "ip", "-4"],
+                capture_output=True, text=True, timeout=3,
+            )
+            ip = result.stdout.strip().splitlines()[0].strip()
+            if ip and ip.startswith("100."):
+                return ip
+        except Exception:
+            continue
 
-    # 2. Scan hostname resolution for Tailscale range (100.64.0.0/10)
+    # 2. Windows: parse ipconfig output — most reliable way to find Tailscale adapter
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["ipconfig"],
+                capture_output=True, timeout=5, encoding="utf-8", errors="replace",
+            )
+            for line in result.stdout.splitlines():
+                # Matches "   IPv4 Address. . . . . . . . . . . : 100.68.75.8"
+                if ("IPv4" in line or "IP Address" in line) and ":" in line:
+                    ip = line.split(":")[-1].strip().rstrip("(Preferred)").strip()
+                    if ip.startswith("100."):
+                        return ip
+        except Exception:
+            pass
+
+    # 3. Enumerate all network interfaces for a Tailscale-range IP (100.64.0.0/10)
     candidates: List[str] = []
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
@@ -1557,11 +1707,22 @@ def _detect_coordinator_ip() -> Optional[str]:
     except Exception:
         pass
 
-    tailscale = [a for a in candidates if a.startswith("100.")]
-    if tailscale:
-        return tailscale[0]
+    tailscale_ips = [a for a in candidates if a.startswith("100.")]
+    if tailscale_ips:
+        return tailscale_ips[0]
 
     # 3. Default route IP (UDP connect trick — no packets sent)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127.") and ip.startswith("100."):
+            return ip
+    except Exception:
+        pass
+
+    # 4. Last resort: any non-loopback IP
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
